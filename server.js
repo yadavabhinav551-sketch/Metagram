@@ -15,8 +15,10 @@ const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-before-production";
 const ADMIN_ENTRY = "/vault-6388391842";
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
+const IS_RENDER = Boolean(process.env.RENDER || process.env.RENDER_EXTERNAL_HOSTNAME || process.env.RENDER_SERVICE_ID);
+const PERSISTENT_ROOT = IS_RENDER ? "/var/data/metagram" : __dirname;
+const DATA_DIR = process.env.DATA_DIR || path.join(PERSISTENT_ROOT, "data");
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(PERSISTENT_ROOT, "uploads");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const DELETE_EVERYONE_WINDOW_MS = 5 * 60 * 1000;
 

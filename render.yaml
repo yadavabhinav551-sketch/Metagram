@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: metagram
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data/metagram/data
+      - key: UPLOAD_DIR
+        value: /var/data/metagram/uploads
+      - key: JWT_SECRET
+        generateValue: true
+    disk:
+      name: metagram-data
+      mountPath: /var/data
+      sizeGB: 1
