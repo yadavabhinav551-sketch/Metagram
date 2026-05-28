@@ -317,7 +317,7 @@ $("bulkDeleteBtn").addEventListener("click", async () => {
   await loadConversations();
 });
 $("clearChatBtn").addEventListener("click", async () => {
-  if (!state.activeConversation || !confirm("Clear this chat from your screen? Admin records will remain.")) return;
+  if (!state.activeConversation || !confirm("Clear this chat from your screen")) return;
   await api(`/api/conversations/${state.activeConversation.id}/clear-for-me`, { method: "POST" });
   state.messages = [];
   renderMessages();
