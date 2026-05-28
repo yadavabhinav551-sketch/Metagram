@@ -41,6 +41,7 @@ function showChat() {
   $("chatView").classList.remove("hidden");
   $("meName").textContent = state.user.displayName;
   $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
+  $("profileName").value = state.user.displayName;
 }
 
 function showAuth() {
@@ -284,6 +285,13 @@ function escapeHtml(value = "") {
 $("loginTab").addEventListener("click", () => setAuthMode("login"));
 $("signupTab").addEventListener("click", () => setAuthMode("signup"));
 $("logoutBtn").addEventListener("click", showAuth);
+$("profileBtn").addEventListener("click", () => {
+  $("profileName").value = state.user.displayName;
+  $("profileMessage").textContent = "";
+  $("profileMessage").classList.remove("success-text");
+  $("profileModal").classList.remove("hidden");
+});
+$("closeProfileBtn").addEventListener("click", () => $("profileModal").classList.add("hidden"));
 document.querySelectorAll(".install-control").forEach((button) => {
   button.addEventListener("click", async () => {
     if (!state.installPrompt) return;
@@ -375,6 +383,32 @@ $("signupForm").addEventListener("submit", async (event) => {
     await loadConversations();
   } catch (error) {
     $("authError").textContent = error.message;
+  }
+});
+
+$("profileForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const body = {
+    displayName: form.get("displayName"),
+    oldPassword: form.get("oldPassword"),
+    newPassword: form.get("newPassword")
+  };
+  if (!body.newPassword) {
+    delete body.oldPassword;
+    delete body.newPassword;
+  }
+  try {
+    const { user } = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
+    state.user = user;
+    showChat();
+    event.target.oldPassword.value = "";
+    event.target.newPassword.value = "";
+    $("profileMessage").textContent = "Profile updated.";
+    $("profileMessage").classList.add("success-text");
+  } catch (error) {
+    $("profileMessage").textContent = error.message;
+    $("profileMessage").classList.remove("success-text");
   }
 });
 

@@ -55,6 +55,7 @@
               <strong id="meName"></strong>
               <span id="meHandle"></span>
             </div>
+            <button id="profileBtn" class="icon-button" type="button" title="Profile settings">⚙</button>
             <button class="icon-button install-control hidden" type="button" title="Install app">↓</button>
             <button id="logoutBtn" class="icon-button" type="button" title="Logout">⎋</button>
           </header>
@@ -94,6 +95,29 @@
             <button class="send-button" type="submit" title="Send">➤</button>
           </form>
         </section>
+      </section>
+
+      <section id="profileModal" class="modal-layer hidden">
+        <form id="profileForm" class="modal-card">
+          <header>
+            <strong>Profile Settings</strong>
+            <button id="closeProfileBtn" class="icon-button" type="button" title="Close">×</button>
+          </header>
+          <label>
+            Name
+            <input name="displayName" id="profileName" autocomplete="name" required>
+          </label>
+          <label>
+            Old password
+            <input name="oldPassword" type="password" autocomplete="current-password" placeholder="Required to change password">
+          </label>
+          <label>
+            New password
+            <input name="newPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep same">
+          </label>
+          <button class="primary" type="submit">Save changes</button>
+          <p id="profileMessage" class="error-text"></p>
+        </form>
       </section>
     </main>
   </body>

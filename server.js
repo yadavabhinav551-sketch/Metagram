@@ -198,6 +198,20 @@ app.get("/api/me", authUser, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
+app.patch("/api/me", authUser, async (req, res) => {
+  const { displayName, oldPassword, newPassword } = req.body;
+  if (displayName && displayName.trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
+  if (newPassword) {
+    if (!oldPassword) return res.status(400).json({ error: "Old password is required." });
+    if (newPassword.length < 6) return res.status(400).json({ error: "New password must be at least 6 characters." });
+    if (!(await bcrypt.compare(oldPassword, req.user.passwordHash))) return res.status(403).json({ error: "Old password is incorrect." });
+    req.user.passwordHash = await bcrypt.hash(newPassword, 10);
+  }
+  if (displayName) req.user.displayName = displayName.trim();
+  saveDb();
+  res.json({ user: publicUser(req.user) });
+});
+
 app.get("/api/users/search", authUser, (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   if (q.length < 2) return res.json({ users: [] });
