@@ -115,7 +115,8 @@ async function loadTranscript(conversationId) {
 function renderAdminMedia(media) {
   if (!media) return "";
   if (media.kind === "image") return `<img src="${media.url}" alt="${escapeHtml(media.originalName)}">`;
-  if (media.kind === "voice") return `<audio controls src="${media.url}"></audio>`;
+  if (media.kind === "audio" || media.kind === "voice") return `<audio controls preload="metadata" src="${media.url}"></audio>`;
+  if (media.kind === "video") return `<video controls preload="metadata" src="${media.url}"></video>`;
   return `<a href="${media.url}" target="_blank" rel="noopener">${escapeHtml(media.originalName)}</a>`;
 }
 

@@ -219,7 +219,22 @@ function exitSelectionMode() {
 function renderMedia(media) {
   if (!media) return "";
   if (media.kind === "image") return `<img class="message-image" src="${media.url}" alt="${escapeHtml(media.originalName)}">`;
-  if (media.kind === "voice") return `<audio controls src="${media.url}"></audio>`;
+  if (media.kind === "audio" || media.kind === "voice") {
+    return `
+      <div class="media-card">
+        <audio controls preload="metadata" src="${media.url}"></audio>
+        <a href="${media.url}" download="${escapeHtml(media.originalName)}">${escapeHtml(media.originalName)}</a>
+      </div>
+    `;
+  }
+  if (media.kind === "video") {
+    return `
+      <div class="media-card">
+        <video class="message-video" controls preload="metadata" src="${media.url}"></video>
+        <a href="${media.url}" download="${escapeHtml(media.originalName)}">${escapeHtml(media.originalName)}</a>
+      </div>
+    `;
+  }
   return `<a class="document-link" href="${media.url}" target="_blank" rel="noopener">${escapeHtml(media.originalName)}</a>`;
 }
 

@@ -134,11 +134,21 @@
   margin: 6px 0;
 }
 
-.admin-message img {
+.admin-message img,
+.admin-message video {
   max-width: 260px;
   max-height: 260px;
   display: block;
   border-radius: 8px;
+}
+
+.admin-message audio {
+  width: min(320px, 100%);
+  display: block;
+}
+
+.admin-message video {
+  background: #000;
 }
 
 select[multiple] {

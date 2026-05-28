@@ -419,9 +419,29 @@ input:focus {
   margin-bottom: 6px;
 }
 
-audio {
+.media-card {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.media-card a {
+  color: var(--green);
+  font-size: 12px;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+audio,
+.message-video {
   width: min(320px, 70vw);
   display: block;
+}
+
+.message-video {
+  max-height: 360px;
+  border-radius: 8px;
+  background: #000;
 }
 
 .document-link {
