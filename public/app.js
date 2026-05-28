@@ -16,6 +16,13 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const EMOJI_OPTIONS = [
+  "\u{1F600}", "\u{1F602}", "\u{1F60A}", "\u{1F60D}", "\u{1F618}", "\u{1F60E}",
+  "\u{1F973}", "\u{1F622}", "\u{1F621}", "\u{1F64F}", "\u{1F44D}", "\u{1F44E}",
+  "\u{1F44F}", "\u{1F525}", "\u2764\uFE0F", "\u{1F494}", "\u2705", "\u{1F389}",
+  "\u{1F4AF}", "\u2728", "\u{1F634}", "\u{1F914}", "\u{1F62E}", "\u{1F62D}",
+  "\u{1F607}", "\u{1F609}", "\u{1F60B}", "\u{1F91D}", "\u{1F64C}", "\u{1F44C}"
+];
 const api = async (url, options = {}) => {
   const response = await fetch(url, {
     ...options,
@@ -96,6 +103,7 @@ function connectSocket() {
 
 async function bootstrap() {
   registerPwa();
+  showPendingShareError();
   if (!state.token) {
     showPendingShareLoginHint();
     return;
@@ -139,6 +147,14 @@ function getPendingShareId() {
 function showPendingShareLoginHint() {
   if (getPendingShareId()) {
     $("authError").textContent = "Shared content ready hai. Send karne ke liye login karein.";
+  }
+}
+
+function showPendingShareError() {
+  const shareError = new URLSearchParams(location.search).get("shareError");
+  if (shareError) {
+    $("authError").textContent = shareError;
+    history.replaceState({}, "", location.pathname);
   }
 }
 
@@ -247,12 +263,22 @@ function exitSelectionMode() {
 
 function renderMedia(media) {
   if (!media) return "";
-  if (media.kind === "image") return `<img class="message-image" src="${media.url}" alt="${escapeHtml(media.originalName)}">`;
+  const meta = media.size ? `<small>${escapeHtml(formatFileSize(media.size))}</small>` : "";
+  if (media.kind === "image") {
+    return `
+      <div class="media-card image-card">
+        <img class="message-image" src="${media.url}" alt="${escapeHtml(media.originalName)}">
+        <a href="${media.url}" download="${escapeHtml(media.originalName)}">${escapeHtml(media.originalName || "Image")}</a>
+        ${meta}
+      </div>
+    `;
+  }
   if (media.kind === "audio" || media.kind === "voice") {
     return `
       <div class="media-card">
         <audio controls preload="metadata" src="${media.url}"></audio>
         <a href="${media.url}" download="${escapeHtml(media.originalName)}">${escapeHtml(media.originalName)}</a>
+        ${meta}
       </div>
     `;
   }
@@ -261,6 +287,7 @@ function renderMedia(media) {
       <div class="media-card">
         <video class="message-video" controls preload="metadata" src="${media.url}"></video>
         <a href="${media.url}" download="${escapeHtml(media.originalName)}">${escapeHtml(media.originalName)}</a>
+        ${meta}
       </div>
     `;
   }
@@ -283,7 +310,7 @@ function renderSharePreview() {
   const files = (item.media || []).map((media) => `
     <div class="share-file">
       <strong>${escapeHtml(media.originalName || "Shared file")}</strong>
-      <span>${escapeHtml(media.kind || "file")}</span>
+      <span>${escapeHtml(media.kind || "file")}${media.size ? ` · ${formatFileSize(media.size)}` : ""}</span>
     </div>
   `).join("");
   return `${text}${files || (!text ? "<p>No preview available.</p>" : "")}`;
@@ -427,6 +454,40 @@ function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
 
+function formatFileSize(bytes = 0) {
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = Number(bytes);
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size.toFixed(size >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function renderEmojiPicker() {
+  $("emojiPicker").innerHTML = EMOJI_OPTIONS.map((emoji) => `
+    <button type="button" data-emoji="${emoji}" title="${emoji}">${emoji}</button>
+  `).join("");
+}
+
+function setUploadStatus(text = "") {
+  $("uploadStatus").textContent = text;
+  $("uploadStatus").classList.toggle("hidden", !text);
+}
+
+function insertEmoji(emoji) {
+  const input = $("messageInput");
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? input.value.length;
+  input.value = `${input.value.slice(0, start)}${emoji}${input.value.slice(end)}`;
+  const nextPosition = start + emoji.length;
+  input.focus();
+  input.setSelectionRange(nextPosition, nextPosition);
+  if (state.activeConversation) state.socket.emit("typing", { conversationId: state.activeConversation.id, typing: true });
+}
+
 $("loginTab").addEventListener("click", () => setAuthMode("login"));
 $("signupTab").addEventListener("click", () => setAuthMode("signup"));
 $("logoutBtn").addEventListener("click", showAuth);
@@ -486,9 +547,34 @@ $("hideChatBtn").addEventListener("click", async () => {
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
 $("attachBtn").addEventListener("click", () => $("fileInput").click());
 $("fileInput").addEventListener("change", async (event) => {
-  if (!state.activeConversation || !event.target.files[0]) return;
-  await sendMediaFile(event.target.files[0]);
-  event.target.value = "";
+  if (!state.activeConversation || !event.target.files.length) return;
+  const files = Array.from(event.target.files);
+  $("attachBtn").disabled = true;
+  $("messageForm").classList.add("uploading");
+  try {
+    for (const [index, file] of files.entries()) {
+      setUploadStatus(`Uploading ${index + 1}/${files.length}: ${file.name}`);
+      await sendMediaFile(file);
+    }
+    setUploadStatus("Media sent.");
+    setTimeout(() => setUploadStatus(""), 1600);
+  } catch (error) {
+    setUploadStatus("");
+    alert(error.message);
+  } finally {
+    $("attachBtn").disabled = false;
+    $("messageForm").classList.remove("uploading");
+    event.target.value = "";
+  }
+});
+$("emojiBtn").addEventListener("click", () => {
+  $("emojiPicker").classList.toggle("hidden");
+});
+$("emojiPicker").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-emoji]");
+  if (!button) return;
+  insertEmoji(button.dataset.emoji);
+  $("emojiPicker").classList.add("hidden");
 });
 $("shareSearchInput").addEventListener("input", async () => {
   const q = $("shareSearchInput").value.trim();
@@ -658,4 +744,5 @@ window.addEventListener("appinstalled", () => {
   setInstallButtonsVisible(false);
 });
 
+renderEmojiPicker();
 bootstrap();

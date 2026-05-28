@@ -22,7 +22,24 @@
       "files": [
         {
           "name": "files",
-          "accept": ["image/*", "video/*", "audio/*", "application/pdf", "text/plain", "*/*"]
+          "accept": [
+            "image/*",
+            "video/*",
+            "audio/*",
+            "application/pdf",
+            "text/plain",
+            ".mp4",
+            ".m4v",
+            ".mov",
+            ".webm",
+            ".mkv",
+            ".mp3",
+            ".m4a",
+            ".aac",
+            ".wav",
+            ".ogg",
+            "*/*"
+          ]
         }
       ]
     }
