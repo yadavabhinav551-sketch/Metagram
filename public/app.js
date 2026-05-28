@@ -10,7 +10,9 @@ const state = {
   audioChunks: [],
   installPrompt: null,
   selectionMode: false,
-  selectedMessageIds: new Set()
+  selectedMessageIds: new Set(),
+  pendingShare: null,
+  shareRecipients: new Map()
 };
 
 const $ = (id) => document.getElementById(id);
@@ -94,13 +96,17 @@ function connectSocket() {
 
 async function bootstrap() {
   registerPwa();
-  if (!state.token) return;
+  if (!state.token) {
+    showPendingShareLoginHint();
+    return;
+  }
   try {
     const { user } = await api("/api/me");
     state.user = user;
     showChat();
     connectSocket();
     await loadConversations();
+    await loadPendingShare();
   } catch {
     showAuth();
   }
@@ -124,6 +130,29 @@ async function loadConversations() {
   const { conversations } = await api("/api/conversations");
   state.conversations = conversations;
   renderConversations();
+}
+
+function getPendingShareId() {
+  return new URLSearchParams(location.search).get("share");
+}
+
+function showPendingShareLoginHint() {
+  if (getPendingShareId()) {
+    $("authError").textContent = "Shared content ready hai. Send karne ke liye login karein.";
+  }
+}
+
+async function loadPendingShare() {
+  const shareId = getPendingShareId();
+  if (!shareId) return;
+  try {
+    const { sharedItem } = await api(`/api/shared/${encodeURIComponent(shareId)}`);
+    state.pendingShare = sharedItem;
+    history.replaceState({}, "", location.pathname);
+    showShareModal();
+  } catch (error) {
+    $("authError").textContent = error.message;
+  }
 }
 
 async function loadMessages(conversationId) {
@@ -236,6 +265,103 @@ function renderMedia(media) {
     `;
   }
   return `<a class="document-link" href="${media.url}" target="_blank" rel="noopener">${escapeHtml(media.originalName)}</a>`;
+}
+
+function showShareModal() {
+  if (!state.pendingShare) return;
+  state.shareRecipients.clear();
+  $("shareMessage").textContent = "";
+  $("shareSearchInput").value = "";
+  $("sharePreview").innerHTML = renderSharePreview();
+  $("shareModal").classList.remove("hidden");
+  renderShareRecipients();
+}
+
+function renderSharePreview() {
+  const item = state.pendingShare;
+  const text = item.text ? `<p>${escapeHtml(item.text)}</p>` : "";
+  const files = (item.media || []).map((media) => `
+    <div class="share-file">
+      <strong>${escapeHtml(media.originalName || "Shared file")}</strong>
+      <span>${escapeHtml(media.kind || "file")}</span>
+    </div>
+  `).join("");
+  return `${text}${files || (!text ? "<p>No preview available.</p>" : "")}`;
+}
+
+function renderShareRecipients(extraUsers = []) {
+  const rows = [];
+  for (const conversation of state.conversations) {
+    if (conversation.groupId) continue;
+    const other = getOtherMember(conversation);
+    if (!other) continue;
+    rows.push({
+      key: `user:${other.id}`,
+      label: other.displayName,
+      sub: other.userId || other.mobile,
+      value: { conversationId: conversation.id, userId: other.id }
+    });
+  }
+  for (const user of extraUsers) {
+    if (user.id === state.user.id) continue;
+    if (rows.some((row) => row.key === `user:${user.id}`)) continue;
+    rows.push({
+      key: `user:${user.id}`,
+      label: user.displayName,
+      sub: user.userId || user.mobile,
+      value: { userId: user.id }
+    });
+  }
+  const uniqueRows = Array.from(new Map(rows.map((row) => [row.key, row])).values());
+  $("shareRecipients").innerHTML = uniqueRows.map((row) => `
+    <label class="share-recipient">
+      <input type="checkbox" data-share-key="${escapeHtml(row.key)}" ${state.shareRecipients.has(row.key) ? "checked" : ""}>
+      <span>
+        <strong>${escapeHtml(row.label)}</strong>
+        <small>${escapeHtml(row.sub || "")}</small>
+      </span>
+    </label>
+  `).join("") || "<p>Search a user to send.</p>";
+  $("shareRecipients").querySelectorAll("[data-share-key]").forEach((input) => {
+    const row = uniqueRows.find((item) => item.key === input.dataset.shareKey);
+    input.addEventListener("change", () => {
+      if (input.checked) state.shareRecipients.set(row.key, row.value);
+      else state.shareRecipients.delete(row.key);
+    });
+  });
+}
+
+async function sendPendingShare() {
+  if (!state.pendingShare) return;
+  const recipients = Array.from(state.shareRecipients.values());
+  if (!recipients.length) {
+    $("shareMessage").textContent = "Select at least one user.";
+    return;
+  }
+  $("sendShareBtn").disabled = true;
+  try {
+    for (const recipient of recipients) {
+      let conversationId = recipient.conversationId;
+      if (!conversationId) {
+        const { conversation } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: recipient.userId }) });
+        conversationId = conversation.id;
+      }
+      if (state.pendingShare.text) {
+        state.socket.emit("message:send", { conversationId, text: state.pendingShare.text });
+      }
+      for (const media of state.pendingShare.media || []) {
+        state.socket.emit("message:send", { conversationId, media });
+      }
+    }
+    await api(`/api/shared/${encodeURIComponent(state.pendingShare.id)}`, { method: "DELETE" });
+    state.pendingShare = null;
+    $("shareModal").classList.add("hidden");
+    await loadConversations();
+  } catch (error) {
+    $("shareMessage").textContent = error.message;
+  } finally {
+    $("sendShareBtn").disabled = false;
+  }
 }
 
 function tickLabel(message) {
@@ -364,6 +490,23 @@ $("fileInput").addEventListener("change", async (event) => {
   await sendMediaFile(event.target.files[0]);
   event.target.value = "";
 });
+$("shareSearchInput").addEventListener("input", async () => {
+  const q = $("shareSearchInput").value.trim();
+  if (q.length < 2) {
+    renderShareRecipients();
+    return;
+  }
+  try {
+    const { users } = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
+    renderShareRecipients(users);
+  } catch (error) {
+    $("shareMessage").textContent = error.message;
+  }
+});
+$("sendShareBtn").addEventListener("click", () => sendPendingShare());
+$("closeShareBtn").addEventListener("click", () => {
+  $("shareModal").classList.add("hidden");
+});
 $("voiceBtn").addEventListener("click", () => {
   if (!state.activeConversation) return;
   toggleRecording().catch((error) => alert(error.message));
@@ -383,6 +526,7 @@ $("loginForm").addEventListener("submit", async (event) => {
     showChat();
     connectSocket();
     await loadConversations();
+    await loadPendingShare();
     if ("Notification" in window) Notification.requestPermission();
   } catch (error) {
     $("authError").textContent = error.message;
@@ -400,6 +544,7 @@ $("signupForm").addEventListener("submit", async (event) => {
     showChat();
     connectSocket();
     await loadConversations();
+    await loadPendingShare();
   } catch (error) {
     $("authError").textContent = error.message;
   }

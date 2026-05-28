@@ -11,6 +11,22 @@
   "background_color": "#f4f6f8",
   "theme_color": "#125c4a",
   "categories": ["business", "productivity", "social"],
+  "share_target": {
+    "action": "/api/share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": ["image/*", "video/*", "audio/*", "application/pdf", "text/plain", "*/*"]
+        }
+      ]
+    }
+  },
   "icons": [
     {
       "src": "/icons/icon-192.png",

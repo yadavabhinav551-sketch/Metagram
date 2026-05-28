@@ -119,6 +119,20 @@
           <p id="profileMessage" class="error-text"></p>
         </form>
       </section>
+
+      <section id="shareModal" class="modal-layer hidden">
+        <div class="modal-card share-card">
+          <header>
+            <strong>Send Shared Content</strong>
+            <button id="closeShareBtn" class="icon-button" type="button" title="Close">×</button>
+          </header>
+          <div id="sharePreview" class="share-preview"></div>
+          <input id="shareSearchInput" placeholder="Search User ID or Mobile">
+          <div id="shareRecipients" class="share-recipients"></div>
+          <button id="sendShareBtn" class="primary" type="button">Send</button>
+          <p id="shareMessage" class="error-text"></p>
+        </div>
+      </section>
     </main>
   </body>
 </html>

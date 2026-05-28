@@ -65,6 +65,7 @@ const defaultDb = {
   messages: [],
   conversations: [],
   groups: [],
+  sharedItems: [],
   admin: {
     loginId: "6388391842",
     passwordHash: bcrypt.hashSync("123456", 10),
@@ -78,6 +79,7 @@ function normalizeDb(raw = {}) {
     messages: raw.messages || [],
     conversations: raw.conversations || [],
     groups: raw.groups || [],
+    sharedItems: raw.sharedItems || [],
     admin: raw.admin || defaultDb.admin
   };
 }
@@ -235,6 +237,26 @@ function deleteForUser(message, userId) {
   message.deletedFor = [...new Set([...(message.deletedFor || []), userId])];
 }
 
+function mediaKindFromMime(mimeType = "") {
+  return mimeType.startsWith("audio/")
+    ? "audio"
+    : mimeType.startsWith("image/")
+      ? "image"
+      : mimeType.startsWith("video/")
+        ? "video"
+        : "document";
+}
+
+function mediaFromFile(file) {
+  return {
+    kind: mediaKindFromMime(file.mimetype),
+    url: `/uploads/${file.filename}`,
+    originalName: file.originalname,
+    mimeType: file.mimetype,
+    size: file.size
+  };
+}
+
 function userLabel(userId) {
   const user = db.users.find((item) => item.id === userId);
   return user ? `${user.displayName} (${user.userId || user.mobile})` : `Removed user (${userId})`;
@@ -331,6 +353,7 @@ const storage = multer.diskStorage({
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${crypto.randomUUID()}${path.extname(file.originalname)}`)
 });
 const upload = multer({ storage, limits: { fileSize: UPLOAD_FILE_SIZE_LIMIT } });
+const shareUpload = multer({ storage, limits: { fileSize: UPLOAD_FILE_SIZE_LIMIT, files: 10 } });
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
@@ -505,22 +528,37 @@ app.post("/api/conversations/:id/unhide-user", authUser, (req, res) => {
 
 app.post("/api/upload", authUser, upload.single("file"), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "File is required." });
-  const kind = req.file.mimetype.startsWith("audio/")
-    ? "audio"
-    : req.file.mimetype.startsWith("image/")
-      ? "image"
-      : req.file.mimetype.startsWith("video/")
-        ? "video"
-        : "document";
   res.json({
-    media: {
-      kind,
-      url: `/uploads/${req.file.filename}`,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.size
-    }
+    media: mediaFromFile(req.file)
   });
+});
+
+app.post("/api/share-target", shareUpload.fields([{ name: "files", maxCount: 10 }, { name: "file", maxCount: 10 }]), (req, res) => {
+  const uploadedFiles = [...(req.files?.files || []), ...(req.files?.file || [])];
+  const textParts = [req.body.title, req.body.text, req.body.url]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const sharedItem = {
+    id: crypto.randomUUID(),
+    text: [...new Set(textParts)].join("\n"),
+    media: uploadedFiles.map(mediaFromFile),
+    createdAt: new Date().toISOString()
+  };
+  db.sharedItems.push(sharedItem);
+  saveDb();
+  res.redirect(303, `/?share=${encodeURIComponent(sharedItem.id)}`);
+});
+
+app.get("/api/shared/:id", authUser, (req, res) => {
+  const sharedItem = db.sharedItems.find((item) => item.id === req.params.id);
+  if (!sharedItem) return res.status(404).json({ error: "Shared content not found." });
+  res.json({ sharedItem });
+});
+
+app.delete("/api/shared/:id", authUser, (req, res) => {
+  db.sharedItems = db.sharedItems.filter((item) => item.id !== req.params.id);
+  saveDb();
+  res.json({ ok: true });
 });
 
 app.post("/api/admin/login", async (req, res) => {
