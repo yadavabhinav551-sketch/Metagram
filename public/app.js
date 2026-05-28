@@ -8,7 +8,9 @@ const state = {
   presence: [],
   recorder: null,
   audioChunks: [],
-  installPrompt: null
+  installPrompt: null,
+  selectionMode: false,
+  selectedMessageIds: new Set()
 };
 
 const $ = (id) => document.getElementById(id);
@@ -72,6 +74,13 @@ function connectSocket() {
     if (message) message.readBy = readBy;
     renderMessages();
   });
+  state.socket.on("message:deleted", ({ messageId, conversationId, deletedFor }) => {
+    if (conversationId !== state.activeConversation?.id || !deletedFor?.includes(state.user.id)) return;
+    state.messages = state.messages.filter((message) => message.id !== messageId);
+    state.selectedMessageIds.delete(messageId);
+    renderMessages();
+    updateBulkActions();
+  });
   state.socket.on("typing", ({ conversationId, userId, typing }) => {
     if (conversationId !== state.activeConversation?.id || userId === state.user.id) return;
     $("typingLine").textContent = typing ? "Typing..." : "";
@@ -119,7 +128,7 @@ async function loadMessages(conversationId) {
 }
 
 function getOtherMember(conversation) {
-  return conversation.members.find((member) => member.id !== state.user.id) || conversation.members[0];
+  return conversation.members?.find((member) => member.id !== state.user.id) || conversation.members?.[0];
 }
 
 function isOnline(userId) {
@@ -146,12 +155,19 @@ function renderConversations() {
 
 function renderHeader() {
   const conversation = state.activeConversation;
+  $("selectMessagesBtn").disabled = !conversation;
+  $("clearChatBtn").disabled = !conversation;
+  $("hideChatBtn").classList.add("hidden");
   if (!conversation) return;
   const other = getOtherMember(conversation);
   const title = conversation.group?.name || other?.displayName || "Chat";
   $("chatTitle").textContent = title;
   $("chatAvatar").textContent = title.slice(0, 1).toUpperCase();
   $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : (isOnline(other?.id) ? "Online" : "Offline");
+  if (!conversation.groupId && other?.id) {
+    $("hideChatBtn").classList.remove("hidden");
+    $("hideChatBtn").textContent = conversation.hidden ? "Unhide" : "Hide";
+  }
 }
 
 function renderMessages() {
@@ -164,18 +180,35 @@ function renderMessages() {
   $("messages").innerHTML = state.messages.map((message) => {
     const own = message.senderId === state.user.id;
     const ticks = own ? tickLabel(message) : "";
+    const selected = state.selectedMessageIds.has(message.id);
+    const canDeleteEveryone = own && Date.now() - new Date(message.createdAt).getTime() <= 5 * 60 * 1000;
     return `
-      <article class="message ${own ? "own" : ""}">
+      <article class="message ${own ? "own" : ""} ${selected ? "selected" : ""}" data-message="${message.id}">
+        ${state.selectionMode ? `<label class="message-select"><input type="checkbox" data-select-message="${message.id}" ${selected ? "checked" : ""}> Select</label>` : ""}
         ${renderMedia(message.media)}
         ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
         <footer>
           <time>${new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
           ${own ? `<span class="ticks ${ticks === "blue" ? "blue" : ""}">${ticks === "single" ? "✓" : "✓✓"}</span>` : ""}
           <button data-delete="${message.id}" type="button" title="Delete for me">Delete</button>
+          ${canDeleteEveryone ? `<button data-delete-everyone="${message.id}" type="button" title="Delete for everyone">Everyone</button>` : ""}
         </footer>
       </article>`;
   }).join("");
   $("messages").scrollTop = $("messages").scrollHeight;
+  updateBulkActions();
+}
+
+function updateBulkActions() {
+  $("bulkActions").classList.toggle("hidden", !state.selectionMode);
+  $("selectedCount").textContent = `${state.selectedMessageIds.size} selected`;
+  $("selectMessagesBtn").textContent = state.selectionMode ? "Selecting" : "Select";
+}
+
+function exitSelectionMode() {
+  state.selectionMode = false;
+  state.selectedMessageIds.clear();
+  renderMessages();
 }
 
 function renderMedia(media) {
@@ -207,7 +240,7 @@ async function searchUsers() {
   $("searchResults").innerHTML = users.map((user) => `
     <button class="search-result" data-user="${user.id}" type="button">
       <span class="avatar">${user.displayName.slice(0, 1).toUpperCase()}</span>
-      <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}</small></span>
+      <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · hidden" : ""}</small></span>
     </button>
   `).join("");
 }
@@ -261,6 +294,42 @@ document.querySelectorAll(".install-control").forEach((button) => {
   });
 });
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
+$("selectMessagesBtn").addEventListener("click", () => {
+  if (!state.activeConversation) return;
+  state.selectionMode = !state.selectionMode;
+  if (!state.selectionMode) state.selectedMessageIds.clear();
+  renderMessages();
+});
+$("cancelSelectBtn").addEventListener("click", exitSelectionMode);
+$("bulkDeleteBtn").addEventListener("click", async () => {
+  if (!state.selectedMessageIds.size) return;
+  await api("/api/messages/bulk-delete-for-me", { method: "POST", body: JSON.stringify({ ids: [...state.selectedMessageIds] }) });
+  state.messages = state.messages.filter((message) => !state.selectedMessageIds.has(message.id));
+  exitSelectionMode();
+  await loadConversations();
+});
+$("clearChatBtn").addEventListener("click", async () => {
+  if (!state.activeConversation || !confirm("Clear this chat from your screen? Admin records will remain.")) return;
+  await api(`/api/conversations/${state.activeConversation.id}/clear-for-me`, { method: "POST" });
+  state.messages = [];
+  renderMessages();
+  await loadConversations();
+});
+$("hideChatBtn").addEventListener("click", async () => {
+  if (!state.activeConversation || state.activeConversation.groupId) return;
+  const action = state.activeConversation.hidden ? "unhide-user" : "hide-user";
+  await api(`/api/conversations/${state.activeConversation.id}/${action}`, { method: "POST" });
+  state.activeConversation.hidden = !state.activeConversation.hidden;
+  renderHeader();
+  await loadConversations();
+  if (state.activeConversation.hidden) {
+    state.activeConversation = null;
+    state.messages = [];
+    renderHeader();
+    renderMessages();
+    $("chatView").classList.remove("conversation-open");
+  }
+});
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
 $("attachBtn").addEventListener("click", () => $("fileInput").click());
 $("fileInput").addEventListener("change", async (event) => {
@@ -313,6 +382,8 @@ $("conversationList").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-id]");
   if (!button) return;
   state.activeConversation = state.conversations.find((item) => item.id === button.dataset.id);
+  state.selectionMode = false;
+  state.selectedMessageIds.clear();
   state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
   renderHeader();
   renderConversations();
@@ -326,6 +397,8 @@ $("searchResults").addEventListener("click", async (event) => {
   const { conversation } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: button.dataset.user }) });
   await loadConversations();
   state.activeConversation = state.conversations.find((item) => item.id === conversation.id) || conversation;
+  state.selectionMode = false;
+  state.selectedMessageIds.clear();
   state.socket.emit("conversation:join", { conversationId: conversation.id });
   renderHeader();
   await loadMessages(conversation.id);
@@ -335,6 +408,31 @@ $("searchResults").addEventListener("click", async (event) => {
 });
 
 $("messages").addEventListener("click", async (event) => {
+  const checkbox = event.target.closest("[data-select-message]");
+  if (checkbox) {
+    if (checkbox.checked) state.selectedMessageIds.add(checkbox.dataset.selectMessage);
+    else state.selectedMessageIds.delete(checkbox.dataset.selectMessage);
+    renderMessages();
+    return;
+  }
+  const article = event.target.closest("[data-message]");
+  if (state.selectionMode && article && !event.target.closest("button")) {
+    const id = article.dataset.message;
+    if (state.selectedMessageIds.has(id)) state.selectedMessageIds.delete(id);
+    else state.selectedMessageIds.add(id);
+    renderMessages();
+    return;
+  }
+  const deleteEveryoneButton = event.target.closest("[data-delete-everyone]");
+  if (deleteEveryoneButton) {
+    if (!confirm("Delete this message for everyone? Admin records will remain.")) return;
+    await api(`/api/messages/${deleteEveryoneButton.dataset.deleteEveryone}/delete-everyone`, { method: "POST" });
+    state.messages = state.messages.filter((message) => message.id !== deleteEveryoneButton.dataset.deleteEveryone);
+    state.selectedMessageIds.delete(deleteEveryoneButton.dataset.deleteEveryone);
+    renderMessages();
+    await loadConversations();
+    return;
+  }
   const button = event.target.closest("[data-delete]");
   if (!button) return;
   await api(`/api/messages/${button.dataset.delete}/delete-for-me`, { method: "POST" });

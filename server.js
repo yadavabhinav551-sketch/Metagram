@@ -18,6 +18,7 @@ const ADMIN_ENTRY = "/vault-6388391842";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");
 const DB_FILE = path.join(DATA_DIR, "db.json");
+const DELETE_EVERYONE_WINDOW_MS = 5 * 60 * 1000;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -111,6 +112,35 @@ function visibleMessages(conversationId, userId) {
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 }
 
+function otherParticipant(conversation, userId) {
+  return conversation.participants.find((id) => id !== userId);
+}
+
+function isHiddenConversation(conversation, user) {
+  if (conversation.groupId) return false;
+  return (user.hiddenUserIds || []).includes(otherParticipant(conversation, user.id));
+}
+
+function hydrateConversation(conversation, user) {
+  const messages = visibleMessages(conversation.id, user.id);
+  const members = conversation.participants.map((id) => {
+    const member = db.users.find((item) => item.id === id);
+    return { ...publicUser(member), online: onlineUsers.has(id) };
+  });
+  const group = conversation.groupId ? db.groups.find((item) => item.id === conversation.groupId) : null;
+  return {
+    ...conversation,
+    members,
+    group,
+    hidden: isHiddenConversation(conversation, user),
+    lastMessage: messages.at(-1) || null
+  };
+}
+
+function deleteForUser(message, userId) {
+  message.deletedFor = [...new Set([...(message.deletedFor || []), userId])];
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
@@ -147,6 +177,7 @@ app.post("/api/signup", async (req, res) => {
     blocked: false,
     suspended: false,
     deleted: false,
+    hiddenUserIds: [],
     createdAt: new Date().toISOString(),
     lastSeenAt: null
   };
@@ -174,23 +205,15 @@ app.get("/api/users/search", authUser, (req, res) => {
     .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
     .filter((user) => user.userId.toLowerCase().includes(q) || user.mobile.includes(q))
     .slice(0, 20)
-    .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id) }));
+    .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id), hidden: (req.user.hiddenUserIds || []).includes(user.id) }));
   res.json({ users });
 });
 
 app.get("/api/conversations", authUser, (req, res) => {
   const conversations = db.conversations
     .filter((item) => item.participants.includes(req.user.id))
-    .map((conversation) => {
-      const messages = visibleMessages(conversation.id, req.user.id);
-      const lastMessage = messages.at(-1) || null;
-      const members = conversation.participants.map((id) => {
-        const user = db.users.find((item) => item.id === id);
-        return { ...publicUser(user), online: onlineUsers.has(id) };
-      });
-      const group = conversation.groupId ? db.groups.find((item) => item.id === conversation.groupId) : null;
-      return { ...conversation, members, group, lastMessage };
-    })
+    .filter((conversation) => !isHiddenConversation(conversation, req.user))
+    .map((conversation) => hydrateConversation(conversation, req.user))
     .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
   res.json({ conversations });
 });
@@ -199,7 +222,7 @@ app.post("/api/conversations", authUser, (req, res) => {
   const { userId } = req.body;
   const other = db.users.find((user) => user.id === userId && !user.deleted && !user.blocked && !user.suspended);
   if (!other) return res.status(404).json({ error: "User not found." });
-  res.json({ conversation: makeConversation([req.user.id, other.id]) });
+  res.json({ conversation: hydrateConversation(makeConversation([req.user.id, other.id]), req.user) });
 });
 
 app.get("/api/conversations/:id/messages", authUser, (req, res) => {
@@ -214,7 +237,71 @@ app.post("/api/messages/:id/delete-for-me", authUser, (req, res) => {
   const message = db.messages.find((item) => item.id === req.params.id);
   const conversation = db.conversations.find((item) => item.id === message?.conversationId && item.participants.includes(req.user.id));
   if (!message || !conversation) return res.status(404).json({ error: "Message not found." });
-  message.deletedFor = [...new Set([...(message.deletedFor || []), req.user.id])];
+  deleteForUser(message, req.user.id);
+  if (message.senderId === req.user.id) message.isDeletedBySender = true;
+  if (message.senderId !== req.user.id) message.isDeletedByReceiver = true;
+  saveDb();
+  res.json({ ok: true });
+});
+
+app.post("/api/messages/:id/delete-everyone", authUser, (req, res) => {
+  const message = db.messages.find((item) => item.id === req.params.id);
+  const conversation = db.conversations.find((item) => item.id === message?.conversationId && item.participants.includes(req.user.id));
+  if (!message || !conversation) return res.status(404).json({ error: "Message not found." });
+  if (message.senderId !== req.user.id) return res.status(403).json({ error: "Only the sender can delete this message for everyone." });
+  if (Date.now() - new Date(message.createdAt).getTime() > DELETE_EVERYONE_WINDOW_MS) {
+    return res.status(403).json({ error: "Delete for everyone is available for 5 minutes only." });
+  }
+  for (const participantId of conversation.participants) deleteForUser(message, participantId);
+  message.isDeletedBySender = true;
+  message.isDeletedByReceiver = true;
+  message.deletedForEveryoneAt = new Date().toISOString();
+  saveDb();
+  io.to(conversation.id).emit("message:deleted", { messageId: message.id, conversationId: conversation.id, deletedFor: message.deletedFor });
+  io.to("admins").emit("admin:message", message);
+  res.json({ ok: true });
+});
+
+app.post("/api/messages/bulk-delete-for-me", authUser, (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  const allowedConversationIds = new Set(db.conversations.filter((item) => item.participants.includes(req.user.id)).map((item) => item.id));
+  let count = 0;
+  for (const message of db.messages) {
+    if (ids.includes(message.id) && allowedConversationIds.has(message.conversationId)) {
+      deleteForUser(message, req.user.id);
+      count += 1;
+    }
+  }
+  saveDb();
+  res.json({ ok: true, count });
+});
+
+app.post("/api/conversations/:id/clear-for-me", authUser, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  let count = 0;
+  for (const message of db.messages.filter((item) => item.conversationId === conversation.id)) {
+    deleteForUser(message, req.user.id);
+    count += 1;
+  }
+  saveDb();
+  res.json({ ok: true, count });
+});
+
+app.post("/api/conversations/:id/hide-user", authUser, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
+  const otherId = otherParticipant(conversation, req.user.id);
+  req.user.hiddenUserIds = [...new Set([...(req.user.hiddenUserIds || []), otherId])];
+  saveDb();
+  res.json({ ok: true });
+});
+
+app.post("/api/conversations/:id/unhide-user", authUser, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
+  const otherId = otherParticipant(conversation, req.user.id);
+  req.user.hiddenUserIds = (req.user.hiddenUserIds || []).filter((id) => id !== otherId);
   saveDb();
   res.json({ ok: true });
 });

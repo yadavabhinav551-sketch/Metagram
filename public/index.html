@@ -73,8 +73,18 @@
               <strong id="chatTitle">Select a chat</strong>
               <span id="chatStatus">Search a registered user to begin.</span>
             </div>
+            <div class="chat-actions">
+              <button id="hideChatBtn" class="text-button hidden" type="button">Hide</button>
+              <button id="selectMessagesBtn" class="text-button" type="button">Select</button>
+              <button id="clearChatBtn" class="text-button danger" type="button">Clear</button>
+            </div>
           </header>
           <div id="messages" class="messages empty-state">No conversation selected.</div>
+          <div id="bulkActions" class="bulk-actions hidden">
+            <span id="selectedCount">0 selected</span>
+            <button id="bulkDeleteBtn" class="text-button danger" type="button">Delete selected</button>
+            <button id="cancelSelectBtn" class="text-button" type="button">Cancel</button>
+          </div>
           <div id="typingLine" class="typing-line"></div>
           <form id="messageForm" class="composer">
             <input id="fileInput" type="file" class="hidden" accept="image/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt">
