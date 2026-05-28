@@ -1,4 +1,5 @@
 import express from "express";
+import "dotenv/config";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
@@ -7,8 +8,10 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import fs from "fs";
 import path from "path";
+import dns from "dns";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import { MongoClient } from "mongodb";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,14 +19,45 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-before-production";
 const ADMIN_ENTRY = "/vault-6388391842";
 const IS_RENDER = Boolean(process.env.RENDER || process.env.RENDER_EXTERNAL_HOSTNAME || process.env.RENDER_SERVICE_ID);
-const PERSISTENT_ROOT = IS_RENDER ? "/var/data/metagram" : __dirname;
+const PERSISTENT_ROOT = IS_RENDER ? "/tmp/metagram" : __dirname;
 const DATA_DIR = process.env.DATA_DIR || path.join(PERSISTENT_ROOT, "data");
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(PERSISTENT_ROOT, "uploads");
-const DB_FILE = path.join(DATA_DIR, "db.json");
+let activeDataDir = DATA_DIR;
+let activeUploadDir = UPLOAD_DIR;
+let dbFile = path.join(activeDataDir, "db.json");
 const DELETE_EVERYONE_WINDOW_MS = 5 * 60 * 1000;
+const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_DB = process.env.MONGODB_DB || "metagram";
+const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || "app_state";
+const MONGODB_KEEPALIVE_INTERVAL_MS = Number(process.env.MONGODB_KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000);
+const MONGODB_DNS_SERVERS = process.env.MONGODB_DNS_SERVERS?.split(",").map((server) => server.trim()).filter(Boolean);
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+if (MONGODB_DNS_SERVERS?.length) {
+  dns.setServers(MONGODB_DNS_SERVERS);
+}
+
+function ensureWritableDir(dir, fallbackDir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    return dir;
+  } catch (error) {
+    if (!fallbackDir || dir === fallbackDir) throw error;
+    console.warn(`Cannot write to "${dir}". Falling back to "${fallbackDir}".`);
+    fs.mkdirSync(fallbackDir, { recursive: true });
+    return fallbackDir;
+  }
+}
+
+if (!MONGODB_URI) {
+  activeDataDir = ensureWritableDir(DATA_DIR, path.join("/tmp", "metagram", "data"));
+  dbFile = path.join(activeDataDir, "db.json");
+}
+activeUploadDir = ensureWritableDir(UPLOAD_DIR, path.join("/tmp", "metagram", "uploads"));
+
+let mongoClient = null;
+let stateCollection = null;
+let mongoKeepaliveTimer = null;
 
 const defaultDb = {
   users: [],
@@ -37,18 +71,75 @@ const defaultDb = {
   }
 };
 
-function loadDb() {
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(defaultDb, null, 2));
-  }
-  return JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+function normalizeDb(raw = {}) {
+  return {
+    users: raw.users || [],
+    messages: raw.messages || [],
+    conversations: raw.conversations || [],
+    groups: raw.groups || [],
+    admin: raw.admin || defaultDb.admin
+  };
 }
 
-let db = loadDb();
+function loadLocalDb() {
+  if (!fs.existsSync(dbFile)) return normalizeDb(defaultDb);
+  return normalizeDb(JSON.parse(fs.readFileSync(dbFile, "utf8")));
+}
+
+async function loadDb() {
+  if (MONGODB_URI) {
+    try {
+      mongoClient = new MongoClient(MONGODB_URI);
+      await mongoClient.connect();
+      stateCollection = mongoClient.db(MONGODB_DB).collection(MONGODB_COLLECTION);
+      const existing = await stateCollection.findOne({ key: "main" });
+      if (existing) {
+        const { _id, key, ...state } = existing;
+        console.log(`Using MongoDB Atlas database "${MONGODB_DB}".`);
+        return normalizeDb(state);
+      }
+      const initialDb = loadLocalDb();
+      await stateCollection.insertOne({ key: "main", ...initialDb });
+      console.log(`Initialized MongoDB Atlas database "${MONGODB_DB}" from local data.`);
+      return initialDb;
+    } catch (error) {
+      console.error("MongoDB connection failed. Check MONGODB_URI, database user password, and Atlas network access.");
+      throw error;
+    }
+  }
+
+  if (!fs.existsSync(dbFile)) {
+    fs.writeFileSync(dbFile, JSON.stringify(defaultDb, null, 2));
+  }
+  console.log("Using local JSON database. Set MONGODB_URI in production.");
+  return normalizeDb(JSON.parse(fs.readFileSync(dbFile, "utf8")));
+}
+
+let db = await loadDb();
 
 function saveDb() {
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+  if (stateCollection) {
+    stateCollection
+      .replaceOne({ key: "main" }, { key: "main", ...db }, { upsert: true })
+      .catch((error) => console.error("MongoDB save failed:", error));
+    return;
+  }
+  fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
 }
+
+function startMongoKeepalive() {
+  if (!mongoClient || mongoKeepaliveTimer || MONGODB_KEEPALIVE_INTERVAL_MS <= 0) return;
+  mongoKeepaliveTimer = setInterval(async () => {
+    try {
+      await mongoClient.db(MONGODB_DB).command({ ping: 1 });
+      console.log("MongoDB keepalive ping sent.");
+    } catch (error) {
+      console.error("MongoDB keepalive ping failed:", error);
+    }
+  }, MONGODB_KEEPALIVE_INTERVAL_MS);
+}
+
+startMongoKeepalive();
 
 function publicUser(user) {
   if (!user) return null;
@@ -150,14 +241,14 @@ const onlineUsers = new Map();
 const typingTimers = new Map();
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  destination: (_req, _file, cb) => cb(null, activeUploadDir),
   filename: (_req, file, cb) => cb(null, `${Date.now()}-${crypto.randomUUID()}${path.extname(file.originalname)}`)
 });
 const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
-app.use("/uploads", express.static(UPLOAD_DIR));
+app.use("/uploads", express.static(activeUploadDir));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get(ADMIN_ENTRY, (_req, res) => {
