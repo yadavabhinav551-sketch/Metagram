@@ -1,0 +1,176 @@
+const adminState = {
+  token: localStorage.getItem("adminToken"),
+  users: [],
+  conversations: [],
+  groups: [],
+  socket: null
+};
+
+const $ = (id) => document.getElementById(id);
+const adminApi = async (url, options = {}) => {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(adminState.token ? { Authorization: `Bearer ${adminState.token}` } : {}),
+      ...(options.headers || {})
+    }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Request failed.");
+  return data;
+};
+
+function showAdminApp() {
+  $("adminLogin").classList.add("hidden");
+  $("adminApp").classList.remove("hidden");
+  $("exportLink").setAttribute("href", `/api/admin/export?token=${encodeURIComponent(adminState.token)}`);
+}
+
+async function loadOverview() {
+  const data = await adminApi("/api/admin/overview");
+  adminState.users = data.users;
+  adminState.conversations = data.conversations;
+  adminState.groups = data.groups;
+  renderUsers();
+  renderConversations();
+  renderGroupMembers();
+}
+
+function renderUsers() {
+  $("adminUsers").innerHTML = adminState.users.map((user) => `
+    <div class="admin-item">
+      <strong>${escapeHtml(user.displayName)}</strong>
+      <small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}</small>
+      <small>${user.deleted ? "Deleted" : user.blocked ? "Blocked" : user.suspended ? "Suspended" : "Active"}</small>
+      <div class="admin-actions">
+        <button data-user-action="id" data-id="${user.id}" type="button">Change ID</button>
+        <button data-user-action="password" data-id="${user.id}" type="button">Password</button>
+        <button data-user-action="blocked" data-id="${user.id}" type="button">${user.blocked ? "Unblock" : "Block"}</button>
+        <button class="danger" data-user-action="deleted" data-id="${user.id}" type="button">${user.deleted ? "Restore" : "Delete"}</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderConversations() {
+  $("adminConversations").innerHTML = adminState.conversations.map((conversation) => {
+    const title = conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName).join(" ↔ ");
+    return `
+      <button class="admin-item" data-conversation="${conversation.id}" type="button">
+        <strong>${escapeHtml(title || "Conversation")}</strong>
+        <small>${conversation.messageCount} messages</small>
+      </button>`;
+  }).join("");
+}
+
+function renderGroupMembers() {
+  $("groupMembers").innerHTML = adminState.users
+    .filter((user) => !user.deleted)
+    .map((user) => `<option value="${user.id}">${escapeHtml(user.displayName)} (${escapeHtml(user.userId)})</option>`)
+    .join("");
+}
+
+async function loadTranscript(conversationId) {
+  const conversation = adminState.conversations.find((item) => item.id === conversationId);
+  const title = conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName).join(" ↔ ");
+  $("transcriptTitle").textContent = title || "Transcript";
+  const { messages } = await adminApi(`/api/admin/conversations/${conversationId}/messages`);
+  $("adminMessages").innerHTML = messages.map((message) => {
+    const sender = adminState.users.find((user) => user.id === message.senderId);
+    return `
+      <article class="admin-message">
+        <strong>${escapeHtml(sender?.displayName || "Unknown")}</strong>
+        <small>${new Date(message.createdAt).toLocaleString()} · hidden for ${message.deletedFor?.length || 0} users</small>
+        ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
+        ${renderAdminMedia(message.media)}
+      </article>`;
+  }).join("") || "No messages.";
+}
+
+function renderAdminMedia(media) {
+  if (!media) return "";
+  if (media.kind === "image") return `<img src="${media.url}" alt="${escapeHtml(media.originalName)}">`;
+  if (media.kind === "voice") return `<audio controls src="${media.url}"></audio>`;
+  return `<a href="${media.url}" target="_blank" rel="noopener">${escapeHtml(media.originalName)}</a>`;
+}
+
+async function updateUser(id, patch) {
+  await adminApi(`/api/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  await loadOverview();
+}
+
+function connectAdminSocket() {
+  adminState.socket?.disconnect();
+  adminState.socket = io({ auth: { token: adminState.token } });
+  adminState.socket.on("connect", () => adminState.socket.emit("admin:join"));
+  adminState.socket.on("admin:message", () => loadOverview());
+}
+
+$("adminLoginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const body = Object.fromEntries(new FormData(event.target));
+    const { token } = await adminApi("/api/admin/login", { method: "POST", body: JSON.stringify(body) });
+    adminState.token = token;
+    localStorage.setItem("adminToken", token);
+    showAdminApp();
+    connectAdminSocket();
+    await loadOverview();
+  } catch (error) {
+    $("adminError").textContent = error.message;
+  }
+});
+
+$("adminUsers").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-user-action]");
+  if (!button) return;
+  const user = adminState.users.find((item) => item.id === button.dataset.id);
+  if (!user) return;
+  const action = button.dataset.userAction;
+  if (action === "id") {
+    const userId = prompt("New User ID", user.userId);
+    if (userId) await updateUser(user.id, { userId });
+  }
+  if (action === "password") {
+    const password = prompt("New password");
+    if (password) await updateUser(user.id, { password });
+  }
+  if (action === "blocked") await updateUser(user.id, { blocked: !user.blocked });
+  if (action === "deleted") await updateUser(user.id, { deleted: !user.deleted });
+});
+
+$("adminConversations").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-conversation]");
+  if (button) await loadTranscript(button.dataset.conversation);
+});
+
+$("credentialsForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const body = Object.fromEntries(new FormData(event.target));
+  await adminApi("/api/admin/credentials", { method: "POST", body: JSON.stringify(body) });
+  event.target.reset();
+  alert("Admin credentials updated.");
+});
+
+$("groupForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const memberIds = Array.from($("groupMembers").selectedOptions).map((option) => option.value);
+  const name = new FormData(event.target).get("name");
+  await adminApi("/api/admin/groups", { method: "POST", body: JSON.stringify({ name, memberIds }) });
+  event.target.reset();
+  await loadOverview();
+});
+
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+}
+
+if (adminState.token) {
+  showAdminApp();
+  connectAdminSocket();
+  loadOverview().catch(() => {
+    localStorage.removeItem("adminToken");
+    location.reload();
+  });
+}

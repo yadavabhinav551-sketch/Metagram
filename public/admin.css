@@ -1,0 +1,152 @@
+.admin-shell {
+  min-height: 100vh;
+  background: #f4f6f8;
+}
+
+.brand-block.compact {
+  margin-bottom: 18px;
+}
+
+.brand-block.compact h1 {
+  font-size: 24px;
+}
+
+.admin-app {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #17201d;
+  color: #fff;
+}
+
+.admin-header span {
+  display: block;
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
+.export-link {
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  padding: 9px 12px;
+  text-decoration: none;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: 300px 300px minmax(0, 1fr) 320px;
+  gap: 12px;
+  padding: 12px;
+  min-height: 0;
+}
+
+.admin-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.admin-panel h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.admin-item {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  margin-bottom: 8px;
+  text-align: left;
+}
+
+.admin-item small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.admin-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.admin-actions button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf9;
+  padding: 7px;
+}
+
+.admin-actions .danger {
+  color: var(--danger);
+}
+
+.admin-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-message {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfc;
+}
+
+.admin-message p {
+  margin: 6px 0;
+}
+
+.admin-message img {
+  max-width: 260px;
+  max-height: 260px;
+  display: block;
+  border-radius: 8px;
+}
+
+select[multiple] {
+  min-height: 170px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+@media (max-width: 1180px) {
+  .admin-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .transcript {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

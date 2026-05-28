@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Secure Admin</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/admin.css">
+    <script src="/socket.io/socket.io.js" defer></script>
+    <script src="/admin.js" defer></script>
+  </head>
+  <body>
+    <main class="admin-shell">
+      <section id="adminLogin" class="auth-view">
+        <div class="auth-card">
+          <div class="brand-block compact">
+            <h1>Admin Access</h1>
+            <p>Restricted monitoring console.</p>
+          </div>
+          <form id="adminLoginForm" class="stack">
+            <input name="loginId" placeholder="Admin Login ID" autocomplete="username" required>
+            <input name="password" placeholder="Admin Password" type="password" autocomplete="current-password" required>
+            <button class="primary" type="submit">Login</button>
+          </form>
+          <p id="adminError" class="error-text"></p>
+        </div>
+      </section>
+
+      <section id="adminApp" class="admin-app hidden">
+        <header class="admin-header">
+          <div>
+            <strong>Business Chat Admin</strong>
+            <span>Total visibility console</span>
+          </div>
+          <a class="export-link" href="/api/admin/export" id="exportLink">Export data</a>
+        </header>
+        <section class="admin-grid">
+          <aside class="admin-panel">
+            <h2>Users</h2>
+            <div id="adminUsers"></div>
+          </aside>
+          <aside class="admin-panel">
+            <h2>Chats</h2>
+            <div id="adminConversations"></div>
+          </aside>
+          <section class="admin-panel transcript">
+            <h2 id="transcriptTitle">Transcript</h2>
+            <div id="adminMessages" class="admin-messages">Select a chat.</div>
+          </section>
+          <aside class="admin-panel">
+            <h2>Admin Settings</h2>
+            <form id="credentialsForm" class="stack">
+              <input name="loginId" placeholder="New Admin Login ID" required>
+              <input name="password" placeholder="New Admin Password" type="password" required>
+              <button class="primary" type="submit">Update credentials</button>
+            </form>
+            <h2>Groups</h2>
+            <form id="groupForm" class="stack">
+              <input name="name" placeholder="Group or department name" required>
+              <select name="members" id="groupMembers" multiple></select>
+              <button class="primary" type="submit">Create group</button>
+            </form>
+          </aside>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>
