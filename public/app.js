@@ -459,7 +459,7 @@ $("messages").addEventListener("click", async (event) => {
   }
   const deleteEveryoneButton = event.target.closest("[data-delete-everyone]");
   if (deleteEveryoneButton) {
-    if (!confirm("Delete this message for everyone? Admin records will remain.")) return;
+    if (!confirm("Delete this message for everyone?")) return;
     await api(`/api/messages/${deleteEveryoneButton.dataset.deleteEveryone}/delete-everyone`, { method: "POST" });
     state.messages = state.messages.filter((message) => message.id !== deleteEveryoneButton.dataset.deleteEveryone);
     state.selectedMessageIds.delete(deleteEveryoneButton.dataset.deleteEveryone);
