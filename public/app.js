@@ -7,7 +7,8 @@ const state = {
   messages: [],
   presence: [],
   recorder: null,
-  audioChunks: []
+  audioChunks: [],
+  installPrompt: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -78,7 +79,7 @@ function connectSocket() {
 }
 
 async function bootstrap() {
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+  registerPwa();
   if (!state.token) return;
   try {
     const { user } = await api("/api/me");
@@ -89,6 +90,20 @@ async function bootstrap() {
   } catch {
     showAuth();
   }
+}
+
+function registerPwa() {
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+    });
+  }
+}
+
+function setInstallButtonsVisible(visible) {
+  document.querySelectorAll(".install-control").forEach((button) => {
+    button.classList.toggle("hidden", !visible);
+  });
 }
 
 async function loadConversations() {
@@ -236,6 +251,15 @@ function escapeHtml(value = "") {
 $("loginTab").addEventListener("click", () => setAuthMode("login"));
 $("signupTab").addEventListener("click", () => setAuthMode("signup"));
 $("logoutBtn").addEventListener("click", showAuth);
+document.querySelectorAll(".install-control").forEach((button) => {
+  button.addEventListener("click", async () => {
+    if (!state.installPrompt) return;
+    state.installPrompt.prompt();
+    await state.installPrompt.userChoice;
+    state.installPrompt = null;
+    setInstallButtonsVisible(false);
+  });
+});
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
 $("attachBtn").addEventListener("click", () => $("fileInput").click());
@@ -325,6 +349,17 @@ $("messageForm").addEventListener("submit", (event) => {
   if (!text.trim()) return;
   state.socket.emit("message:send", { conversationId: state.activeConversation.id, text });
   $("messageInput").value = "";
+});
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  state.installPrompt = event;
+  setInstallButtonsVisible(true);
+});
+
+window.addEventListener("appinstalled", () => {
+  state.installPrompt = null;
+  setInstallButtonsVisible(false);
 });
 
 bootstrap();
