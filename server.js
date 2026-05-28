@@ -251,6 +251,10 @@ app.use(express.json({ limit: "1mb" }));
 app.use("/uploads", express.static(activeUploadDir));
 app.use(express.static(path.join(__dirname, "public")));
 
+app.get("/healthz", (_req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
 app.get(ADMIN_ENTRY, (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
