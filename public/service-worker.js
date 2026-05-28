@@ -1,4 +1,4 @@
-const CACHE_VERSION = "metagram-pwa-v5";
+const CACHE_VERSION = "metagram-pwa-v6";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -8,6 +8,7 @@ const APP_SHELL = [
   "/admin.js",
   "/admin.html",
   "/manifest.json",
+  "/admin-manifest.json",
   "/icon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",

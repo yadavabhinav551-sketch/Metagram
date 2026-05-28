@@ -3,7 +3,8 @@ const adminState = {
   users: [],
   conversations: [],
   groups: [],
-  socket: null
+  socket: null,
+  installPrompt: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -25,6 +26,20 @@ function showAdminApp() {
   $("adminLogin").classList.add("hidden");
   $("adminApp").classList.remove("hidden");
   $("exportLink").setAttribute("href", `/api/admin/export?token=${encodeURIComponent(adminState.token)}`);
+}
+
+function registerAdminPwa() {
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+    });
+  }
+}
+
+function setInstallButtonsVisible(visible) {
+  document.querySelectorAll(".install-control").forEach((button) => {
+    button.classList.toggle("hidden", !visible);
+  });
 }
 
 async function loadOverview() {
@@ -162,6 +177,16 @@ $("groupForm").addEventListener("submit", async (event) => {
   await loadOverview();
 });
 
+document.querySelectorAll(".install-control").forEach((button) => {
+  button.addEventListener("click", async () => {
+    if (!adminState.installPrompt) return;
+    adminState.installPrompt.prompt();
+    await adminState.installPrompt.userChoice;
+    adminState.installPrompt = null;
+    setInstallButtonsVisible(false);
+  });
+});
+
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
@@ -174,3 +199,16 @@ if (adminState.token) {
     location.reload();
   });
 }
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  adminState.installPrompt = event;
+  setInstallButtonsVisible(true);
+});
+
+window.addEventListener("appinstalled", () => {
+  adminState.installPrompt = null;
+  setInstallButtonsVisible(false);
+});
+
+registerAdminPwa();

@@ -5,9 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#17201d">
     <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Metagram Admin">
     <title>Secure Admin</title>
-    <link rel="manifest" href="/manifest.json">
+    <link rel="manifest" href="/admin-manifest.json">
     <link rel="icon" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
     <link rel="preload" href="/styles.css" as="style">
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/admin.css">
@@ -27,6 +31,7 @@
             <input name="password" placeholder="Admin Password" type="password" autocomplete="current-password" required>
             <button class="primary" type="submit">Login</button>
           </form>
+          <button class="admin-install-button install-control hidden" type="button">Install Admin App</button>
           <p id="adminError" class="error-text"></p>
         </div>
       </section>
@@ -37,7 +42,10 @@
             <strong>Business Chat Admin</strong>
             <span>Total visibility console</span>
           </div>
-          <a class="export-link" href="/api/admin/export" id="exportLink">Export data</a>
+          <div class="admin-header-actions">
+            <button class="export-link install-control hidden" type="button">Install App</button>
+            <a class="export-link" href="/api/admin/export" id="exportLink">Export data</a>
+          </div>
         </header>
         <section class="admin-grid">
           <aside class="admin-panel">

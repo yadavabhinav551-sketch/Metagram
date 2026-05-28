@@ -34,12 +34,30 @@
   font-size: 12px;
 }
 
-.export-link {
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-link,
+.admin-install-button {
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: 8px;
   padding: 9px 12px;
   text-decoration: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.admin-install-button {
+  width: 100%;
+  margin-top: 10px;
+  color: #17201d;
+  border-color: var(--line);
+  background: #f8faf9;
 }
 
 .admin-grid {
@@ -148,5 +166,14 @@ select[multiple] {
   .admin-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .admin-header-actions {
+    width: 100%;
+  }
+
+  .admin-header-actions .export-link {
+    flex: 1;
+    text-align: center;
   }
 }
