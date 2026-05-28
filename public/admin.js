@@ -38,8 +38,16 @@ function registerAdminPwa() {
 
 function setInstallButtonsVisible(visible) {
   document.querySelectorAll(".install-control").forEach((button) => {
-    button.classList.toggle("hidden", !visible);
+    button.classList.toggle("hidden", isStandaloneApp() || !visible);
   });
+}
+
+function isStandaloneApp() {
+  return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+}
+
+function showInstallHelp() {
+  alert("Chrome menu open karo, phir Install app ya Add to Home screen par tap karo. Admin app direct admin section se open hoga.");
 }
 
 async function loadOverview() {
@@ -63,6 +71,7 @@ function renderUsers() {
         <button data-user-action="password" data-id="${user.id}" type="button">Password</button>
         <button data-user-action="blocked" data-id="${user.id}" type="button">${user.blocked ? "Unblock" : "Block"}</button>
         <button class="danger" data-user-action="deleted" data-id="${user.id}" type="button">${user.deleted ? "Restore" : "Delete"}</button>
+        ${user.deleted ? `<button class="danger" data-user-action="remove" data-id="${user.id}" type="button">Remove</button>` : ""}
       </div>
     </div>
   `).join("");
@@ -153,6 +162,11 @@ $("adminUsers").addEventListener("click", async (event) => {
   }
   if (action === "blocked") await updateUser(user.id, { blocked: !user.blocked });
   if (action === "deleted") await updateUser(user.id, { deleted: !user.deleted });
+  if (action === "remove") {
+    if (!confirm(`Permanently remove ${user.displayName} from the users section? This cannot be undone.`)) return;
+    await adminApi(`/api/admin/users/${user.id}/permanent`, { method: "DELETE" });
+    await loadOverview();
+  }
 });
 
 $("adminConversations").addEventListener("click", async (event) => {
@@ -179,11 +193,14 @@ $("groupForm").addEventListener("submit", async (event) => {
 
 document.querySelectorAll(".install-control").forEach((button) => {
   button.addEventListener("click", async () => {
-    if (!adminState.installPrompt) return;
+    if (!adminState.installPrompt) {
+      showInstallHelp();
+      return;
+    }
     adminState.installPrompt.prompt();
     await adminState.installPrompt.userChoice;
     adminState.installPrompt = null;
-    setInstallButtonsVisible(false);
+    setInstallButtonsVisible(true);
   });
 });
 
@@ -212,3 +229,4 @@ window.addEventListener("appinstalled", () => {
 });
 
 registerAdminPwa();
+setInstallButtonsVisible(true);

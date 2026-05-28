@@ -86,6 +86,10 @@ function connectSocket() {
     if (conversationId !== state.activeConversation?.id || userId === state.user.id) return;
     $("typingLine").textContent = typing ? "Typing..." : "";
   });
+  state.socket.on("account:disabled", ({ reason } = {}) => {
+    alert(reason || "Your account is not active.");
+    showAuth();
+  });
 }
 
 async function bootstrap() {

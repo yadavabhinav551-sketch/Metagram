@@ -234,6 +234,91 @@ function deleteForUser(message, userId) {
   message.deletedFor = [...new Set([...(message.deletedFor || []), userId])];
 }
 
+function userLabel(userId) {
+  const user = db.users.find((item) => item.id === userId);
+  return user ? `${user.displayName} (${user.userId || user.mobile})` : `Removed user (${userId})`;
+}
+
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+}
+
+async function closeUserSessions(user, reason = "Account is not active.") {
+  io.to(user.id).emit("account:disabled", { reason });
+  const sockets = await io.in(user.id).fetchSockets();
+  for (const socket of sockets) {
+    socket.disconnect(true);
+  }
+  onlineUsers.delete(user.id);
+}
+
+function buildExportHtml() {
+  const exportedAt = new Date().toLocaleString();
+  const userRows = db.users.map((user) => `
+    <tr>
+      <td>${escapeHtml(user.displayName)}</td>
+      <td>${escapeHtml(user.userId)}</td>
+      <td>${escapeHtml(user.mobile)}</td>
+      <td>${user.deleted ? "Deleted" : user.blocked ? "Blocked" : user.suspended ? "Suspended" : "Active"}</td>
+      <td>${escapeHtml(user.createdAt || "")}</td>
+    </tr>
+  `).join("");
+  const chatSections = db.conversations.map((conversation) => {
+    const title = conversation.groupId
+      ? escapeHtml(db.groups.find((group) => group.id === conversation.groupId)?.name || "Group")
+      : escapeHtml(conversation.participants.map(userLabel).join(" <-> "));
+    const messages = db.messages
+      .filter((message) => message.conversationId === conversation.id)
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .map((message) => `
+        <tr>
+          <td>${escapeHtml(new Date(message.createdAt).toLocaleString())}</td>
+          <td>${escapeHtml(userLabel(message.senderId))}</td>
+          <td>${escapeHtml(message.text || message.media?.originalName || "")}</td>
+          <td>${escapeHtml(message.media?.kind || "text")}</td>
+          <td>${message.deletedFor?.length || 0}</td>
+        </tr>
+      `).join("");
+    return `
+      <section>
+        <h2>${title}</h2>
+        <table>
+          <thead><tr><th>Time</th><th>Sender</th><th>Message / File</th><th>Type</th><th>Hidden For</th></tr></thead>
+          <tbody>${messages || `<tr><td colspan="5">No messages.</td></tr>`}</tbody>
+        </table>
+      </section>
+    `;
+  }).join("");
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Metagram Chat Export</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #17201d; margin: 24px; }
+      h1 { margin-bottom: 4px; }
+      section { margin-top: 28px; page-break-inside: avoid; }
+      table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+      th, td { border: 1px solid #d7dedb; padding: 8px; text-align: left; vertical-align: top; }
+      th { background: #eef4f1; }
+      .muted { color: #66736f; }
+    </style>
+  </head>
+  <body>
+    <h1>Metagram Chat Export</h1>
+    <p class="muted">Exported at ${escapeHtml(exportedAt)}</p>
+    <section>
+      <h2>Users</h2>
+      <table>
+        <thead><tr><th>Name</th><th>User ID</th><th>Mobile</th><th>Status</th><th>Created</th></tr></thead>
+        <tbody>${userRows || `<tr><td colspan="5">No users.</td></tr>`}</tbody>
+      </table>
+    </section>
+    ${chatSections || "<section><h2>Chats</h2><p>No conversations.</p></section>"}
+  </body>
+</html>`;
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
@@ -473,6 +558,7 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "User not found." });
   const { userId, password, blocked, suspended, deleted, displayName, mobile } = req.body;
+  const wasActive = !user.deleted && !user.blocked && !user.suspended;
   if (userId && db.users.some((item) => item.id !== user.id && item.userId === userId)) {
     return res.status(409).json({ error: "User ID already exists." });
   }
@@ -487,8 +573,28 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   if (typeof deleted === "boolean") user.deleted = deleted;
   if (password) user.passwordHash = await bcrypt.hash(password, 10);
   saveDb();
+  if (wasActive && (user.deleted || user.blocked || user.suspended)) {
+    await closeUserSessions(user, "Your account has been closed by admin.");
+  }
   io.emit("presence", presencePayload());
   res.json({ user: publicUser(user) });
+});
+
+app.delete("/api/admin/users/:id/permanent", authAdmin, async (req, res) => {
+  const user = db.users.find((item) => item.id === req.params.id);
+  if (!user) return res.status(404).json({ error: "User not found." });
+  if (!user.deleted) return res.status(400).json({ error: "Delete the user before permanently removing them." });
+  await closeUserSessions(user, "Your account has been permanently removed by admin.");
+  db.users = db.users.filter((item) => item.id !== user.id);
+  for (const remainingUser of db.users) {
+    remainingUser.hiddenUserIds = (remainingUser.hiddenUserIds || []).filter((id) => id !== user.id);
+  }
+  for (const group of db.groups) {
+    group.memberIds = (group.memberIds || []).filter((id) => id !== user.id);
+  }
+  saveDb();
+  io.emit("presence", presencePayload());
+  res.json({ ok: true });
 });
 
 app.post("/api/admin/groups", authAdmin, (req, res) => {
@@ -503,8 +609,9 @@ app.post("/api/admin/groups", authAdmin, (req, res) => {
 });
 
 app.get("/api/admin/export", authAdmin, (_req, res) => {
-  res.setHeader("Content-Disposition", `attachment; filename="business-chat-export-${Date.now()}.json"`);
-  res.json(db);
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="metagram-chat-export-${Date.now()}.html"`);
+  res.send(buildExportHtml());
 });
 
 function markMessagesRead(conversationId, readerId) {
@@ -555,6 +662,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("message:send", ({ conversationId, text = "", media = null }) => {
+    if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
     const conversation = db.conversations.find((item) => item.id === conversationId && item.participants.includes(socket.user?.id));
     if (!conversation || (!text.trim() && !media)) return;
     const now = new Date().toISOString();
@@ -579,6 +687,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("typing", ({ conversationId, typing }) => {
+    if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
     const conversation = db.conversations.find((item) => item.id === conversationId && item.participants.includes(socket.user?.id));
     if (!conversation) return;
     socket.to(conversationId).emit("typing", { conversationId, userId: socket.user.id, typing: Boolean(typing) });
