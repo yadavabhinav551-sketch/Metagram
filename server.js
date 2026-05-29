@@ -32,6 +32,10 @@ const MONGODB_DB = process.env.MONGODB_DB || "metagram";
 const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || "app_state";
 const MONGODB_KEEPALIVE_INTERVAL_MS = Number(process.env.MONGODB_KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000);
 const MONGODB_DNS_SERVERS = process.env.MONGODB_DNS_SERVERS?.split(",").map((server) => server.trim()).filter(Boolean);
+const SELF_PING_ENABLED = String(process.env.SELF_PING_ENABLED ?? (IS_RENDER ? "true" : "false")).toLowerCase() === "true";
+const SELF_PING_INTERVAL_MS = Number(process.env.SELF_PING_INTERVAL_MS || 12 * 60 * 1000);
+const SELF_PING_URL = process.env.SELF_PING_URL
+  || (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}/healthz` : "");
 
 if (MONGODB_DNS_SERVERS?.length) {
   dns.setServers(MONGODB_DNS_SERVERS);
@@ -59,6 +63,7 @@ activeUploadDir = ensureWritableDir(UPLOAD_DIR, path.join("/tmp", "metagram", "u
 let mongoClient = null;
 let stateCollection = null;
 let mongoKeepaliveTimer = null;
+let selfPingTimer = null;
 
 const defaultDb = {
   users: [],
@@ -148,6 +153,19 @@ function startMongoKeepalive() {
 }
 
 startMongoKeepalive();
+
+function startSelfPing() {
+  if (!SELF_PING_ENABLED || !SELF_PING_URL || selfPingTimer || SELF_PING_INTERVAL_MS <= 0) return;
+  selfPingTimer = setInterval(async () => {
+    try {
+      const response = await fetch(SELF_PING_URL, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      console.log(`Self ping ok: ${SELF_PING_URL}`);
+    } catch (error) {
+      console.error("Self ping failed:", error);
+    }
+  }, SELF_PING_INTERVAL_MS);
+}
 
 function publicUser(user) {
   if (!user) return null;
@@ -297,6 +315,20 @@ function userLabel(userId) {
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+}
+
+function removeMessageMediaFiles(messages) {
+  for (const message of messages) {
+    const url = message.media?.url;
+    if (!url?.startsWith("/uploads/")) continue;
+    const filename = path.basename(url);
+    const filePath = path.join(activeUploadDir, filename);
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (error) {
+      console.error(`Could not remove media file "${filename}":`, error);
+    }
+  }
 }
 
 async function closeUserSessions(user, reason = "Account is not active.") {
@@ -688,6 +720,19 @@ app.get("/api/admin/conversations/:id/messages", authAdmin, (req, res) => {
   res.json({ messages });
 });
 
+app.delete("/api/admin/conversations/:id/messages", authAdmin, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id);
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  const removedMessages = db.messages.filter((message) => message.conversationId === conversation.id);
+  if (!removedMessages.length) return res.json({ ok: true, removedCount: 0 });
+  db.messages = db.messages.filter((message) => message.conversationId !== conversation.id);
+  removeMessageMediaFiles(removedMessages);
+  saveDb();
+  io.to([conversation.id, ...conversation.participants]).emit("conversation:cleared", { conversationId: conversation.id });
+  io.to("admins").emit("admin:conversation-cleared", { conversationId: conversation.id, removedCount: removedMessages.length });
+  res.json({ ok: true, removedCount: removedMessages.length });
+});
+
 app.post("/api/admin/credentials", authAdmin, async (req, res) => {
   const { loginId, password } = req.body;
   if (!loginId || !password) return res.status(400).json({ error: "Login ID and password are required." });
@@ -891,6 +936,43 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("call:invite", ({ conversationId }) => {
+    if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
+    const conversation = db.conversations.find((item) => item.id === conversationId && !item.groupId && item.participants.includes(socket.user?.id));
+    if (!conversation) return;
+    const peerId = otherParticipant(conversation, socket.user.id);
+    if (!peerId) return;
+    io.to(peerId).emit("call:incoming", {
+      conversationId: conversation.id,
+      fromUserId: socket.user.id,
+      fromName: socket.user.displayName || socket.user.userId || "User"
+    });
+  });
+
+  socket.on("call:accept", ({ conversationId, targetUserId }) => {
+    if (!socket.user || !targetUserId) return;
+    const conversation = db.conversations.find((item) => item.id === conversationId && !item.groupId && item.participants.includes(socket.user.id) && item.participants.includes(targetUserId));
+    if (!conversation) return;
+    io.to(targetUserId).emit("call:accepted", { conversationId, fromUserId: socket.user.id });
+  });
+
+  socket.on("call:reject", ({ conversationId, targetUserId }) => {
+    if (!socket.user || !targetUserId) return;
+    io.to(targetUserId).emit("call:rejected", { conversationId, fromUserId: socket.user.id });
+  });
+
+  socket.on("call:end", ({ conversationId, targetUserId }) => {
+    if (!socket.user || !targetUserId) return;
+    io.to(targetUserId).emit("call:ended", { conversationId, fromUserId: socket.user.id });
+  });
+
+  socket.on("call:signal", ({ conversationId, targetUserId, signal }) => {
+    if (!socket.user || !targetUserId || !signal) return;
+    const conversation = db.conversations.find((item) => item.id === conversationId && !item.groupId && item.participants.includes(socket.user.id) && item.participants.includes(targetUserId));
+    if (!conversation) return;
+    io.to(targetUserId).emit("call:signal", { conversationId, fromUserId: socket.user.id, signal });
+  });
+
   socket.on("admin:join", () => {
     if (socket.role === "admin") socket.join("admins");
   });
@@ -908,4 +990,5 @@ io.on("connection", (socket) => {
 server.listen(PORT, () => {
   console.log(`Business chat running at http://localhost:${PORT}`);
   console.log(`Hidden admin entry: http://localhost:${PORT}${ADMIN_ENTRY}`);
+  startSelfPing();
 });

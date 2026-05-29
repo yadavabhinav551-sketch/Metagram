@@ -75,6 +75,7 @@
               <span id="chatStatus">Search a registered user to begin.</span>
             </div>
             <div class="chat-actions">
+              <button id="callBtn" class="text-button hidden" type="button">Call</button>
               <button id="hideChatBtn" class="text-button hidden" type="button">Hide</button>
               <button id="selectMessagesBtn" class="text-button" type="button">Select</button>
               <button id="clearChatBtn" class="text-button danger" type="button">Clear</button>
@@ -97,6 +98,7 @@
             <input id="fileInput" type="file" class="hidden" multiple accept="image/*,audio/*,video/*,.mp3,.m4a,.aac,.wav,.ogg,.mp4,.m4v,.mov,.webm,.mkv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z">
             <button id="attachBtn" class="icon-button" type="button" title="Attach file">＋</button>
             <button id="voiceBtn" class="icon-button" type="button" title="Record voice">◉</button>
+            <button id="videoRecordBtn" class="icon-button" type="button" title="Record video">▣</button>
             <button id="emojiBtn" class="icon-button" type="button" title="Emoji">☺</button>
             <input id="messageInput" placeholder="Message" autocomplete="off">
             <button class="send-button" type="submit" title="Send">➤</button>
@@ -138,6 +140,22 @@
           <div id="shareRecipients" class="share-recipients"></div>
           <button id="sendShareBtn" class="primary" type="button">Send</button>
           <p id="shareMessage" class="error-text"></p>
+        </div>
+      </section>
+
+      <section id="callModal" class="modal-layer hidden">
+        <div class="modal-card call-card">
+          <header>
+            <strong id="callTitle">Voice call</strong>
+            <button id="closeCallBtn" class="icon-button" type="button" title="End call">×</button>
+          </header>
+          <p id="callStatus">Connecting...</p>
+          <audio id="remoteAudio" autoplay playsinline></audio>
+          <div id="incomingCallActions" class="call-actions hidden">
+            <button id="acceptCallBtn" class="primary" type="button">Accept</button>
+            <button id="declineCallBtn" class="text-button danger" type="button">Decline</button>
+          </div>
+          <button id="endCallBtn" class="text-button danger" type="button">End call</button>
         </div>
       </section>
     </main>

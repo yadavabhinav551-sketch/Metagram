@@ -14,5 +14,9 @@ services:
         value: metagram
       - key: MONGODB_KEEPALIVE_INTERVAL_MS
         value: 600000
+      - key: SELF_PING_ENABLED
+        value: true
+      - key: SELF_PING_INTERVAL_MS
+        value: 720000
       - key: JWT_SECRET
         generateValue: true

@@ -8,6 +8,9 @@ const state = {
   presence: [],
   recorder: null,
   audioChunks: [],
+  videoRecorder: null,
+  videoChunks: [],
+  videoTimer: null,
   installPrompt: null,
   selectionMode: false,
   selectedMessageIds: new Set(),
@@ -15,7 +18,15 @@ const state = {
   shareRecipients: new Map(),
   hiddenConversations: [],
   unlockedHiddenCode: "",
-  replyToMessageId: null
+  replyToMessageId: null,
+  call: {
+    peerConnection: null,
+    localStream: null,
+    conversationId: null,
+    peerId: null,
+    incoming: false,
+    active: false
+  }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -57,6 +68,7 @@ function showChat() {
 }
 
 function showAuth() {
+  endCall(false);
   localStorage.removeItem("chatToken");
   state.token = null;
   state.user = null;
@@ -102,6 +114,15 @@ function connectSocket() {
     renderMessages();
     updateBulkActions();
   });
+  state.socket.on("conversation:cleared", ({ conversationId }) => {
+    if (conversationId === state.activeConversation?.id) {
+      state.messages = [];
+      state.selectedMessageIds.clear();
+      renderMessages();
+      updateBulkActions();
+    }
+    loadConversations();
+  });
   state.socket.on("typing", ({ conversationId, userId, typing }) => {
     if (conversationId !== state.activeConversation?.id || userId === state.user.id) return;
     $("typingLine").textContent = typing ? "Typing..." : "";
@@ -109,6 +130,36 @@ function connectSocket() {
   state.socket.on("account:disabled", ({ reason } = {}) => {
     alert(reason || "Your account is not active.");
     showAuth();
+  });
+  state.socket.on("call:incoming", ({ conversationId, fromUserId, fromName }) => {
+    showIncomingCall({ conversationId, fromUserId, fromName });
+  });
+  state.socket.on("call:accepted", async ({ conversationId, fromUserId }) => {
+    if (state.call.conversationId !== conversationId || state.call.peerId !== fromUserId) return;
+    $("callStatus").textContent = "Connected. Starting audio...";
+    try {
+      const offer = await state.call.peerConnection.createOffer();
+      await state.call.peerConnection.setLocalDescription(offer);
+      sendCallSignal({ type: "offer", sdp: offer });
+    } catch (error) {
+      endCall(false);
+      alert(error.message);
+    }
+  });
+  state.socket.on("call:rejected", ({ conversationId }) => {
+    if (state.call.conversationId !== conversationId) return;
+    endCall(false);
+    alert("Call declined.");
+  });
+  state.socket.on("call:ended", ({ conversationId }) => {
+    if (state.call.conversationId !== conversationId) return;
+    endCall(false);
+  });
+  state.socket.on("call:signal", ({ conversationId, fromUserId, signal }) => {
+    handleCallSignal({ conversationId, fromUserId, signal }).catch((error) => {
+      endCall(true);
+      alert(error.message);
+    });
   });
 }
 
@@ -218,6 +269,7 @@ function renderHeader() {
   const conversation = state.activeConversation;
   $("selectMessagesBtn").disabled = !conversation;
   $("clearChatBtn").disabled = !conversation;
+  $("callBtn").classList.add("hidden");
   $("hideChatBtn").classList.add("hidden");
   if (!conversation) return;
   const other = getOtherMember(conversation);
@@ -226,6 +278,8 @@ function renderHeader() {
   $("chatAvatar").textContent = title.slice(0, 1).toUpperCase();
   $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : (isOnline(other?.id) ? "Online" : "Offline");
   if (!conversation.groupId && other?.id) {
+    $("callBtn").classList.remove("hidden");
+    $("callBtn").classList.toggle("active-call", state.call.active && state.call.conversationId === conversation.id);
     $("hideChatBtn").classList.remove("hidden");
     $("hideChatBtn").textContent = conversation.hidden ? "Unhide" : "Hide";
   }
@@ -576,6 +630,179 @@ async function toggleRecording() {
   $("voiceBtn").classList.add("recording");
 }
 
+async function toggleVideoRecording() {
+  if (state.videoRecorder?.state === "recording") {
+    state.videoRecorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera recording is not supported in this browser.");
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: "user" } });
+  state.videoChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm";
+  state.videoRecorder = new MediaRecorder(stream, { mimeType });
+  state.videoRecorder.ondataavailable = (event) => {
+    if (event.data.size) state.videoChunks.push(event.data);
+  };
+  state.videoRecorder.onstop = async () => {
+    clearTimeout(state.videoTimer);
+    state.videoTimer = null;
+    $("videoRecordBtn").classList.remove("recording");
+    stream.getTracks().forEach((track) => track.stop());
+    if (!state.videoChunks.length) return;
+    const blob = new Blob(state.videoChunks, { type: "video/webm" });
+    setUploadStatus("Uploading recorded video...");
+    try {
+      await sendMediaFile(new File([blob], `video-${Date.now()}.webm`, { type: "video/webm" }));
+      setUploadStatus("Video sent.");
+      setTimeout(() => setUploadStatus(""), 1600);
+    } catch (error) {
+      setUploadStatus("");
+      alert(error.message);
+    }
+  };
+  state.videoRecorder.start();
+  $("videoRecordBtn").classList.add("recording");
+  setUploadStatus("Recording video... max 1 minute.");
+  state.videoTimer = setTimeout(() => {
+    if (state.videoRecorder?.state === "recording") state.videoRecorder.stop();
+  }, 60 * 1000);
+}
+
+function directPeer(conversation = state.activeConversation) {
+  if (!conversation || conversation.groupId) return null;
+  return getOtherMember(conversation);
+}
+
+async function ensureCallMedia() {
+  if (state.call.localStream) return state.call.localStream;
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Voice call is not supported in this browser.");
+  state.call.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  return state.call.localStream;
+}
+
+function createPeerConnection() {
+  const peerConnection = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  });
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate) sendCallSignal({ type: "candidate", candidate: event.candidate });
+  };
+  peerConnection.ontrack = (event) => {
+    $("remoteAudio").srcObject = event.streams[0];
+  };
+  peerConnection.onconnectionstatechange = () => {
+    if (["failed", "disconnected", "closed"].includes(peerConnection.connectionState)) endCall(false);
+  };
+  state.call.peerConnection = peerConnection;
+  return peerConnection;
+}
+
+async function prepareCall({ conversationId, peerId, incoming = false }) {
+  endCall(false);
+  state.call.conversationId = conversationId;
+  state.call.peerId = peerId;
+  state.call.incoming = incoming;
+  state.call.active = true;
+  $("callModal").classList.remove("hidden");
+  $("incomingCallActions").classList.toggle("hidden", !incoming);
+  $("endCallBtn").classList.toggle("hidden", incoming);
+  $("callBtn").classList.add("active-call");
+  const stream = await ensureCallMedia();
+  const peerConnection = createPeerConnection();
+  stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
+  renderHeader();
+  return peerConnection;
+}
+
+async function startVoiceCall() {
+  const peer = directPeer();
+  if (!peer || !state.activeConversation) return;
+  $("callTitle").textContent = `Calling ${peer.displayName || "User"}`;
+  $("callStatus").textContent = "Ringing...";
+  await prepareCall({ conversationId: state.activeConversation.id, peerId: peer.id });
+  state.socket.emit("call:invite", { conversationId: state.activeConversation.id });
+}
+
+function showIncomingCall({ conversationId, fromUserId, fromName }) {
+  if (state.call.active) {
+    state.socket.emit("call:reject", { conversationId, targetUserId: fromUserId });
+    return;
+  }
+  state.call.conversationId = conversationId;
+  state.call.peerId = fromUserId;
+  state.call.incoming = true;
+  state.call.active = true;
+  $("callTitle").textContent = `${fromName || "User"} is calling`;
+  $("callStatus").textContent = "Incoming voice call";
+  $("incomingCallActions").classList.remove("hidden");
+  $("endCallBtn").classList.add("hidden");
+  $("callModal").classList.remove("hidden");
+}
+
+async function acceptIncomingCall() {
+  const { conversationId, peerId } = state.call;
+  $("incomingCallActions").classList.add("hidden");
+  $("endCallBtn").classList.remove("hidden");
+  $("callStatus").textContent = "Connecting...";
+  await prepareCall({ conversationId, peerId, incoming: false });
+  state.socket.emit("call:accept", { conversationId, targetUserId: peerId });
+}
+
+function sendCallSignal(signal) {
+  if (!state.call.conversationId || !state.call.peerId) return;
+  state.socket.emit("call:signal", {
+    conversationId: state.call.conversationId,
+    targetUserId: state.call.peerId,
+    signal
+  });
+}
+
+async function handleCallSignal({ conversationId, fromUserId, signal }) {
+  if (state.call.conversationId !== conversationId || state.call.peerId !== fromUserId) return;
+  let peerConnection = state.call.peerConnection;
+  if (!peerConnection) {
+    await prepareCall({ conversationId, peerId: fromUserId, incoming: false });
+    peerConnection = state.call.peerConnection;
+  }
+  if (signal.type === "offer") {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    sendCallSignal({ type: "answer", sdp: answer });
+    $("callStatus").textContent = "Connected.";
+  }
+  if (signal.type === "answer") {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+    $("callStatus").textContent = "Connected.";
+  }
+  if (signal.type === "candidate" && signal.candidate) {
+    await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
+  }
+}
+
+function endCall(notifyPeer = true) {
+  const { conversationId, peerId } = state.call;
+  if (notifyPeer && conversationId && peerId) {
+    state.socket.emit("call:end", { conversationId, targetUserId: peerId });
+  }
+  state.call.peerConnection?.close();
+  state.call.localStream?.getTracks().forEach((track) => track.stop());
+  state.call = {
+    peerConnection: null,
+    localStream: null,
+    conversationId: null,
+    peerId: null,
+    incoming: false,
+    active: false
+  };
+  $("remoteAudio").srcObject = null;
+  $("callModal").classList.add("hidden");
+  $("incomingCallActions").classList.add("hidden");
+  $("endCallBtn").classList.remove("hidden");
+  $("callBtn").classList.remove("active-call");
+  renderHeader();
+}
+
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
@@ -731,6 +958,34 @@ $("voiceBtn").addEventListener("click", () => {
   if (!state.activeConversation) return;
   toggleRecording().catch((error) => alert(error.message));
 });
+$("videoRecordBtn").addEventListener("click", () => {
+  if (!state.activeConversation) return;
+  toggleVideoRecording().catch((error) => {
+    $("videoRecordBtn").classList.remove("recording");
+    setUploadStatus("");
+    alert(error.message);
+  });
+});
+$("callBtn").addEventListener("click", () => {
+  if (!directPeer()) return;
+  startVoiceCall().catch((error) => {
+    endCall(false);
+    alert(error.message);
+  });
+});
+$("acceptCallBtn").addEventListener("click", () => {
+  acceptIncomingCall().catch((error) => {
+    endCall(true);
+    alert(error.message);
+  });
+});
+$("declineCallBtn").addEventListener("click", () => {
+  const { conversationId, peerId } = state.call;
+  if (conversationId && peerId) state.socket.emit("call:reject", { conversationId, targetUserId: peerId });
+  endCall(false);
+});
+$("endCallBtn").addEventListener("click", () => endCall(true));
+$("closeCallBtn").addEventListener("click", () => endCall(true));
 $("messageInput").addEventListener("input", () => {
   if (state.activeConversation) state.socket.emit("typing", { conversationId: state.activeConversation.id, typing: true });
 });

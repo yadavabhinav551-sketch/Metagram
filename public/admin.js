@@ -126,6 +126,7 @@ async function loadTranscript(conversationId) {
   const conversation = adminState.conversations.find((item) => item.id === conversationId);
   const title = conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName).join(" ↔ ");
   $("transcriptTitle").textContent = title || "Transcript";
+  $("clearTranscriptBtn").disabled = false;
   const { messages } = await adminApi(`/api/admin/conversations/${conversationId}/messages`);
   $("adminMessages").innerHTML = messages.map((message) => {
     const sender = adminState.users.find((user) => user.id === message.senderId);
@@ -139,6 +140,24 @@ async function loadTranscript(conversationId) {
         ${renderAdminReactions(message)}
       </article>`;
   }).join("") || "No messages.";
+}
+
+async function clearActiveTranscript() {
+  const conversationId = adminState.activeConversationId;
+  if (!conversationId) return;
+  const conversation = adminState.conversations.find((item) => item.id === conversationId);
+  const title = conversation?.group?.name || conversation?.members?.filter(Boolean).map((user) => user.displayName).join(" ↔ ") || "this chat";
+  if (!confirm(`Clear all messages from ${title}? This will remove them for every user.`)) return;
+  $("clearTranscriptBtn").disabled = true;
+  try {
+    await adminApi(`/api/admin/conversations/${conversationId}/messages`, { method: "DELETE" });
+    await loadOverview();
+    await loadTranscript(conversationId);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    $("clearTranscriptBtn").disabled = false;
+  }
 }
 
 function renderAdminReply(replyTo) {
@@ -184,6 +203,10 @@ function connectAdminSocket() {
   adminState.socket.on("admin:message", async () => {
     await loadOverview();
     if (adminState.activeConversationId) await loadTranscript(adminState.activeConversationId);
+  });
+  adminState.socket.on("admin:conversation-cleared", async ({ conversationId }) => {
+    await loadOverview();
+    if (adminState.activeConversationId === conversationId) await loadTranscript(conversationId);
   });
 }
 
@@ -234,6 +257,8 @@ $("adminConversations").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-conversation]");
   if (button) await loadTranscript(button.dataset.conversation);
 });
+
+$("clearTranscriptBtn").addEventListener("click", clearActiveTranscript);
 
 $("credentialsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
