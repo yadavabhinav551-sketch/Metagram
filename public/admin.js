@@ -3,6 +3,7 @@ const adminState = {
   users: [],
   conversations: [],
   groups: [],
+  settings: { secretCodeLoginEnabled: false },
   socket: null,
   installPrompt: null,
   revealedHiddenCodes: new Set()
@@ -56,9 +57,15 @@ async function loadOverview() {
   adminState.users = data.users;
   adminState.conversations = data.conversations;
   adminState.groups = data.groups;
+  adminState.settings = data.settings || { secretCodeLoginEnabled: false };
   renderUsers();
   renderConversations();
   renderGroupMembers();
+  renderSettings();
+}
+
+function renderSettings() {
+  $("secretCodeLoginToggle").checked = Boolean(adminState.settings.secretCodeLoginEnabled);
 }
 
 function renderUsers() {
@@ -204,6 +211,23 @@ $("credentialsForm").addEventListener("submit", async (event) => {
   await adminApi("/api/admin/credentials", { method: "POST", body: JSON.stringify(body) });
   event.target.reset();
   alert("Admin credentials updated.");
+});
+
+$("secretCodeLoginToggle").addEventListener("change", async (event) => {
+  const enabled = event.target.checked;
+  $("settingsMessage").textContent = "Saving...";
+  try {
+    const { settings } = await adminApi("/api/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ secretCodeLoginEnabled: enabled })
+    });
+    adminState.settings = settings;
+    renderSettings();
+    $("settingsMessage").textContent = enabled ? "Secret code login enabled." : "Secret code login disabled.";
+  } catch (error) {
+    event.target.checked = !enabled;
+    $("settingsMessage").textContent = error.message;
+  }
 });
 
 $("groupForm").addEventListener("submit", async (event) => {

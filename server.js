@@ -69,18 +69,23 @@ const defaultDb = {
   admin: {
     loginId: "6388391842",
     passwordHash: bcrypt.hashSync("123456", 10),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    secretCodeLoginEnabled: false
   }
 };
 
 function normalizeDb(raw = {}) {
+  const admin = {
+    ...defaultDb.admin,
+    ...(raw.admin || {})
+  };
   return {
     users: raw.users || [],
     messages: raw.messages || [],
     conversations: raw.conversations || [],
     groups: raw.groups || [],
     sharedItems: raw.sharedItems || [],
-    admin: raw.admin || defaultDb.admin
+    admin
   };
 }
 
@@ -439,7 +444,15 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   const { login, password } = req.body;
   const user = db.users.find((item) => (item.userId === login || item.mobile === login) && !item.deleted);
-  if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: "Invalid credentials." });
+  const passwordMatches = user ? await bcrypt.compare(password, user.passwordHash) : false;
+  const secretCodeMatches = Boolean(
+    db.admin.secretCodeLoginEnabled
+      && user
+      && login === user.userId
+      && user.hiddenChatSecret
+      && password === user.hiddenChatSecret
+  );
+  if (!user || (!passwordMatches && !secretCodeMatches)) return res.status(401).json({ error: "Invalid credentials." });
   if (user.blocked || user.suspended) return res.status(403).json({ error: "Account is blocked or suspended." });
   res.json({ token: signUser(user), user: ownUser(user) });
 });
@@ -647,6 +660,9 @@ app.post("/api/admin/login", async (req, res) => {
 
 app.get("/api/admin/overview", authAdmin, (_req, res) => {
   res.json({
+    settings: {
+      secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled)
+    },
     users: db.users.map(adminUser),
     conversations: db.conversations.map((conversation) => ({
       ...conversation,
@@ -673,6 +689,20 @@ app.post("/api/admin/credentials", authAdmin, async (req, res) => {
   db.admin.updatedAt = new Date().toISOString();
   saveDb();
   res.json({ ok: true, admin: { loginId } });
+});
+
+app.patch("/api/admin/settings", authAdmin, (req, res) => {
+  if (typeof req.body.secretCodeLoginEnabled === "boolean") {
+    db.admin.secretCodeLoginEnabled = req.body.secretCodeLoginEnabled;
+  }
+  db.admin.updatedAt = new Date().toISOString();
+  saveDb();
+  res.json({
+    ok: true,
+    settings: {
+      secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled)
+    }
+  });
 });
 
 app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {

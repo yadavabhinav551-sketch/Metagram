@@ -147,6 +147,38 @@
   color: var(--danger);
 }
 
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf9;
+}
+
+.setting-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.setting-toggle strong,
+.setting-toggle small {
+  display: block;
+}
+
+.setting-toggle small,
+.settings-message {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-message {
+  min-height: 18px;
+  margin: 0 0 10px;
+}
+
 .admin-messages {
   display: flex;
   flex-direction: column;
