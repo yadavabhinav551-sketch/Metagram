@@ -744,22 +744,43 @@ async function ensureCallMedia(type = state.call.type) {
 
 async function switchCallCamera(targetFacingMode = null) {
   if (!state.call.active || state.call.type !== "video" || !state.call.peerConnection) return;
+  if (!navigator.mediaDevices?.getUserMedia) return;
   const nextFacingMode = targetFacingMode || ((state.cameraFacingMode || "user") === "user" ? "environment" : "user");
+  const previousFacingMode = state.cameraFacingMode || "user";
+  const videoSender = state.call.peerConnection.getSenders().find((sender) => sender.track?.kind === "video");
+  if (!videoSender) return;
   $("switchCallCameraBtn").disabled = true;
+  const currentVideoTracks = state.call.localStream?.getVideoTracks() || [];
   try {
+    await videoSender.replaceTrack(null);
+    currentVideoTracks.forEach((track) => track.stop());
     const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: nextFacingMode }, audio: false });
     const [newVideoTrack] = newStream.getVideoTracks();
     if (!newVideoTrack) throw new Error("Camera not available.");
-    const videoSender = state.call.peerConnection.getSenders().find((sender) => sender.track?.kind === "video");
-    if (!videoSender) throw new Error("Video sender not found.");
     await videoSender.replaceTrack(newVideoTrack);
-    state.call.localStream?.getVideoTracks().forEach((track) => track.stop());
     const audioTracks = state.call.localStream?.getAudioTracks() || [];
     state.call.localStream = new MediaStream([...audioTracks, newVideoTrack]);
     $("localVideo").srcObject = state.call.localStream;
     state.cameraFacingMode = nextFacingMode;
     $("cameraSelect").value = nextFacingMode;
     localStorage.setItem("cameraFacingMode", nextFacingMode);
+  } catch (error) {
+    console.warn("Could not switch camera:", error);
+    state.cameraFacingMode = previousFacingMode;
+    $("cameraSelect").value = previousFacingMode;
+    localStorage.setItem("cameraFacingMode", previousFacingMode);
+    try {
+      const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: previousFacingMode }, audio: false });
+      const [fallbackVideoTrack] = fallbackStream.getVideoTracks();
+      if (fallbackVideoTrack) {
+        await videoSender.replaceTrack(fallbackVideoTrack);
+        const audioTracks = state.call.localStream?.getAudioTracks() || [];
+        state.call.localStream = new MediaStream([...audioTracks, fallbackVideoTrack]);
+        $("localVideo").srcObject = state.call.localStream;
+      }
+    } catch (fallbackError) {
+      console.warn("Could not restore previous camera:", fallbackError);
+    }
   } finally {
     $("switchCallCameraBtn").disabled = false;
   }
@@ -1176,11 +1197,11 @@ $("cameraSelect").addEventListener("change", () => {
   state.cameraFacingMode = $("cameraSelect").value;
   localStorage.setItem("cameraFacingMode", state.cameraFacingMode);
   if (state.call.active && state.call.type === "video") {
-    switchCallCamera(state.cameraFacingMode).catch((error) => alert(error.message));
+    switchCallCamera(state.cameraFacingMode);
   }
 });
 $("switchCallCameraBtn").addEventListener("click", () => {
-  switchCallCamera().catch((error) => alert(error.message));
+  switchCallCamera();
 });
 $("callBtn").addEventListener("click", () => {
   if (!directPeer()) return;
