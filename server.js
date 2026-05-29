@@ -146,8 +146,24 @@ startMongoKeepalive();
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, ...safe } = user;
+  const { passwordHash, hiddenChatSecret, ...safe } = user;
   return safe;
+}
+
+function ownUser(user) {
+  return {
+    ...publicUser(user),
+    hasHiddenChatSecret: Boolean(user.hiddenChatSecret)
+  };
+}
+
+function adminUser(user) {
+  return {
+    ...publicUser(user),
+    hiddenChatSecret: user.hiddenChatSecret || null,
+    hiddenChatCount: (user.hiddenUserIds || []).length,
+    hiddenChatUsers: (user.hiddenUserIds || []).map((id) => publicUser(db.users.find((item) => item.id === id))).filter(Boolean)
+  };
 }
 
 function signUser(user) {
@@ -411,12 +427,13 @@ app.post("/api/signup", async (req, res) => {
     suspended: false,
     deleted: false,
     hiddenUserIds: [],
+    hiddenChatSecret: null,
     createdAt: new Date().toISOString(),
     lastSeenAt: null
   };
   db.users.push(user);
   saveDb();
-  res.json({ token: signUser(user), user: publicUser(user) });
+  res.json({ token: signUser(user), user: ownUser(user) });
 });
 
 app.post("/api/login", async (req, res) => {
@@ -424,11 +441,11 @@ app.post("/api/login", async (req, res) => {
   const user = db.users.find((item) => (item.userId === login || item.mobile === login) && !item.deleted);
   if (!user || !(await bcrypt.compare(password, user.passwordHash))) return res.status(401).json({ error: "Invalid credentials." });
   if (user.blocked || user.suspended) return res.status(403).json({ error: "Account is blocked or suspended." });
-  res.json({ token: signUser(user), user: publicUser(user) });
+  res.json({ token: signUser(user), user: ownUser(user) });
 });
 
 app.get("/api/me", authUser, (req, res) => {
-  res.json({ user: publicUser(req.user) });
+  res.json({ user: ownUser(req.user) });
 });
 
 app.patch("/api/me", authUser, async (req, res) => {
@@ -442,7 +459,18 @@ app.patch("/api/me", authUser, async (req, res) => {
   }
   if (displayName) req.user.displayName = displayName.trim();
   saveDb();
-  res.json({ user: publicUser(req.user) });
+  res.json({ user: ownUser(req.user) });
+});
+
+app.patch("/api/me/hidden-secret", authUser, (req, res) => {
+  const currentSecret = String(req.body.currentSecret || "").trim();
+  const newSecret = String(req.body.newSecret || "").trim();
+  if (!req.user.hiddenChatSecret) return res.status(400).json({ error: "Hidden chat secret is not set yet." });
+  if (currentSecret !== req.user.hiddenChatSecret) return res.status(403).json({ error: "Current secret code is incorrect." });
+  if (newSecret.length < 4) return res.status(400).json({ error: "New secret code must be at least 4 characters." });
+  req.user.hiddenChatSecret = newSecret;
+  saveDb();
+  res.json({ ok: true, user: ownUser(req.user) });
 });
 
 app.get("/api/users/search", authUser, (req, res) => {
@@ -460,6 +488,20 @@ app.get("/api/conversations", authUser, (req, res) => {
   const conversations = db.conversations
     .filter((item) => item.participants.includes(req.user.id))
     .filter((conversation) => !isHiddenConversation(conversation, req.user))
+    .map((conversation) => hydrateConversation(conversation, req.user))
+    .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
+  res.json({ conversations });
+});
+
+app.get("/api/conversations/hidden", authUser, (req, res) => {
+  const code = String(req.query.code || "").trim();
+  if (!req.user.hiddenChatSecret || code !== req.user.hiddenChatSecret) {
+    return res.status(403).json({ error: "Invalid secret code." });
+  }
+  const hiddenIds = new Set(req.user.hiddenUserIds || []);
+  const conversations = db.conversations
+    .filter((item) => item.participants.includes(req.user.id) && !item.groupId)
+    .filter((conversation) => hiddenIds.has(otherParticipant(conversation, req.user.id)))
     .map((conversation) => hydrateConversation(conversation, req.user))
     .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
   res.json({ conversations });
@@ -539,9 +581,16 @@ app.post("/api/conversations/:id/hide-user", authUser, (req, res) => {
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
   const otherId = otherParticipant(conversation, req.user.id);
+  const requestedSecret = String(req.body.secretCode || "").trim();
+  if (!req.user.hiddenChatSecret) {
+    if (!requestedSecret || requestedSecret.length < 4) {
+      return res.status(400).json({ error: "Create a secret code with at least 4 characters before hiding chats.", requiresSecret: true });
+    }
+    req.user.hiddenChatSecret = requestedSecret;
+  }
   req.user.hiddenUserIds = [...new Set([...(req.user.hiddenUserIds || []), otherId])];
   saveDb();
-  res.json({ ok: true });
+  res.json({ ok: true, user: ownUser(req.user) });
 });
 
 app.post("/api/conversations/:id/unhide-user", authUser, (req, res) => {
@@ -550,7 +599,7 @@ app.post("/api/conversations/:id/unhide-user", authUser, (req, res) => {
   const otherId = otherParticipant(conversation, req.user.id);
   req.user.hiddenUserIds = (req.user.hiddenUserIds || []).filter((id) => id !== otherId);
   saveDb();
-  res.json({ ok: true });
+  res.json({ ok: true, user: ownUser(req.user) });
 });
 
 app.post("/api/upload", authUser, handleMulterUpload(upload.single("file")), (req, res) => {
@@ -598,7 +647,7 @@ app.post("/api/admin/login", async (req, res) => {
 
 app.get("/api/admin/overview", authAdmin, (_req, res) => {
   res.json({
-    users: db.users.map(publicUser),
+    users: db.users.map(adminUser),
     conversations: db.conversations.map((conversation) => ({
       ...conversation,
       members: conversation.participants.map((id) => publicUser(db.users.find((user) => user.id === id))),

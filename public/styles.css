@@ -286,6 +286,46 @@ input:focus {
   border-bottom: 1px solid var(--line);
 }
 
+.hidden-vault-title {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: #f7faf9;
+}
+
+.hidden-vault-title small,
+.hidden-vault-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.hidden-vault-empty {
+  margin: 0;
+  padding: 12px;
+}
+
+.hidden-code-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.hidden-code-change small {
+  grid-column: 1 / -1;
+  min-height: 16px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.hidden-result {
+  background: #fbf7ef;
+}
+
 .search-result,
 .conversation {
   width: 100%;

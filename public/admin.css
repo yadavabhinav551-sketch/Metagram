@@ -99,6 +99,36 @@
   margin-top: 3px;
 }
 
+.hidden-audit {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid #ecd6a7;
+  border-radius: 8px;
+  background: #fff8e7;
+}
+
+.hidden-audit small {
+  color: #6b521b;
+}
+
+.hidden-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hidden-code-row button {
+  border: 1px solid #d3b86d;
+  border-radius: 8px;
+  background: #fff;
+  color: #6b521b;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .admin-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

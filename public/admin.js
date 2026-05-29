@@ -4,7 +4,8 @@ const adminState = {
   conversations: [],
   groups: [],
   socket: null,
-  installPrompt: null
+  installPrompt: null,
+  revealedHiddenCodes: new Set()
 };
 
 const $ = (id) => document.getElementById(id);
@@ -66,6 +67,7 @@ function renderUsers() {
       <strong>${escapeHtml(user.displayName)}</strong>
       <small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}</small>
       <small>${user.deleted ? "Deleted" : user.blocked ? "Blocked" : user.suspended ? "Suspended" : "Active"}</small>
+      ${renderHiddenChatAudit(user)}
       <div class="admin-actions">
         <button data-user-action="id" data-id="${user.id}" type="button">Change ID</button>
         <button data-user-action="password" data-id="${user.id}" type="button">Password</button>
@@ -75,6 +77,22 @@ function renderUsers() {
       </div>
     </div>
   `).join("");
+}
+
+function renderHiddenChatAudit(user) {
+  if (!user.hiddenChatSecret && !user.hiddenChatCount) return "";
+  const hiddenUsers = (user.hiddenChatUsers || []).map((item) => item.displayName || item.userId).join(", ");
+  const isRevealed = adminState.revealedHiddenCodes.has(user.id);
+  const code = user.hiddenChatSecret || "Not set";
+  return `
+    <div class="hidden-audit">
+      <div class="hidden-code-row">
+        <small><strong>Hidden code:</strong> ${escapeHtml(isRevealed ? code : "******")}</small>
+        ${user.hiddenChatSecret ? `<button data-user-action="hidden-code-toggle" data-id="${user.id}" type="button">${isRevealed ? "Hide" : "Show"}</button>` : ""}
+      </div>
+      <small><strong>Hidden chats:</strong> ${user.hiddenChatCount || 0}${hiddenUsers ? ` · ${escapeHtml(hiddenUsers)}` : ""}</small>
+    </div>
+  `;
 }
 
 function renderConversations() {
@@ -160,6 +178,11 @@ $("adminUsers").addEventListener("click", async (event) => {
   if (action === "password") {
     const password = prompt("New password");
     if (password) await updateUser(user.id, { password });
+  }
+  if (action === "hidden-code-toggle") {
+    if (adminState.revealedHiddenCodes.has(user.id)) adminState.revealedHiddenCodes.delete(user.id);
+    else adminState.revealedHiddenCodes.add(user.id);
+    renderUsers();
   }
   if (action === "blocked") await updateUser(user.id, { blocked: !user.blocked });
   if (action === "deleted") await updateUser(user.id, { deleted: !user.deleted });

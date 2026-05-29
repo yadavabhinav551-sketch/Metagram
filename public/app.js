@@ -12,7 +12,9 @@ const state = {
   selectionMode: false,
   selectedMessageIds: new Set(),
   pendingShare: null,
-  shareRecipients: new Map()
+  shareRecipients: new Map(),
+  hiddenConversations: [],
+  unlockedHiddenCode: ""
 };
 
 const $ = (id) => document.getElementById(id);
@@ -407,8 +409,11 @@ async function searchUsers() {
   const q = $("searchInput").value.trim();
   if (q.length < 2) {
     $("searchResults").innerHTML = "";
+    state.hiddenConversations = [];
+    state.unlockedHiddenCode = "";
     return;
   }
+  if (await tryUnlockHiddenChats(q)) return;
   const { users } = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
   $("searchResults").innerHTML = users.map((user) => `
     <button class="search-result" data-user="${user.id}" type="button">
@@ -416,6 +421,57 @@ async function searchUsers() {
       <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · hidden" : ""}</small></span>
     </button>
   `).join("");
+}
+
+async function tryUnlockHiddenChats(code) {
+  if (!state.user?.hasHiddenChatSecret) return false;
+  try {
+    const { conversations } = await api(`/api/conversations/hidden?code=${encodeURIComponent(code)}`);
+    state.hiddenConversations = conversations;
+    state.unlockedHiddenCode = code;
+    $("searchResults").innerHTML = renderHiddenVault(conversations);
+    return true;
+  } catch {
+    state.hiddenConversations = [];
+    state.unlockedHiddenCode = "";
+    return false;
+  }
+}
+
+function renderHiddenVault(conversations) {
+  return `
+      <div class="hidden-vault-title">
+        <strong>Hidden chats unlocked</strong>
+        <small>${conversations.length} hidden chat${conversations.length === 1 ? "" : "s"}</small>
+      </div>
+      <div class="hidden-code-change">
+        <input id="hiddenCodeInput" type="password" autocomplete="new-password" placeholder="New secret code">
+        <button class="text-button" data-change-hidden-code type="button">Change code</button>
+        <small id="hiddenCodeMessage"></small>
+      </div>
+      ${conversations.map((conversation) => {
+        const other = getOtherMember(conversation);
+        const title = other?.displayName || "Hidden chat";
+        const last = conversation.lastMessage?.media ? `[${conversation.lastMessage.media.kind}]` : conversation.lastMessage?.text || "No messages yet";
+        return `
+          <button class="search-result hidden-result" data-hidden-conversation="${conversation.id}" type="button">
+            <span class="avatar">${title.slice(0, 1).toUpperCase()}</span>
+            <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(last)}</small></span>
+          </button>`;
+      }).join("") || `<p class="hidden-vault-empty">No hidden chats yet.</p>`}
+    `;
+}
+
+function requestHiddenChatSecret() {
+  const generated = `lock-${Math.floor(1000 + Math.random() * 9000)}`;
+  const secret = prompt("Create secret code for hidden chats. Search bar me ye code dalne par hidden chats dikhenge.", generated);
+  if (secret === null) return null;
+  const trimmed = secret.trim();
+  if (trimmed.length < 4) {
+    alert("Secret code kam se kam 4 characters ka hona chahiye.");
+    return null;
+  }
+  return trimmed;
 }
 
 async function sendMediaFile(file) {
@@ -532,7 +588,15 @@ $("clearChatBtn").addEventListener("click", async () => {
 $("hideChatBtn").addEventListener("click", async () => {
   if (!state.activeConversation || state.activeConversation.groupId) return;
   const action = state.activeConversation.hidden ? "unhide-user" : "hide-user";
-  await api(`/api/conversations/${state.activeConversation.id}/${action}`, { method: "POST" });
+  const body = {};
+  if (action === "hide-user" && !state.user.hasHiddenChatSecret) {
+    const secretCode = requestHiddenChatSecret();
+    if (!secretCode) return;
+    body.secretCode = secretCode;
+    alert(`Secret code saved: ${secretCode}\nSearch bar me ye code dalne se hidden chats unlock honge.`);
+  }
+  const { user } = await api(`/api/conversations/${state.activeConversation.id}/${action}`, { method: "POST", body: JSON.stringify(body) });
+  if (user) state.user = user;
   state.activeConversation.hidden = !state.activeConversation.hidden;
   renderHeader();
   await loadConversations();
@@ -676,6 +740,48 @@ $("conversationList").addEventListener("click", async (event) => {
 });
 
 $("searchResults").addEventListener("click", async (event) => {
+  const changeCodeButton = event.target.closest("[data-change-hidden-code]");
+  if (changeCodeButton) {
+    const input = $("hiddenCodeInput");
+    const message = $("hiddenCodeMessage");
+    const newSecret = input.value.trim();
+    message.classList.remove("success-text");
+    if (newSecret.length < 4) {
+      message.textContent = "Secret code kam se kam 4 characters ka hona chahiye.";
+      return;
+    }
+    changeCodeButton.disabled = true;
+    try {
+      const { user } = await api("/api/me/hidden-secret", {
+        method: "PATCH",
+        body: JSON.stringify({ currentSecret: state.unlockedHiddenCode, newSecret })
+      });
+      state.user = user;
+      state.unlockedHiddenCode = newSecret;
+      input.value = "";
+      message.textContent = "Secret code updated.";
+      message.classList.add("success-text");
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      changeCodeButton.disabled = false;
+    }
+    return;
+  }
+  const hiddenButton = event.target.closest("[data-hidden-conversation]");
+  if (hiddenButton) {
+    state.activeConversation = state.hiddenConversations.find((item) => item.id === hiddenButton.dataset.hiddenConversation);
+    if (!state.activeConversation) return;
+    state.selectionMode = false;
+    state.selectedMessageIds.clear();
+    state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
+    renderHeader();
+    await loadMessages(state.activeConversation.id);
+    $("searchResults").innerHTML = "";
+    $("searchInput").value = "";
+    $("chatView").classList.add("conversation-open");
+    return;
+  }
   const button = event.target.closest("[data-user]");
   if (!button) return;
   const { conversation } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: button.dataset.user }) });
