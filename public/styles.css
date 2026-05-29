@@ -344,36 +344,12 @@ select:focus {
   border-color: rgba(255, 255, 255, 0.35);
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
-  font-size: 0;
+  font-size: 20px;
   font-weight: 800;
   overflow: hidden;
 }
 
-.topbar .icon-button::before {
-  display: block;
-  color: #fff;
-  font-size: 11px;
-  line-height: 1;
-  text-align: center;
-}
-
-#panicHideBtn::before {
-  content: "Hide";
-}
-
-#profileBtn::before {
-  content: "Setting";
-}
-
-.topbar .install-control::before {
-  content: "Install";
-}
-
-#logoutBtn::before {
-  content: "Logout";
-}
-
-.topbar .install-control.hidden {
+.topbar .icon-button.hidden {
   display: grid !important;
 }
 
