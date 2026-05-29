@@ -46,6 +46,11 @@ button:disabled {
   display: none !important;
 }
 
+body.app-booting #authView,
+body.app-booting #chatView {
+  visibility: hidden;
+}
+
 .app-shell {
   min-height: 100vh;
 }

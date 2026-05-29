@@ -67,6 +67,10 @@ const api = async (url, options = {}) => {
   return data;
 };
 
+function setAppReady() {
+  document.body.classList.remove("app-booting");
+}
+
 function setAuthMode(mode) {
   $("loginTab").classList.toggle("active", mode === "login");
   $("signupTab").classList.toggle("active", mode === "signup");
@@ -80,6 +84,7 @@ function showChat() {
   $("calculatorPrivacyView").classList.remove("unlocking");
   $("authView").classList.add("hidden");
   $("chatView").classList.remove("hidden");
+  setAppReady();
   $("meName").textContent = state.user.displayName;
   $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
   $("profileName").value = state.user.displayName;
@@ -100,6 +105,7 @@ function showAuth() {
   $("calculatorPrivacyView").classList.add("hidden");
   $("authView").classList.remove("hidden");
   $("chatView").classList.add("hidden");
+  setAppReady();
 }
 
 function connectSocket() {
@@ -193,6 +199,7 @@ async function bootstrap() {
   showPendingShareError();
   if (!state.token) {
     showPendingShareLoginHint();
+    setAppReady();
     return;
   }
   try {
@@ -271,6 +278,7 @@ function showCalculatorPrivacy() {
   $("authView").classList.add("hidden");
   $("chatView").classList.add("hidden");
   $("calculatorPrivacyView").classList.remove("hidden", "unlocking");
+  setAppReady();
 }
 
 async function openUnlockedChat() {
