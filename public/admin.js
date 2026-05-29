@@ -99,6 +99,7 @@ function renderUsers() {
     <div class="admin-item">
       ${avatarMarkup(user)}
       <strong>${escapeHtml(user.displayName)}</strong>
+      ${user.statusText ? `<small class="admin-status-line">Status: ${escapeHtml(user.statusText)}</small>` : ""}
       <small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}</small>
       <small>${user.deleted ? "Deleted" : user.blocked ? "Blocked" : user.suspended ? "Suspended" : "Active"}</small>
       <small class="presence-line ${user.online ? "online" : ""}">${escapeHtml(userPresenceLabel(user))}</small>

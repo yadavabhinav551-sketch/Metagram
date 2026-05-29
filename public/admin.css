@@ -189,6 +189,11 @@ button.admin-item:hover,
   font-weight: 700;
 }
 
+.admin-status-line {
+  color: #153d36;
+  font-weight: 700;
+}
+
 .admin-item .presence-line.online {
   color: #087443;
 }

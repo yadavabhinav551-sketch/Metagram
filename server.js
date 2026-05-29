@@ -585,6 +585,8 @@ app.post("/api/signup", async (req, res) => {
     blockedUserIds: [],
     deletedUserIds: [],
     reactionEmojis: [],
+    statusText: "",
+    statusUpdatedAt: null,
     avatarUrl: null,
     hiddenChatSecret: null,
     privacyMode: {
@@ -623,7 +625,7 @@ app.get("/api/me", authUser, (req, res) => {
 });
 
 app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
-  const { displayName, oldPassword, newPassword, reactionEmojis } = req.body;
+  const { displayName, oldPassword, newPassword, reactionEmojis, statusText } = req.body;
   let nextUserId = null;
   if (req.body.userId !== undefined) {
     const userIdResult = validateUserId(req.body.userId);
@@ -635,6 +637,7 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   }
   if (displayName && displayName.trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
   if (reactionEmojis !== undefined && !Array.isArray(reactionEmojis)) return res.status(400).json({ error: "Reaction emojis must be a list." });
+  if (statusText !== undefined && String(statusText).trim().length > 140) return res.status(400).json({ error: "Status must be 140 characters or less." });
   if (newPassword) {
     if (!oldPassword) return res.status(400).json({ error: "Old password is required." });
     if (newPassword.length < 6) return res.status(400).json({ error: "New password must be at least 6 characters." });
@@ -643,6 +646,10 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   }
   if (nextUserId) req.user.userId = nextUserId;
   if (displayName) req.user.displayName = displayName.trim();
+  if (statusText !== undefined) {
+    req.user.statusText = String(statusText || "").trim();
+    req.user.statusUpdatedAt = req.user.statusText ? new Date().toISOString() : null;
+  }
   if (Array.isArray(reactionEmojis)) {
     req.user.reactionEmojis = [...new Set(reactionEmojis.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 12);
   }

@@ -28,6 +28,7 @@ const state = {
   replyToMessageId: null,
   reactionPickerMessageId: null,
   reactionLongPressTimer: null,
+  suppressNextMessageClick: false,
   userActionLongPressTimer: null,
   call: {
     peerConnection: null,
@@ -93,6 +94,7 @@ function showChat() {
   $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
   $("profileName").value = state.user.displayName;
   $("profileUserId").value = state.user.userId || "";
+  $("profileStatusInput").value = state.user.statusText || "";
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   syncPrivacySettings();
   clearPrivacyAwayLock();
@@ -514,6 +516,10 @@ function formatPresenceStatus(userId) {
   return formatLastSeen(presence?.lastSeenAt);
 }
 
+function statusLine(user) {
+  return user?.statusText ? `Status: ${user.statusText}` : "";
+}
+
 function formatLastSeen(value) {
   if (!value) return "Offline";
   const date = new Date(value);
@@ -533,13 +539,14 @@ function renderConversations() {
     const title = conversation.group?.name || getOtherMember(conversation)?.displayName || "Chat";
     const other = getOtherMember(conversation);
     const status = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
+    const profileStatus = !conversation.group ? statusLine(other) : "";
     const last = conversation.lastMessage?.media ? `[${conversation.lastMessage.media.kind}]` : conversation.lastMessage?.text || "No messages yet";
     return `
       <button class="conversation ${state.activeConversation?.id === conversation.id ? "active" : ""}" data-id="${conversation.id}" type="button">
         <span class="avatar">${avatarMarkup(other, title)}</span>
         <span class="conversation-main">
           <strong>${escapeHtml(title)}</strong>
-          <small>${escapeHtml(last)}</small>
+          <small>${escapeHtml(profileStatus || last)}</small>
         </span>
         <span class="status-dot ${status === "Online" ? "online" : ""}" title="${status}"></span>
       </button>`;
@@ -562,6 +569,9 @@ function renderHeader() {
   $("chatTitle").textContent = title;
   renderAvatarInto($("chatAvatar"), other, title);
   $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
+  if (!conversation.groupId && other?.statusText) {
+    $("chatStatus").textContent = `${other.statusText} · ${formatPresenceStatus(other.id)}`;
+  }
   if (!conversation.groupId && other?.id) {
     $("callBtn").classList.remove("hidden");
     $("videoCallBtn").classList.remove("hidden");
@@ -696,9 +706,14 @@ function renderReactionButtons(message) {
 
 function renderReactionPicker(message) {
   return `
-    <div class="reaction-picker" role="menu" aria-label="Message reactions">
+    <div class="reaction-picker message-action-popover" role="menu" aria-label="Message actions">
       ${renderReactionButtons(message)}
       <button class="reaction-add" data-add-reaction="${message.id}" type="button" title="Add emoji">+</button>
+      <span class="message-action-divider"></span>
+      <button class="message-action-button" data-action-reply="${message.id}" type="button">Reply</button>
+      <button class="message-action-button" data-share-message="${message.id}" type="button">Forward</button>
+      <button class="message-action-button" data-share-outside="${message.id}" type="button">Share outside</button>
+      <button class="message-action-button danger" data-delete="${message.id}" type="button">Delete</button>
     </div>
   `;
 }
@@ -744,12 +759,49 @@ function clearReactionLongPress() {
 
 function startReactionLongPress(event) {
   const article = event.target.closest("[data-message]");
-  if (!article || event.target.closest("button, a, input, label")) return;
+  if (!article || event.target.closest("button, a, input, label, select")) return;
   clearReactionLongPress();
   state.reactionLongPressTimer = setTimeout(() => {
     state.reactionLongPressTimer = null;
+    state.suppressNextMessageClick = true;
+    event.preventDefault();
     openReactionPicker(article.dataset.message);
+    setTimeout(() => {
+      state.suppressNextMessageClick = false;
+    }, 350);
   }, 550);
+}
+
+function pendingShareFromMessage(message) {
+  return {
+    id: null,
+    text: message.text || "",
+    media: message.media ? [{ ...message.media }] : []
+  };
+}
+
+function openMessageShare(messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) return;
+  state.pendingShare = pendingShareFromMessage(message);
+  state.reactionPickerMessageId = null;
+  renderMessages({ preserveScroll: true });
+  showShareModal();
+}
+
+async function shareMessageOutside(messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) return;
+  const mediaUrl = message.media?.url ? new URL(message.media.url, location.origin).href : "";
+  const text = [message.text, message.media?.originalName, mediaUrl].filter(Boolean).join("\n");
+  state.reactionPickerMessageId = null;
+  renderMessages({ preserveScroll: true });
+  if (navigator.share) {
+    await navigator.share({ title: "Shared message", text: text || "Message", url: mediaUrl || undefined });
+    return;
+  }
+  await navigator.clipboard.writeText(text || "Message");
+  alert("Share content copied.");
 }
 
 function renderMedia(media) {
@@ -871,7 +923,9 @@ async function sendPendingShare() {
         state.socket.emit("message:send", { conversationId, media });
       }
     }
-    await api(`/api/shared/${encodeURIComponent(state.pendingShare.id)}`, { method: "DELETE" });
+    if (state.pendingShare.id) {
+      await api(`/api/shared/${encodeURIComponent(state.pendingShare.id)}`, { method: "DELETE" });
+    }
     state.pendingShare = null;
     $("shareModal").classList.add("hidden");
     await loadConversations();
@@ -1497,6 +1551,7 @@ document.addEventListener("keydown", (event) => {
 $("profileBtn").addEventListener("click", () => {
   $("profileName").value = state.user.displayName;
   $("profileUserId").value = state.user.userId || "";
+  $("profileStatusInput").value = state.user.statusText || "";
   $("profileAvatarInput").value = "";
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   $("privacyCodeInput").value = "";
@@ -1789,6 +1844,7 @@ $("profileForm").addEventListener("submit", async (event) => {
   const body = {
     displayName: form.get("displayName"),
     userId: form.get("userId"),
+    statusText: form.get("statusText"),
     oldPassword: form.get("oldPassword"),
     newPassword: form.get("newPassword")
   };
@@ -1926,11 +1982,38 @@ $("searchResults").addEventListener("click", async (event) => {
 });
 
 $("messages").addEventListener("click", async (event) => {
+  if (state.suppressNextMessageClick && !event.target.closest(".reaction-picker")) {
+    event.preventDefault();
+    state.suppressNextMessageClick = false;
+    return;
+  }
   const replyButton = event.target.closest("[data-reply]");
   if (replyButton) {
     state.replyToMessageId = replyButton.dataset.reply;
     renderReplyComposer();
     $("messageInput").focus();
+    return;
+  }
+  const actionReplyButton = event.target.closest("[data-action-reply]");
+  if (actionReplyButton) {
+    state.replyToMessageId = actionReplyButton.dataset.actionReply;
+    state.reactionPickerMessageId = null;
+    renderMessages({ preserveScroll: true });
+    $("messageInput").focus();
+    return;
+  }
+  const shareMessageButton = event.target.closest("[data-share-message]");
+  if (shareMessageButton) {
+    openMessageShare(shareMessageButton.dataset.shareMessage);
+    return;
+  }
+  const shareOutsideButton = event.target.closest("[data-share-outside]");
+  if (shareOutsideButton) {
+    try {
+      await shareMessageOutside(shareOutsideButton.dataset.shareOutside);
+    } catch (error) {
+      if (error.name !== "AbortError") alert(error.message);
+    }
     return;
   }
   const addReactionButton = event.target.closest("[data-add-reaction]");
@@ -1995,12 +2078,10 @@ $("messages").addEventListener("click", async (event) => {
   renderMessages();
 });
 
-$("messages").addEventListener("mousedown", startReactionLongPress);
-$("messages").addEventListener("touchstart", startReactionLongPress, { passive: true });
-$("messages").addEventListener("mouseup", clearReactionLongPress);
-$("messages").addEventListener("mouseleave", clearReactionLongPress);
-$("messages").addEventListener("touchend", clearReactionLongPress);
-$("messages").addEventListener("touchcancel", clearReactionLongPress);
+$("messages").addEventListener("pointerdown", startReactionLongPress);
+$("messages").addEventListener("pointerup", clearReactionLongPress);
+$("messages").addEventListener("pointerleave", clearReactionLongPress);
+$("messages").addEventListener("pointercancel", clearReactionLongPress);
 $("messages").addEventListener("contextmenu", (event) => {
   const article = event.target.closest("[data-message]");
   if (!article || event.target.closest("button, a, input, label")) return;
