@@ -553,6 +553,11 @@ function handleMulterUpload(uploadHandler, { redirectOnError = false } = {}) {
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use("/uploads", express.static(activeUploadDir));
+app.get("/uploads/:filename", (req, res) => {
+  const label = (req.params.filename || "U").slice(0, 1).toUpperCase();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="48" fill="#d7ebe3"/><text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="#0f6b5a">${escapeHtml(label)}</text></svg>`;
+  res.type("image/svg+xml").send(svg);
+});
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/healthz", (_req, res) => {

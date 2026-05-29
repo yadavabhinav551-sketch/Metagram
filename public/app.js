@@ -80,10 +80,10 @@ function setAppReady() {
 }
 
 function ensureTopbarControlsVisible() {
-  const topbar = document.querySelector(".topbar");
-  if (topbar && !document.querySelector(".topbar-actions")) {
-    topbar.insertAdjacentHTML("beforeend", `
-      <div class="topbar-actions">
+  const sidebar = document.querySelector(".sidebar");
+  if (sidebar && !document.querySelector(".sidebar-fixed-actions")) {
+    sidebar.insertAdjacentHTML("afterbegin", `
+      <div class="sidebar-fixed-actions">
         <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
         <button id="profileBtn" class="icon-button" type="button" title="Profile settings">&#9881;</button>
         <button id="sidebarInstallBtn" class="icon-button" type="button" title="Install app">&#8595;</button>

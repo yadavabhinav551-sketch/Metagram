@@ -13,10 +13,10 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png">
     <link rel="apple-touch-icon" href="/icons/calculator-192.png">
-    <link rel="preload" href="/styles.css?v=sidebar-fixed-26" as="style">
-    <link rel="stylesheet" href="/styles.css?v=sidebar-fixed-26">
+    <link rel="preload" href="/styles.css?v=sidebar-fixed-27" as="style">
+    <link rel="stylesheet" href="/styles.css?v=sidebar-fixed-27">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=sidebar-fixed-26" defer></script>
+    <script src="/app.js?v=sidebar-fixed-27" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -79,16 +79,16 @@
 
       <section id="chatView" class="chat-view hidden">
         <aside class="sidebar">
+          <div class="sidebar-fixed-actions">
+            <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
+            <button id="profileBtn" class="icon-button" type="button" title="Profile settings">&#9881;</button>
+            <button id="sidebarInstallBtn" class="icon-button" type="button" title="Install app">&#8595;</button>
+            <button id="logoutBtn" class="icon-button" type="button" title="Logout">&#8856;</button>
+          </div>
           <header class="topbar">
             <div class="topbar-user">
               <strong id="meName"></strong>
               <span id="meHandle"></span>
-            </div>
-            <div class="topbar-actions">
-              <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
-              <button id="profileBtn" class="icon-button" type="button" title="Profile settings">&#9881;</button>
-              <button id="sidebarInstallBtn" class="icon-button" type="button" title="Install app">&#8595;</button>
-              <button id="logoutBtn" class="icon-button" type="button" title="Logout">&#8856;</button>
             </div>
           </header>
           <div class="search-row">
