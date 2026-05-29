@@ -74,6 +74,24 @@ const api = async (url, options = {}) => {
 
 function setAppReady() {
   document.body.classList.remove("app-booting");
+  ensureTopbarControlsVisible();
+}
+
+function ensureTopbarControlsVisible() {
+  ["panicHideBtn", "profileBtn", "logoutBtn"].forEach((id) => {
+    const button = $(id);
+    if (!button) return;
+    button.classList.remove("hidden");
+    button.style.removeProperty("display");
+    button.style.removeProperty("visibility");
+    button.style.removeProperty("opacity");
+  });
+  document.querySelectorAll(".topbar .install-control").forEach((button) => {
+    button.classList.remove("hidden");
+    button.style.removeProperty("display");
+    button.style.removeProperty("visibility");
+    button.style.removeProperty("opacity");
+  });
 }
 
 function setAuthMode(mode) {
@@ -92,6 +110,7 @@ function showChat() {
   setAppReady();
   $("meName").textContent = state.user.displayName;
   $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
+  ensureTopbarControlsVisible();
   $("profileName").value = state.user.displayName;
   $("profileUserId").value = state.user.userId || "";
   $("profileStatusInput").value = state.user.statusText || "";
@@ -225,6 +244,7 @@ async function bootstrap() {
     connectSocket();
     await loadConversations();
     await loadPendingShare();
+    ensureTopbarControlsVisible();
   } catch {
     showAuth();
   }
@@ -255,7 +275,7 @@ function syncPrivacySettings() {
   $("privacyModeToggle").checked = Boolean(settings.enabled);
   $("privacyAutoLock").value = String(settings.autoLockMinutes || 0);
   $("privacyPanicShortcut").value = settings.panicShortcut || "button";
-  $("panicHideBtn").classList.remove("hidden");
+  ensureTopbarControlsVisible();
 }
 
 async function verifyPrivacySession() {
@@ -2118,6 +2138,13 @@ window.addEventListener("beforeinstallprompt", (event) => {
 window.addEventListener("appinstalled", () => {
   state.installPrompt = null;
   setInstallButtonsVisible(false);
+  ensureTopbarControlsVisible();
+});
+
+new MutationObserver(ensureTopbarControlsVisible).observe($("chatView"), {
+  attributes: true,
+  subtree: true,
+  attributeFilter: ["class", "style"]
 });
 
 renderEmojiPicker();

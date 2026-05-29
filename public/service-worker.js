@@ -1,4 +1,4 @@
-const CACHE_VERSION = "metagram-pwa-v23";
+const CACHE_VERSION = "metagram-pwa-v24";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -50,6 +50,11 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(networkFirst(request, "/offline.html"));
+    return;
+  }
+
+  if (request.destination === "style" || request.destination === "script") {
+    event.respondWith(networkFirst(request, request.url));
     return;
   }
 

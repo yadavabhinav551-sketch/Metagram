@@ -294,7 +294,7 @@ select:focus {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(48px, 58px));
+  grid-template-columns: minmax(0, 1fr) repeat(4, 50px);
   gap: 8px;
   justify-content: stretch;
   background: linear-gradient(135deg, #0d4b41, #123f57);
@@ -349,8 +349,11 @@ select:focus {
   overflow: hidden;
 }
 
+.topbar .icon-button,
 .topbar .icon-button.hidden {
   display: grid !important;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 
 .icon-button:hover {
