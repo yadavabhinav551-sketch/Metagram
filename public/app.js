@@ -240,6 +240,7 @@ function registerPwa() {
 
 function setInstallButtonsVisible(visible) {
   document.querySelectorAll(".install-control").forEach((button) => {
+    if (button.closest(".topbar")) return;
     button.classList.toggle("hidden", !visible);
   });
 }
@@ -254,7 +255,7 @@ function syncPrivacySettings() {
   $("privacyModeToggle").checked = Boolean(settings.enabled);
   $("privacyAutoLock").value = String(settings.autoLockMinutes || 0);
   $("privacyPanicShortcut").value = settings.panicShortcut || "button";
-  $("panicHideBtn").classList.toggle("hidden", !privacyEnabled());
+  $("panicHideBtn").classList.remove("hidden");
 }
 
 async function verifyPrivacySession() {
