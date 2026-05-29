@@ -737,6 +737,16 @@ audio,
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34);
 }
 
+.call-video-grid #switchCallCameraBtn {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 2;
+  border-color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+
 .call-recording-status {
   color: var(--muted);
   font-size: 12px;
@@ -903,7 +913,12 @@ audio,
 }
 
 @media (max-width: 760px) {
+  body {
+    overflow: hidden;
+  }
+
   .chat-view {
+    width: 100vw;
     grid-template-columns: 1fr;
     overflow: hidden;
   }
@@ -917,6 +932,8 @@ audio,
   }
 
   .chat-panel {
+    width: 100vw;
+    min-width: 0;
     transform: translateX(100%);
   }
 
@@ -925,15 +942,61 @@ audio,
   }
 
   .conversation-open .sidebar {
-    transform: translateX(-28%);
+    transform: translateX(-100%);
   }
 
   .mobile-only {
     display: grid;
   }
 
+  .chat-header {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .chat-header .avatar {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .chat-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: 154px;
+  }
+
+  .messages {
+    padding: 10px;
+  }
+
   .message {
-    max-width: 86%;
+    max-width: calc(100vw - 24px);
+    overflow: hidden;
+  }
+
+  .message footer {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .message.own footer {
+    justify-content: flex-end;
+  }
+
+  .media-card {
+    min-width: 0;
+    width: min(100%, 320px);
+  }
+
+  audio,
+  .message-video {
+    width: 100%;
+    max-width: calc(100vw - 64px);
+  }
+
+  .message-image {
+    max-width: calc(100vw - 64px);
   }
 
   .chat-actions {
@@ -946,8 +1009,57 @@ audio,
   }
 
   .composer {
-    grid-template-columns: 40px 40px minmax(70px, 82px) 40px 40px minmax(0, 1fr) 48px;
+    grid-template-columns: 40px 40px minmax(72px, 86px) 40px 40px 48px;
     gap: 6px;
+    padding: 8px;
+  }
+
+  .composer #messageInput {
+    grid-column: 1 / 6;
+    grid-row: 2;
+  }
+
+  .composer .send-button {
+    grid-column: 6;
+    grid-row: 2;
+    min-width: 48px;
+    padding-inline: 0;
+  }
+
+  .camera-select {
+    padding-inline: 6px;
+    font-size: 12px;
+  }
+
+  .modal-layer {
+    padding: 10px;
+  }
+
+  .call-card {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+    overflow: auto;
+  }
+
+  .call-video-grid,
+  .call-video-grid video {
+    min-height: 0;
+    height: min(58vh, 460px);
+  }
+
+  .call-video-grid #localVideo {
+    min-width: 88px;
+    right: 8px;
+    bottom: 8px;
+  }
+
+  .call-video-grid #switchCallCameraBtn {
+    left: 8px;
+    bottom: 8px;
+    max-width: calc(70% - 16px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .emoji-picker {

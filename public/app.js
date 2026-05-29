@@ -742,6 +742,29 @@ async function ensureCallMedia(type = state.call.type) {
   return state.call.localStream;
 }
 
+async function switchCallCamera(targetFacingMode = null) {
+  if (!state.call.active || state.call.type !== "video" || !state.call.peerConnection) return;
+  const nextFacingMode = targetFacingMode || ((state.cameraFacingMode || "user") === "user" ? "environment" : "user");
+  $("switchCallCameraBtn").disabled = true;
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: nextFacingMode }, audio: false });
+    const [newVideoTrack] = newStream.getVideoTracks();
+    if (!newVideoTrack) throw new Error("Camera not available.");
+    const videoSender = state.call.peerConnection.getSenders().find((sender) => sender.track?.kind === "video");
+    if (!videoSender) throw new Error("Video sender not found.");
+    await videoSender.replaceTrack(newVideoTrack);
+    state.call.localStream?.getVideoTracks().forEach((track) => track.stop());
+    const audioTracks = state.call.localStream?.getAudioTracks() || [];
+    state.call.localStream = new MediaStream([...audioTracks, newVideoTrack]);
+    $("localVideo").srcObject = state.call.localStream;
+    state.cameraFacingMode = nextFacingMode;
+    $("cameraSelect").value = nextFacingMode;
+    localStorage.setItem("cameraFacingMode", nextFacingMode);
+  } finally {
+    $("switchCallCameraBtn").disabled = false;
+  }
+}
+
 function supportedRecordingMime(type) {
   const choices = type === "video"
     ? ["video/webm;codecs=vp8,opus", "video/webm"]
@@ -860,6 +883,7 @@ async function prepareCall({ conversationId, peerId, incoming = false, type = "v
   $("callTitle").textContent = type === "video" ? "Video call" : "Voice call";
   $("callModal").classList.remove("hidden");
   $("callVideoGrid").classList.toggle("hidden", type !== "video");
+  $("switchCallCameraBtn").classList.toggle("hidden", type !== "video");
   $("incomingCallActions").classList.toggle("hidden", !incoming);
   $("endCallBtn").classList.toggle("hidden", incoming);
   $("callBtn").classList.add("active-call");
@@ -969,6 +993,7 @@ function endCall(notifyPeer = true) {
   $("remoteVideo").srcObject = null;
   $("localVideo").srcObject = null;
   $("callVideoGrid").classList.add("hidden");
+  $("switchCallCameraBtn").classList.add("hidden");
   $("callModal").classList.add("hidden");
   $("incomingCallActions").classList.add("hidden");
   $("endCallBtn").classList.remove("hidden");
@@ -1150,6 +1175,12 @@ $("closeVideoPreviewBtn").addEventListener("click", () => {
 $("cameraSelect").addEventListener("change", () => {
   state.cameraFacingMode = $("cameraSelect").value;
   localStorage.setItem("cameraFacingMode", state.cameraFacingMode);
+  if (state.call.active && state.call.type === "video") {
+    switchCallCamera(state.cameraFacingMode).catch((error) => alert(error.message));
+  }
+});
+$("switchCallCameraBtn").addEventListener("click", () => {
+  switchCallCamera().catch((error) => alert(error.message));
 });
 $("callBtn").addEventListener("click", () => {
   if (!directPeer()) return;
