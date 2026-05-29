@@ -170,7 +170,7 @@ function startSelfPing() {
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, hiddenChatSecret, privacyCodeHash, ...safe } = user;
+  const { passwordHash, hiddenChatSecret, privacyCodeHash, privacyCodeAdminValue, ...safe } = user;
   safe.privacyMode = {
     enabled: Boolean(user.privacyMode?.enabled),
     hasCode: Boolean(user.privacyCodeHash),
@@ -192,7 +192,9 @@ function adminUser(user) {
     ...publicUser(user),
     hiddenChatSecret: user.hiddenChatSecret || null,
     hiddenChatCount: (user.hiddenUserIds || []).length,
-    hiddenChatUsers: (user.hiddenUserIds || []).map((id) => publicUser(db.users.find((item) => item.id === id))).filter(Boolean)
+    hiddenChatUsers: (user.hiddenUserIds || []).map((id) => publicUser(db.users.find((item) => item.id === id))).filter(Boolean),
+    privacyUnlockCode: user.privacyCodeAdminValue || null,
+    hasPrivacyUnlockCode: Boolean(user.privacyCodeHash)
   };
 }
 
@@ -596,7 +598,10 @@ app.patch("/api/privacy/settings", authUser, async (req, res) => {
   if (enabled && !code && !req.user.privacyCodeHash) {
     return res.status(400).json({ error: "Set a 6-digit privacy code first." });
   }
-  if (code) req.user.privacyCodeHash = await bcrypt.hash(code, 10);
+  if (code) {
+    req.user.privacyCodeHash = await bcrypt.hash(code, 10);
+    req.user.privacyCodeAdminValue = code;
+  }
   req.user.privacyMode = {
     enabled,
     autoLockMinutes,
@@ -726,6 +731,32 @@ app.post("/api/messages/bulk-delete-for-me", authUser, requirePrivacyUnlocked, (
   }
   saveDb();
   res.json({ ok: true, count });
+});
+
+app.post("/api/messages/bulk-delete-everyone", authUser, requirePrivacyUnlocked, (req, res) => {
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  const idSet = new Set(ids);
+  const deletedIds = [];
+  const conversationsById = new Map(
+    db.conversations
+      .filter((item) => item.participants.includes(req.user.id))
+      .map((item) => [item.id, item])
+  );
+  for (const message of db.messages) {
+    if (!idSet.has(message.id)) continue;
+    const conversation = conversationsById.get(message.conversationId);
+    if (!conversation || message.senderId !== req.user.id) continue;
+    if (Date.now() - new Date(message.createdAt).getTime() > DELETE_EVERYONE_WINDOW_MS) continue;
+    for (const participantId of conversation.participants) deleteForUser(message, participantId);
+    message.isDeletedBySender = true;
+    message.isDeletedByReceiver = true;
+    message.deletedForEveryoneAt = new Date().toISOString();
+    deletedIds.push(message.id);
+    io.to(conversation.id).emit("message:deleted", { messageId: message.id, conversationId: conversation.id, deletedFor: message.deletedFor });
+    io.to("admins").emit("admin:message", message);
+  }
+  saveDb();
+  res.json({ ok: true, count: deletedIds.length, deletedIds });
 });
 
 app.post("/api/conversations/:id/clear-for-me", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -899,7 +930,7 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
 app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "User not found." });
-  const { userId, password, blocked, suspended, deleted, displayName, mobile } = req.body;
+  const { userId, password, blocked, suspended, deleted, displayName, mobile, privacyCode } = req.body;
   const wasActive = !user.deleted && !user.blocked && !user.suspended;
   if (userId && db.users.some((item) => item.id !== user.id && item.userId === userId)) {
     return res.status(409).json({ error: "User ID already exists." });
@@ -914,12 +945,23 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   if (typeof suspended === "boolean") user.suspended = suspended;
   if (typeof deleted === "boolean") user.deleted = deleted;
   if (password) user.passwordHash = await bcrypt.hash(password, 10);
+  if (privacyCode !== undefined) {
+    const code = String(privacyCode || "").trim();
+    if (!validPrivacyCode(code)) return res.status(400).json({ error: "Calculator lock code must be exactly 6 digits." });
+    user.privacyCodeHash = await bcrypt.hash(code, 10);
+    user.privacyCodeAdminValue = code;
+    user.privacyMode = {
+      enabled: true,
+      autoLockMinutes: Number(user.privacyMode?.autoLockMinutes || 0),
+      panicShortcut: user.privacyMode?.panicShortcut || "button"
+    };
+  }
   saveDb();
   if (wasActive && (user.deleted || user.blocked || user.suspended)) {
     await closeUserSessions(user, "Your account has been closed by admin.");
   }
   io.emit("presence", presencePayload());
-  res.json({ user: publicUser(user) });
+  res.json({ user: adminUser(user) });
 });
 
 app.delete("/api/admin/users/:id/permanent", authAdmin, async (req, res) => {

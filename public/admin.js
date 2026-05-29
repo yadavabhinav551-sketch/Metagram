@@ -7,7 +7,8 @@ const adminState = {
   activeConversationId: null,
   socket: null,
   installPrompt: null,
-  revealedHiddenCodes: new Set()
+  revealedHiddenCodes: new Set(),
+  revealedPrivacyCodes: new Set()
 };
 
 const $ = (id) => document.getElementById(id);
@@ -76,9 +77,11 @@ function renderUsers() {
       <small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}</small>
       <small>${user.deleted ? "Deleted" : user.blocked ? "Blocked" : user.suspended ? "Suspended" : "Active"}</small>
       ${renderHiddenChatAudit(user)}
+      ${renderPrivacyCodeAudit(user)}
       <div class="admin-actions">
         <button data-user-action="id" data-id="${user.id}" type="button">Change ID</button>
         <button data-user-action="password" data-id="${user.id}" type="button">Password</button>
+        <button data-user-action="privacy-code" data-id="${user.id}" type="button">Calculator Code</button>
         <button data-user-action="blocked" data-id="${user.id}" type="button">${user.blocked ? "Unblock" : "Block"}</button>
         <button class="danger" data-user-action="deleted" data-id="${user.id}" type="button">${user.deleted ? "Restore" : "Delete"}</button>
         ${user.deleted ? `<button class="danger" data-user-action="remove" data-id="${user.id}" type="button">Remove</button>` : ""}
@@ -99,6 +102,24 @@ function renderHiddenChatAudit(user) {
         ${user.hiddenChatSecret ? `<button data-user-action="hidden-code-toggle" data-id="${user.id}" type="button">${isRevealed ? "Hide" : "Show"}</button>` : ""}
       </div>
       <small><strong>Hidden chats:</strong> ${user.hiddenChatCount || 0}${hiddenUsers ? ` · ${escapeHtml(hiddenUsers)}` : ""}</small>
+    </div>
+  `;
+}
+
+function renderPrivacyCodeAudit(user) {
+  const isRevealed = adminState.revealedPrivacyCodes.has(user.id);
+  const hasKnownCode = Boolean(user.privacyUnlockCode);
+  const hasCode = Boolean(user.hasPrivacyUnlockCode);
+  const status = hasKnownCode
+    ? (isRevealed ? user.privacyUnlockCode : "******")
+    : hasCode ? "Set (reset to view)" : "Not set";
+  return `
+    <div class="hidden-audit">
+      <div class="hidden-code-row">
+        <small><strong>Calculator lock:</strong> ${escapeHtml(status)}</small>
+        ${hasKnownCode ? `<button data-user-action="privacy-code-toggle" data-id="${user.id}" type="button">${isRevealed ? "Hide" : "Show"}</button>` : ""}
+      </div>
+      <small><strong>Status:</strong> ${user.privacyMode?.enabled && hasCode ? "Enabled" : hasCode ? "Code set, disabled" : "No code"}</small>
     </div>
   `;
 }
@@ -239,9 +260,25 @@ $("adminUsers").addEventListener("click", async (event) => {
     const password = prompt("New password");
     if (password) await updateUser(user.id, { password });
   }
+  if (action === "privacy-code") {
+    const privacyCode = prompt("New 6-digit calculator lock code", user.privacyUnlockCode || "");
+    if (privacyCode === null) return;
+    if (!/^\d{6}$/.test(privacyCode.trim())) {
+      alert("Calculator lock code exactly 6 digits ka hona chahiye.");
+      return;
+    }
+    await updateUser(user.id, { privacyCode: privacyCode.trim() });
+    adminState.revealedPrivacyCodes.add(user.id);
+    renderUsers();
+  }
   if (action === "hidden-code-toggle") {
     if (adminState.revealedHiddenCodes.has(user.id)) adminState.revealedHiddenCodes.delete(user.id);
     else adminState.revealedHiddenCodes.add(user.id);
+    renderUsers();
+  }
+  if (action === "privacy-code-toggle") {
+    if (adminState.revealedPrivacyCodes.has(user.id)) adminState.revealedPrivacyCodes.delete(user.id);
+    else adminState.revealedPrivacyCodes.add(user.id);
     renderUsers();
   }
   if (action === "blocked") await updateUser(user.id, { blocked: !user.blocked });

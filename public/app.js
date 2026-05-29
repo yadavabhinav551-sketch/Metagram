@@ -559,6 +559,12 @@ function updateBulkActions() {
   $("bulkActions").classList.toggle("hidden", !state.selectionMode);
   $("selectedCount").textContent = `${state.selectedMessageIds.size} selected`;
   $("selectMessagesBtn").textContent = state.selectionMode ? "Selecting" : "Select";
+  const selectedMessages = state.messages.filter((message) => state.selectedMessageIds.has(message.id));
+  const canBulkDeleteEveryone = selectedMessages.length > 1 && selectedMessages.every((message) => (
+    message.senderId === state.user.id
+    && Date.now() - new Date(message.createdAt).getTime() <= 5 * 60 * 1000
+  ));
+  $("bulkDeleteEveryoneBtn").classList.toggle("hidden", !canBulkDeleteEveryone);
 }
 
 function exitSelectionMode() {
@@ -1367,6 +1373,20 @@ $("bulkDeleteBtn").addEventListener("click", async () => {
   if (!state.selectedMessageIds.size) return;
   await api("/api/messages/bulk-delete-for-me", { method: "POST", body: JSON.stringify({ ids: [...state.selectedMessageIds] }) });
   state.messages = state.messages.filter((message) => !state.selectedMessageIds.has(message.id));
+  exitSelectionMode();
+  await loadConversations();
+});
+$("bulkDeleteEveryoneBtn").addEventListener("click", async () => {
+  if (state.selectedMessageIds.size < 2) return;
+  if (!confirm("Delete selected messages for everyone?")) return;
+  const { deletedIds = [], count = 0 } = await api("/api/messages/bulk-delete-everyone", { method: "POST", body: JSON.stringify({ ids: [...state.selectedMessageIds] }) });
+  if (!count) {
+    alert("Selected messages delete from everyone ke liye available nahi hain.");
+    updateBulkActions();
+    return;
+  }
+  const deleted = new Set(deletedIds);
+  state.messages = state.messages.filter((message) => !deleted.has(message.id));
   exitSelectionMode();
   await loadConversations();
 });
