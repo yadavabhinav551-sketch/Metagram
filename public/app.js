@@ -11,6 +11,8 @@ const state = {
   videoRecorder: null,
   videoChunks: [],
   videoTimer: null,
+  videoStream: null,
+  cameraFacingMode: localStorage.getItem("cameraFacingMode") || "user",
   installPrompt: null,
   selectionMode: false,
   selectedMessageIds: new Set(),
@@ -22,8 +24,16 @@ const state = {
   call: {
     peerConnection: null,
     localStream: null,
+    remoteStream: null,
+    recorder: null,
+    recorderStream: null,
+    recorderChunks: [],
+    recorderCanvas: null,
+    recorderAnimation: null,
     conversationId: null,
     peerId: null,
+    type: "voice",
+    shouldRecord: false,
     incoming: false,
     active: false
   }
@@ -131,8 +141,8 @@ function connectSocket() {
     alert(reason || "Your account is not active.");
     showAuth();
   });
-  state.socket.on("call:incoming", ({ conversationId, fromUserId, fromName }) => {
-    showIncomingCall({ conversationId, fromUserId, fromName });
+  state.socket.on("call:incoming", ({ conversationId, fromUserId, fromName, callType = "voice" }) => {
+    showIncomingCall({ conversationId, fromUserId, fromName, callType });
   });
   state.socket.on("call:accepted", async ({ conversationId, fromUserId }) => {
     if (state.call.conversationId !== conversationId || state.call.peerId !== fromUserId) return;
@@ -270,6 +280,7 @@ function renderHeader() {
   $("selectMessagesBtn").disabled = !conversation;
   $("clearChatBtn").disabled = !conversation;
   $("callBtn").classList.add("hidden");
+  $("videoCallBtn").classList.add("hidden");
   $("hideChatBtn").classList.add("hidden");
   if (!conversation) return;
   const other = getOtherMember(conversation);
@@ -279,7 +290,9 @@ function renderHeader() {
   $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : (isOnline(other?.id) ? "Online" : "Offline");
   if (!conversation.groupId && other?.id) {
     $("callBtn").classList.remove("hidden");
+    $("videoCallBtn").classList.remove("hidden");
     $("callBtn").classList.toggle("active-call", state.call.active && state.call.conversationId === conversation.id);
+    $("videoCallBtn").classList.toggle("active-call", state.call.active && state.call.conversationId === conversation.id);
     $("hideChatBtn").classList.remove("hidden");
     $("hideChatBtn").textContent = conversation.hidden ? "Unhide" : "Hide";
   }
@@ -611,6 +624,20 @@ async function sendMediaFile(file) {
   clearReplyComposer();
 }
 
+async function uploadMediaToConversation(file, conversationId, text = "") {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch("/api/upload", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${state.token}` },
+    body: form
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Upload failed.");
+  state.socket.emit("message:send", { conversationId, media: data.media, text });
+  return data.media;
+}
+
 async function toggleRecording() {
   if (state.recorder?.state === "recording") {
     state.recorder.stop();
@@ -636,7 +663,14 @@ async function toggleVideoRecording() {
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera recording is not supported in this browser.");
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: "user" } });
+  if (!window.MediaRecorder) throw new Error("Video recording is not supported in this browser.");
+  const facingMode = $("cameraSelect")?.value || state.cameraFacingMode || "user";
+  state.cameraFacingMode = facingMode;
+  localStorage.setItem("cameraFacingMode", facingMode);
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode } });
+  state.videoStream = stream;
+  $("videoRecordPreview").srcObject = stream;
+  $("videoPreviewModal").classList.remove("hidden");
   state.videoChunks = [];
   const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm";
   state.videoRecorder = new MediaRecorder(stream, { mimeType });
@@ -647,7 +681,10 @@ async function toggleVideoRecording() {
     clearTimeout(state.videoTimer);
     state.videoTimer = null;
     $("videoRecordBtn").classList.remove("recording");
+    $("videoPreviewModal").classList.add("hidden");
+    $("videoRecordPreview").srcObject = null;
     stream.getTracks().forEach((track) => track.stop());
+    state.videoStream = null;
     if (!state.videoChunks.length) return;
     const blob = new Blob(state.videoChunks, { type: "video/webm" });
     setUploadStatus("Uploading recorded video...");
@@ -662,6 +699,7 @@ async function toggleVideoRecording() {
   };
   state.videoRecorder.start();
   $("videoRecordBtn").classList.add("recording");
+  $("videoRecordStatus").textContent = "Recording... max 1 minute.";
   setUploadStatus("Recording video... max 1 minute.");
   state.videoTimer = setTimeout(() => {
     if (state.videoRecorder?.state === "recording") state.videoRecorder.stop();
@@ -673,11 +711,114 @@ function directPeer(conversation = state.activeConversation) {
   return getOtherMember(conversation);
 }
 
-async function ensureCallMedia() {
+function callMediaConstraints(type = state.call.type) {
+  const wantsVideo = type === "video";
+  return {
+    audio: true,
+    video: wantsVideo ? { facingMode: $("cameraSelect")?.value || state.cameraFacingMode || "user" } : false
+  };
+}
+
+async function ensureCallMedia(type = state.call.type) {
   if (state.call.localStream) return state.call.localStream;
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Voice call is not supported in this browser.");
-  state.call.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("Calling is not supported in this browser.");
+  state.call.localStream = await navigator.mediaDevices.getUserMedia(callMediaConstraints(type));
+  $("localVideo").srcObject = state.call.localStream;
   return state.call.localStream;
+}
+
+function supportedRecordingMime(type) {
+  const choices = type === "video"
+    ? ["video/webm;codecs=vp8,opus", "video/webm"]
+    : ["audio/webm;codecs=opus", "audio/webm"];
+  return choices.find((item) => MediaRecorder.isTypeSupported(item)) || "";
+}
+
+function mixedCallAudioStream(localStream, remoteStream) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const context = new AudioContextClass();
+  const destination = context.createMediaStreamDestination();
+  [localStream, remoteStream].forEach((stream) => {
+    if (!stream?.getAudioTracks().length) return;
+    const source = context.createMediaStreamSource(stream);
+    source.connect(destination);
+  });
+  destination.stream.addEventListener("inactive", () => context.close().catch(() => {}), { once: true });
+  return destination.stream;
+}
+
+function startCallRecording() {
+  if (state.call.recorder || !state.call.localStream || !state.call.remoteStream) return;
+  if (!state.call.shouldRecord) {
+    $("callRecordingStatus").textContent = "The caller is saving this call recording.";
+    return;
+  }
+  if (!window.MediaRecorder) {
+    $("callRecordingStatus").textContent = "Call recording is not supported in this browser.";
+    return;
+  }
+  const mixedAudio = mixedCallAudioStream(state.call.localStream, state.call.remoteStream);
+  let recordStream = mixedAudio;
+  let animationId = null;
+  const recorderChunks = [];
+  const recordingConversationId = state.call.conversationId;
+  const recordingType = state.call.type;
+
+  if (state.call.type === "video") {
+    const canvas = document.createElement("canvas");
+    canvas.width = 960;
+    canvas.height = 540;
+    const context = canvas.getContext("2d");
+    const draw = () => {
+      context.fillStyle = "#101817";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      if ($("remoteVideo").readyState >= 2) context.drawImage($("remoteVideo"), 0, 0, canvas.width, canvas.height);
+      if ($("localVideo").readyState >= 2) {
+        const insetWidth = 260;
+        const insetHeight = 146;
+        context.fillStyle = "rgba(255,255,255,0.9)";
+        context.fillRect(canvas.width - insetWidth - 24, canvas.height - insetHeight - 24, insetWidth, insetHeight);
+        context.drawImage($("localVideo"), canvas.width - insetWidth - 20, canvas.height - insetHeight - 20, insetWidth - 8, insetHeight - 8);
+      }
+      animationId = requestAnimationFrame(draw);
+      state.call.recorderAnimation = animationId;
+    };
+    draw();
+    state.call.recorderCanvas = canvas;
+    recordStream = new MediaStream([
+      ...canvas.captureStream(24).getVideoTracks(),
+      ...mixedAudio.getAudioTracks()
+    ]);
+  }
+
+  const mimeType = supportedRecordingMime(state.call.type);
+  state.call.recorderStream = recordStream;
+  state.call.recorder = new MediaRecorder(recordStream, mimeType ? { mimeType } : undefined);
+  state.call.recorder.ondataavailable = (event) => {
+    if (event.data.size) recorderChunks.push(event.data);
+  };
+  state.call.recorder.onstop = async () => {
+    const chunks = recorderChunks;
+    const conversationId = recordingConversationId;
+    const type = recordingType;
+    if (animationId) cancelAnimationFrame(animationId);
+    recordStream.getTracks().forEach((track) => track.stop());
+    if (!chunks.length || !conversationId) return;
+    const isVideo = type === "video";
+    const blob = new Blob(chunks, { type: isVideo ? "video/webm" : "audio/webm" });
+    const file = new File([blob], `${type}-call-${Date.now()}.webm`, { type: blob.type });
+    try {
+      setUploadStatus("Uploading call recording...");
+      await uploadMediaToConversation(file, conversationId, `${isVideo ? "Video" : "Voice"} call recording`);
+      setUploadStatus("Call recording saved.");
+      setTimeout(() => setUploadStatus(""), 1800);
+    } catch (error) {
+      setUploadStatus("");
+      alert(`Call recording upload failed: ${error.message}`);
+    }
+  };
+  state.call.recorder.start(1000);
+  $("callRecordingStatus").textContent = "Recording in background. It will save after the call ends.";
 }
 
 function createPeerConnection() {
@@ -688,7 +829,10 @@ function createPeerConnection() {
     if (event.candidate) sendCallSignal({ type: "candidate", candidate: event.candidate });
   };
   peerConnection.ontrack = (event) => {
-    $("remoteAudio").srcObject = event.streams[0];
+    state.call.remoteStream = event.streams[0];
+    $("remoteAudio").srcObject = state.call.remoteStream;
+    $("remoteVideo").srcObject = state.call.remoteStream;
+    startCallRecording();
   };
   peerConnection.onconnectionstatechange = () => {
     if (["failed", "disconnected", "closed"].includes(peerConnection.connectionState)) endCall(false);
@@ -697,33 +841,39 @@ function createPeerConnection() {
   return peerConnection;
 }
 
-async function prepareCall({ conversationId, peerId, incoming = false }) {
+async function prepareCall({ conversationId, peerId, incoming = false, type = "voice", shouldRecord = false }) {
   endCall(false);
   state.call.conversationId = conversationId;
   state.call.peerId = peerId;
   state.call.incoming = incoming;
+  state.call.type = type;
+  state.call.shouldRecord = shouldRecord;
   state.call.active = true;
+  $("callTitle").textContent = type === "video" ? "Video call" : "Voice call";
   $("callModal").classList.remove("hidden");
+  $("callVideoGrid").classList.toggle("hidden", type !== "video");
+  $("callRecordingStatus").textContent = "Recording will save after call ends.";
   $("incomingCallActions").classList.toggle("hidden", !incoming);
   $("endCallBtn").classList.toggle("hidden", incoming);
   $("callBtn").classList.add("active-call");
-  const stream = await ensureCallMedia();
+  $("videoCallBtn").classList.add("active-call");
+  const stream = await ensureCallMedia(type);
   const peerConnection = createPeerConnection();
   stream.getTracks().forEach((track) => peerConnection.addTrack(track, stream));
   renderHeader();
   return peerConnection;
 }
 
-async function startVoiceCall() {
+async function startCall(type = "voice") {
   const peer = directPeer();
   if (!peer || !state.activeConversation) return;
   $("callTitle").textContent = `Calling ${peer.displayName || "User"}`;
   $("callStatus").textContent = "Ringing...";
-  await prepareCall({ conversationId: state.activeConversation.id, peerId: peer.id });
-  state.socket.emit("call:invite", { conversationId: state.activeConversation.id });
+  await prepareCall({ conversationId: state.activeConversation.id, peerId: peer.id, type, shouldRecord: true });
+  state.socket.emit("call:invite", { conversationId: state.activeConversation.id, callType: type });
 }
 
-function showIncomingCall({ conversationId, fromUserId, fromName }) {
+function showIncomingCall({ conversationId, fromUserId, fromName, callType = "voice" }) {
   if (state.call.active) {
     state.socket.emit("call:reject", { conversationId, targetUserId: fromUserId });
     return;
@@ -731,20 +881,22 @@ function showIncomingCall({ conversationId, fromUserId, fromName }) {
   state.call.conversationId = conversationId;
   state.call.peerId = fromUserId;
   state.call.incoming = true;
+  state.call.type = callType;
   state.call.active = true;
   $("callTitle").textContent = `${fromName || "User"} is calling`;
-  $("callStatus").textContent = "Incoming voice call";
+  $("callStatus").textContent = callType === "video" ? "Incoming video call" : "Incoming voice call";
+  $("callVideoGrid").classList.toggle("hidden", callType !== "video");
   $("incomingCallActions").classList.remove("hidden");
   $("endCallBtn").classList.add("hidden");
   $("callModal").classList.remove("hidden");
 }
 
 async function acceptIncomingCall() {
-  const { conversationId, peerId } = state.call;
+  const { conversationId, peerId, type } = state.call;
   $("incomingCallActions").classList.add("hidden");
   $("endCallBtn").classList.remove("hidden");
   $("callStatus").textContent = "Connecting...";
-  await prepareCall({ conversationId, peerId, incoming: false });
+  await prepareCall({ conversationId, peerId, incoming: false, type, shouldRecord: false });
   state.socket.emit("call:accept", { conversationId, targetUserId: peerId });
 }
 
@@ -761,7 +913,7 @@ async function handleCallSignal({ conversationId, fromUserId, signal }) {
   if (state.call.conversationId !== conversationId || state.call.peerId !== fromUserId) return;
   let peerConnection = state.call.peerConnection;
   if (!peerConnection) {
-    await prepareCall({ conversationId, peerId: fromUserId, incoming: false });
+    await prepareCall({ conversationId, peerId: fromUserId, incoming: false, type: state.call.type });
     peerConnection = state.call.peerConnection;
   }
   if (signal.type === "offer") {
@@ -785,21 +937,36 @@ function endCall(notifyPeer = true) {
   if (notifyPeer && conversationId && peerId) {
     state.socket.emit("call:end", { conversationId, targetUserId: peerId });
   }
+  if (state.call.recorder?.state === "recording") state.call.recorder.stop();
   state.call.peerConnection?.close();
   state.call.localStream?.getTracks().forEach((track) => track.stop());
+  state.call.remoteStream?.getTracks().forEach((track) => track.stop());
+  if (state.call.recorderAnimation) cancelAnimationFrame(state.call.recorderAnimation);
   state.call = {
     peerConnection: null,
     localStream: null,
+    remoteStream: null,
+    recorder: null,
+    recorderStream: null,
+    recorderChunks: [],
+    recorderCanvas: null,
+    recorderAnimation: null,
     conversationId: null,
     peerId: null,
+    type: "voice",
+    shouldRecord: false,
     incoming: false,
     active: false
   };
   $("remoteAudio").srcObject = null;
+  $("remoteVideo").srcObject = null;
+  $("localVideo").srcObject = null;
+  $("callVideoGrid").classList.add("hidden");
   $("callModal").classList.add("hidden");
   $("incomingCallActions").classList.add("hidden");
   $("endCallBtn").classList.remove("hidden");
   $("callBtn").classList.remove("active-call");
+  $("videoCallBtn").classList.remove("active-call");
   renderHeader();
 }
 
@@ -962,13 +1129,31 @@ $("videoRecordBtn").addEventListener("click", () => {
   if (!state.activeConversation) return;
   toggleVideoRecording().catch((error) => {
     $("videoRecordBtn").classList.remove("recording");
+    $("videoPreviewModal").classList.add("hidden");
     setUploadStatus("");
     alert(error.message);
   });
 });
+$("stopVideoRecordBtn").addEventListener("click", () => {
+  if (state.videoRecorder?.state === "recording") state.videoRecorder.stop();
+});
+$("closeVideoPreviewBtn").addEventListener("click", () => {
+  if (state.videoRecorder?.state === "recording") state.videoRecorder.stop();
+});
+$("cameraSelect").addEventListener("change", () => {
+  state.cameraFacingMode = $("cameraSelect").value;
+  localStorage.setItem("cameraFacingMode", state.cameraFacingMode);
+});
 $("callBtn").addEventListener("click", () => {
   if (!directPeer()) return;
-  startVoiceCall().catch((error) => {
+  startCall("voice").catch((error) => {
+    endCall(false);
+    alert(error.message);
+  });
+});
+$("videoCallBtn").addEventListener("click", () => {
+  if (!directPeer()) return;
+  startCall("video").catch((error) => {
     endCall(false);
     alert(error.message);
   });
@@ -1204,4 +1389,5 @@ window.addEventListener("appinstalled", () => {
 });
 
 renderEmojiPicker();
+if ($("cameraSelect")) $("cameraSelect").value = state.cameraFacingMode;
 bootstrap();

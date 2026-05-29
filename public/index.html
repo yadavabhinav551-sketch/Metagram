@@ -75,7 +75,8 @@
               <span id="chatStatus">Search a registered user to begin.</span>
             </div>
             <div class="chat-actions">
-              <button id="callBtn" class="text-button hidden" type="button">Call</button>
+              <button id="callBtn" class="text-button hidden" type="button">Voice</button>
+              <button id="videoCallBtn" class="text-button hidden" type="button">Video</button>
               <button id="hideChatBtn" class="text-button hidden" type="button">Hide</button>
               <button id="selectMessagesBtn" class="text-button" type="button">Select</button>
               <button id="clearChatBtn" class="text-button danger" type="button">Clear</button>
@@ -98,6 +99,10 @@
             <input id="fileInput" type="file" class="hidden" multiple accept="image/*,audio/*,video/*,.mp3,.m4a,.aac,.wav,.ogg,.mp4,.m4v,.mov,.webm,.mkv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z">
             <button id="attachBtn" class="icon-button" type="button" title="Attach file">＋</button>
             <button id="voiceBtn" class="icon-button" type="button" title="Record voice">◉</button>
+            <select id="cameraSelect" class="camera-select" title="Camera">
+              <option value="user">Front</option>
+              <option value="environment">Rear</option>
+            </select>
             <button id="videoRecordBtn" class="icon-button" type="button" title="Record video">▣</button>
             <button id="emojiBtn" class="icon-button" type="button" title="Emoji">☺</button>
             <input id="messageInput" placeholder="Message" autocomplete="off">
@@ -150,12 +155,31 @@
             <button id="closeCallBtn" class="icon-button" type="button" title="End call">×</button>
           </header>
           <p id="callStatus">Connecting...</p>
+          <div id="callVideoGrid" class="call-video-grid hidden">
+            <video id="remoteVideo" autoplay playsinline></video>
+            <video id="localVideo" autoplay muted playsinline></video>
+          </div>
           <audio id="remoteAudio" autoplay playsinline></audio>
+          <small id="callRecordingStatus" class="call-recording-status">Recording will save after call ends.</small>
           <div id="incomingCallActions" class="call-actions hidden">
             <button id="acceptCallBtn" class="primary" type="button">Accept</button>
             <button id="declineCallBtn" class="text-button danger" type="button">Decline</button>
           </div>
           <button id="endCallBtn" class="text-button danger" type="button">End call</button>
+        </div>
+      </section>
+
+      <section id="videoPreviewModal" class="modal-layer hidden">
+        <div class="modal-card video-preview-card">
+          <header>
+            <strong>Video recording</strong>
+            <button id="closeVideoPreviewBtn" class="icon-button" type="button" title="Stop">×</button>
+          </header>
+          <video id="videoRecordPreview" autoplay muted playsinline></video>
+          <div class="video-preview-actions">
+            <span id="videoRecordStatus">Recording...</span>
+            <button id="stopVideoRecordBtn" class="text-button danger" type="button">Stop & send</button>
+          </div>
         </div>
       </section>
     </main>

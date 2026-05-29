@@ -936,16 +936,18 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("call:invite", ({ conversationId }) => {
+  socket.on("call:invite", ({ conversationId, callType = "voice" }) => {
     if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
     const conversation = db.conversations.find((item) => item.id === conversationId && !item.groupId && item.participants.includes(socket.user?.id));
     if (!conversation) return;
     const peerId = otherParticipant(conversation, socket.user.id);
     if (!peerId) return;
+    const normalizedCallType = callType === "video" ? "video" : "voice";
     io.to(peerId).emit("call:incoming", {
       conversationId: conversation.id,
       fromUserId: socket.user.id,
-      fromName: socket.user.displayName || socket.user.userId || "User"
+      fromName: socket.user.displayName || socket.user.userId || "User",
+      callType: normalizedCallType
     });
   });
 

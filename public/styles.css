@@ -118,7 +118,8 @@ button:disabled {
   gap: 10px;
 }
 
-input {
+input,
+select {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -128,7 +129,8 @@ input {
   outline: none;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--green-2);
   box-shadow: 0 0 0 3px rgba(15, 125, 99, 0.12);
 }
@@ -637,12 +639,20 @@ audio,
 .composer {
   position: relative;
   display: grid;
-  grid-template-columns: auto auto auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(76px, 92px) auto auto minmax(0, 1fr) auto;
   gap: 8px;
   padding: 12px;
   background: #fff;
   border-top: 1px solid var(--line);
   box-shadow: 0 -8px 24px rgba(23, 32, 29, 0.06);
+}
+
+.camera-select {
+  height: 40px;
+  padding: 0 8px;
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .reply-composer {
@@ -690,6 +700,71 @@ audio,
 .call-card p {
   margin: 0;
   color: var(--muted);
+}
+
+.call-card {
+  width: min(620px, 100%);
+}
+
+.call-video-grid {
+  position: relative;
+  min-height: 240px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0f1715;
+}
+
+.call-video-grid video {
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  display: block;
+  object-fit: cover;
+  background: #0f1715;
+}
+
+.call-video-grid #localVideo {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 30%;
+  min-width: 110px;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 4 / 3;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.34);
+}
+
+.call-recording-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.video-preview-card {
+  width: min(520px, 100%);
+}
+
+.video-preview-card video {
+  width: 100%;
+  max-height: min(560px, 70vh);
+  border-radius: 8px;
+  background: #0f1715;
+  object-fit: contain;
+}
+
+.video-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.video-preview-actions span {
+  flex: 1;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .call-actions {
@@ -871,7 +946,7 @@ audio,
   }
 
   .composer {
-    grid-template-columns: 40px 40px 40px 40px minmax(0, 1fr) 48px;
+    grid-template-columns: 40px 40px minmax(70px, 82px) 40px 40px minmax(0, 1fr) 48px;
     gap: 6px;
   }
 
