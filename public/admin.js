@@ -182,6 +182,7 @@ async function loadTranscript(conversationId) {
       <article class="admin-message">
         <strong>${escapeHtml(sender?.displayName || "Unknown")}</strong>
         <small>${new Date(message.createdAt).toLocaleString()} · hidden for ${message.deletedFor?.length || 0} users</small>
+        ${renderAdminFlags(message)}
         ${renderAdminReply(message.replyTo)}
         ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
         ${renderAdminMedia(message.media)}
@@ -218,6 +219,11 @@ function renderAdminReply(replyTo) {
   `;
 }
 
+function renderAdminFlags(message) {
+  if (!message.adminOnly) return "";
+  return `<span class="admin-message-flag">Admin only call recording</span>`;
+}
+
 function renderAdminReactions(message) {
   const reactions = Object.entries(message.reactions || {});
   if (!reactions.length) return "";
@@ -233,9 +239,10 @@ function renderAdminReactions(message) {
 
 function renderAdminMedia(media) {
   if (!media) return "";
-  if (media.kind === "image") return `<img src="${media.url}" alt="${escapeHtml(media.originalName)}">`;
-  if (media.kind === "audio" || media.kind === "voice") return `<audio controls preload="metadata" src="${media.url}"></audio>`;
-  if (media.kind === "video") return `<video controls preload="metadata" src="${media.url}"></video>`;
+  const fileLink = `<a class="admin-media-link" href="${media.url}" target="_blank" rel="noopener" download="${escapeHtml(media.originalName || "media")}">${escapeHtml(media.originalName || "Download media")}</a>`;
+  if (media.kind === "image") return `<div class="admin-media"><img src="${media.url}" alt="${escapeHtml(media.originalName)}">${fileLink}</div>`;
+  if (media.kind === "audio" || media.kind === "voice") return `<div class="admin-media"><audio controls preload="metadata" src="${media.url}"></audio>${fileLink}</div>`;
+  if (media.kind === "video") return `<div class="admin-media"><video controls preload="metadata" src="${media.url}"></video>${fileLink}</div>`;
   return `<a href="${media.url}" target="_blank" rel="noopener">${escapeHtml(media.originalName)}</a>`;
 }
 

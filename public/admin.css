@@ -326,6 +326,32 @@ button.admin-item:hover,
   flex-wrap: wrap;
 }
 
+.admin-message-flag {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 8px;
+  border: 1px solid #b9d7c8;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #edf8f2;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-media {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.admin-media-link {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .admin-message img,
 .admin-message video {
   max-width: 260px;

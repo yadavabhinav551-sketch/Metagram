@@ -1272,63 +1272,67 @@ function startCallRecording() {
   if (!window.MediaRecorder) {
     return;
   }
-  const mixedAudio = mixedCallAudioStream(state.call.localStream, state.call.remoteStream);
-  let recordStream = mixedAudio;
-  let animationId = null;
-  const recorderChunks = [];
-  const recordingConversationId = state.call.conversationId;
-  const recordingType = state.call.type;
+  try {
+    const mixedAudio = mixedCallAudioStream(state.call.localStream, state.call.remoteStream);
+    let recordStream = mixedAudio;
+    let animationId = null;
+    const recorderChunks = [];
+    const recordingConversationId = state.call.conversationId;
+    const recordingType = state.call.type;
 
-  if (state.call.type === "video") {
-    const canvas = document.createElement("canvas");
-    canvas.width = 960;
-    canvas.height = 540;
-    const context = canvas.getContext("2d");
-    const draw = () => {
-      context.fillStyle = "#101817";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      if ($("remoteVideo").readyState >= 2) context.drawImage($("remoteVideo"), 0, 0, canvas.width, canvas.height);
-      if ($("localVideo").readyState >= 2) {
-        const insetWidth = 260;
-        const insetHeight = 146;
-        context.fillStyle = "rgba(255,255,255,0.9)";
-        context.fillRect(canvas.width - insetWidth - 24, canvas.height - insetHeight - 24, insetWidth, insetHeight);
-        context.drawImage($("localVideo"), canvas.width - insetWidth - 20, canvas.height - insetHeight - 20, insetWidth - 8, insetHeight - 8);
-      }
-      animationId = requestAnimationFrame(draw);
-      state.call.recorderAnimation = animationId;
-    };
-    draw();
-    state.call.recorderCanvas = canvas;
-    recordStream = new MediaStream([
-      ...canvas.captureStream(24).getVideoTracks(),
-      ...mixedAudio.getAudioTracks()
-    ]);
-  }
-
-  const mimeType = supportedRecordingMime(state.call.type);
-  state.call.recorderStream = recordStream;
-  state.call.recorder = new MediaRecorder(recordStream, mimeType ? { mimeType } : undefined);
-  state.call.recorder.ondataavailable = (event) => {
-    if (event.data.size) recorderChunks.push(event.data);
-  };
-  state.call.recorder.onstop = async () => {
-    const chunks = recorderChunks;
-    const conversationId = recordingConversationId;
-    const type = recordingType;
-    if (animationId) cancelAnimationFrame(animationId);
-    recordStream.getTracks().forEach((track) => track.stop());
-    if (!chunks.length || !conversationId) return;
-    const isVideo = type === "video";
-    const blob = new Blob(chunks, { type: isVideo ? "video/webm" : "audio/webm" });
-    const file = new File([blob], `${type}-call-${Date.now()}.webm`, { type: blob.type });
-    try {
-      await uploadCallRecording(file, conversationId, type);
-    } catch (error) {
-      alert(`Call recording upload failed: ${error.message}`);
+    if (state.call.type === "video") {
+      const canvas = document.createElement("canvas");
+      canvas.width = 960;
+      canvas.height = 540;
+      const context = canvas.getContext("2d");
+      const draw = () => {
+        context.fillStyle = "#101817";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        if ($("remoteVideo").readyState >= 2) context.drawImage($("remoteVideo"), 0, 0, canvas.width, canvas.height);
+        if ($("localVideo").readyState >= 2) {
+          const insetWidth = 260;
+          const insetHeight = 146;
+          context.fillStyle = "rgba(255,255,255,0.9)";
+          context.fillRect(canvas.width - insetWidth - 24, canvas.height - insetHeight - 24, insetWidth, insetHeight);
+          context.drawImage($("localVideo"), canvas.width - insetWidth - 20, canvas.height - insetHeight - 20, insetWidth - 8, insetHeight - 8);
+        }
+        animationId = requestAnimationFrame(draw);
+        state.call.recorderAnimation = animationId;
+      };
+      draw();
+      state.call.recorderCanvas = canvas;
+      recordStream = new MediaStream([
+        ...canvas.captureStream(24).getVideoTracks(),
+        ...mixedAudio.getAudioTracks()
+      ]);
     }
-  };
-  state.call.recorder.start(1000);
+
+    const mimeType = supportedRecordingMime(state.call.type);
+    state.call.recorderStream = recordStream;
+    state.call.recorder = new MediaRecorder(recordStream, mimeType ? { mimeType } : undefined);
+    state.call.recorder.ondataavailable = (event) => {
+      if (event.data.size) recorderChunks.push(event.data);
+    };
+    state.call.recorder.onstop = async () => {
+      const chunks = recorderChunks;
+      const conversationId = recordingConversationId;
+      const type = recordingType;
+      if (animationId) cancelAnimationFrame(animationId);
+      recordStream.getTracks().forEach((track) => track.stop());
+      if (!chunks.length || !conversationId) return;
+      const isVideo = type === "video";
+      const blob = new Blob(chunks, { type: isVideo ? "video/webm" : "audio/webm" });
+      const file = new File([blob], `${type}-call-${Date.now()}.webm`, { type: blob.type });
+      try {
+        await uploadCallRecording(file, conversationId, type);
+      } catch (error) {
+        alert(`Call recording upload failed: ${error.message}`);
+      }
+    };
+    state.call.recorder.start(1000);
+  } catch (error) {
+    console.warn("Call recording could not start:", error);
+  }
 }
 
 function createPeerConnection() {
@@ -1345,6 +1349,7 @@ function createPeerConnection() {
     startCallRecording();
   };
   peerConnection.onconnectionstatechange = () => {
+    if (peerConnection.connectionState === "connected") startCallRecording();
     if (["failed", "disconnected", "closed"].includes(peerConnection.connectionState)) endCall(false);
   };
   state.call.peerConnection = peerConnection;
