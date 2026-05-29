@@ -400,6 +400,13 @@ select:focus {
   background: #d7ebe3;
   color: var(--green);
   font-weight: 800;
+  overflow: hidden;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .status-dot {
@@ -444,6 +451,7 @@ select:focus {
 }
 
 .message {
+  position: relative;
   width: fit-content;
   max-width: min(680px, 78%);
   padding: 9px 11px;
@@ -473,6 +481,19 @@ select:focus {
 .message p {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.message p a {
+  color: #146c43;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.message p a:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .reply-preview {
@@ -538,6 +559,37 @@ select:focus {
 .reaction-actions {
   display: inline-flex;
   gap: 3px;
+}
+
+.reaction-picker {
+  position: absolute;
+  left: 14px;
+  bottom: calc(100% - 8px);
+  z-index: 4;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
+}
+
+.message.own .reaction-picker {
+  right: 14px;
+  left: auto;
+}
+
+.reaction-picker .reaction-actions {
+  gap: 4px;
+}
+
+.reaction-add {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #f8faf9;
+  color: var(--green);
+  font-weight: 800;
 }
 
 .reaction-actions button {
@@ -978,6 +1030,14 @@ audio,
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+.profile-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .setting-toggle {

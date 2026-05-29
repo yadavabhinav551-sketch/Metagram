@@ -67,7 +67,7 @@
           </form>
           <form id="signupForm" class="stack hidden">
             <input name="displayName" autocomplete="name" placeholder="Full Name" required>
-            <input name="userId" autocomplete="username" placeholder="User ID" required>
+            <input name="userId" autocomplete="username" placeholder="username.like_instagram" pattern="[a-z0-9._]{3,30}" required>
             <input name="mobile" autocomplete="tel" placeholder="Mobile Number" required>
             <input name="password" autocomplete="new-password" type="password" placeholder="Password" required>
             <button class="primary" type="submit">Create account</button>
@@ -108,6 +108,8 @@
               <button id="callBtn" class="text-button hidden" type="button">Voice</button>
               <button id="videoCallBtn" class="text-button hidden" type="button">Video</button>
               <button id="hideChatBtn" class="text-button hidden" type="button">Hide</button>
+              <button id="blockUserBtn" class="text-button hidden" type="button">Block</button>
+              <button id="deleteUserBtn" class="text-button danger hidden" type="button">Delete user</button>
               <button id="selectMessagesBtn" class="text-button" type="button">Select</button>
               <button id="clearChatBtn" class="text-button danger" type="button">Clear</button>
             </div>
@@ -152,6 +154,17 @@
             Name
             <input name="displayName" id="profileName" autocomplete="name" required>
           </label>
+          <label>
+            User ID
+            <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
+          </label>
+          <label>
+            Profile photo
+            <input name="avatar" id="profileAvatarInput" type="file" accept="image/*">
+          </label>
+          <div class="profile-preview">
+            <span class="avatar" id="profileAvatarPreview">U</span>
+          </div>
           <label>
             Old password
             <input name="oldPassword" type="password" autocomplete="current-password" placeholder="Required to change password">

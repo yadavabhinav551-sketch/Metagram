@@ -26,6 +26,8 @@ const state = {
   privacyAutoLockTimer: null,
   privacyAwayStartedAt: Number(localStorage.getItem("privacyAwayStartedAt") || 0),
   replyToMessageId: null,
+  reactionPickerMessageId: null,
+  reactionLongPressTimer: null,
   call: {
     peerConnection: null,
     localStream: null,
@@ -52,6 +54,7 @@ const EMOJI_OPTIONS = [
   "\u{1F4AF}", "\u2728", "\u{1F634}", "\u{1F914}", "\u{1F62E}", "\u{1F62D}",
   "\u{1F607}", "\u{1F609}", "\u{1F60B}", "\u{1F91D}", "\u{1F64C}", "\u{1F44C}"
 ];
+const DEFAULT_REACTION_EMOJIS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}"];
 const api = async (url, options = {}) => {
   const response = await fetch(url, {
     ...options,
@@ -88,6 +91,8 @@ function showChat() {
   $("meName").textContent = state.user.displayName;
   $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
   $("profileName").value = state.user.displayName;
+  $("profileUserId").value = state.user.userId || "";
+  renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   syncPrivacySettings();
   clearPrivacyAwayLock();
 }
@@ -483,19 +488,54 @@ function getOtherMember(conversation) {
   return conversation.members?.find((member) => member.id !== state.user.id) || conversation.members?.[0];
 }
 
+function avatarMarkup(user, fallback = "User") {
+  const label = user?.displayName || user?.userId || fallback || "User";
+  if (user?.avatarUrl) return `<img src="${escapeHtml(user.avatarUrl)}" alt="${escapeHtml(label)}">`;
+  return escapeHtml(label.slice(0, 1).toUpperCase());
+}
+
+function renderAvatarInto(element, user, fallback = "User") {
+  if (!element) return;
+  element.innerHTML = avatarMarkup(user, fallback);
+}
+
 function isOnline(userId) {
   return state.presence.find((item) => item.id === userId)?.online;
+}
+
+function presenceFor(userId) {
+  return state.presence.find((item) => item.id === userId);
+}
+
+function formatPresenceStatus(userId) {
+  const presence = presenceFor(userId);
+  if (presence?.online) return "Online";
+  return formatLastSeen(presence?.lastSeenAt);
+}
+
+function formatLastSeen(value) {
+  if (!value) return "Offline";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Offline";
+  const now = new Date();
+  const today = now.toDateString() === date.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (today) return `last seen today at ${time}`;
+  if (yesterday.toDateString() === date.toDateString()) return `last seen yesterday at ${time}`;
+  return `last seen ${date.toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" })} at ${time}`;
 }
 
 function renderConversations() {
   $("conversationList").innerHTML = state.conversations.map((conversation) => {
     const title = conversation.group?.name || getOtherMember(conversation)?.displayName || "Chat";
     const other = getOtherMember(conversation);
-    const status = conversation.group ? `${conversation.members.length} members` : (isOnline(other?.id) ? "Online" : "Offline");
+    const status = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
     const last = conversation.lastMessage?.media ? `[${conversation.lastMessage.media.kind}]` : conversation.lastMessage?.text || "No messages yet";
     return `
       <button class="conversation ${state.activeConversation?.id === conversation.id ? "active" : ""}" data-id="${conversation.id}" type="button">
-        <span class="avatar">${title.slice(0, 1).toUpperCase()}</span>
+        <span class="avatar">${avatarMarkup(other, title)}</span>
         <span class="conversation-main">
           <strong>${escapeHtml(title)}</strong>
           <small>${escapeHtml(last)}</small>
@@ -512,12 +552,14 @@ function renderHeader() {
   $("callBtn").classList.add("hidden");
   $("videoCallBtn").classList.add("hidden");
   $("hideChatBtn").classList.add("hidden");
+  $("blockUserBtn").classList.add("hidden");
+  $("deleteUserBtn").classList.add("hidden");
   if (!conversation) return;
   const other = getOtherMember(conversation);
   const title = conversation.group?.name || other?.displayName || "Chat";
   $("chatTitle").textContent = title;
-  $("chatAvatar").textContent = title.slice(0, 1).toUpperCase();
-  $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : (isOnline(other?.id) ? "Online" : "Offline");
+  renderAvatarInto($("chatAvatar"), other, title);
+  $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
   if (!conversation.groupId && other?.id) {
     $("callBtn").classList.remove("hidden");
     $("videoCallBtn").classList.remove("hidden");
@@ -525,10 +567,13 @@ function renderHeader() {
     $("videoCallBtn").classList.toggle("active-call", state.call.active && state.call.conversationId === conversation.id);
     $("hideChatBtn").classList.remove("hidden");
     $("hideChatBtn").textContent = conversation.hidden ? "Unhide" : "Hide";
+    $("blockUserBtn").classList.remove("hidden");
+    $("deleteUserBtn").classList.remove("hidden");
+    $("blockUserBtn").textContent = conversation.blockedByMe ? "Unblock" : "Block";
   }
 }
 
-function renderMessages() {
+function renderMessages({ preserveScroll = false } = {}) {
   if (!state.activeConversation) {
     clearReplyComposer();
     $("messages").className = "messages empty-state";
@@ -546,19 +591,19 @@ function renderMessages() {
         ${state.selectionMode ? `<label class="message-select"><input type="checkbox" data-select-message="${message.id}" ${selected ? "checked" : ""}> Select</label>` : ""}
         ${renderReplyPreview(message.replyTo)}
         ${renderMedia(message.media)}
-        ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
+        ${message.text ? `<p>${renderMessageText(message.text)}</p>` : ""}
         ${renderReactions(message)}
         <footer>
           <time>${new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
           ${own ? `<span class="ticks ${ticks === "blue" ? "blue" : ""}">${ticks === "single" ? "✓" : "✓✓"}</span>` : ""}
           <button data-reply="${message.id}" type="button" title="Reply">Reply</button>
-          ${renderReactionButtons(message)}
           <button data-delete="${message.id}" type="button" title="Delete for me">Delete</button>
           ${canDeleteEveryone ? `<button data-delete-everyone="${message.id}" type="button" title="Delete for everyone">Everyone</button>` : ""}
         </footer>
+        ${state.reactionPickerMessageId === message.id ? renderReactionPicker(message) : ""}
       </article>`;
   }).join("");
-  $("messages").scrollTop = $("messages").scrollHeight;
+  if (!preserveScroll) $("messages").scrollTop = $("messages").scrollHeight;
   renderReplyComposer();
   updateBulkActions();
 }
@@ -604,7 +649,17 @@ function renderReactions(message) {
 function renderReactionButtons(message) {
   const options = ["👍", "❤️", "😂", "😮"];
   const current = message.reactions?.[state.user.id];
+  options.splice(0, options.length, ...new Set([...DEFAULT_REACTION_EMOJIS, ...(state.user?.reactionEmojis || [])]));
   return `<span class="reaction-actions">${options.map((emoji) => `<button class="${current === emoji ? "active" : ""}" data-react="${message.id}" data-emoji="${emoji}" type="button" title="React ${emoji}">${emoji}</button>`).join("")}</span>`;
+}
+
+function renderReactionPicker(message) {
+  return `
+    <div class="reaction-picker" role="menu" aria-label="Message reactions">
+      ${renderReactionButtons(message)}
+      <button class="reaction-add" data-add-reaction="${message.id}" type="button" title="Add emoji">+</button>
+    </div>
+  `;
 }
 
 function messageSnippet(message) {
@@ -632,6 +687,28 @@ function renderReplyComposer() {
 function clearReplyComposer() {
   state.replyToMessageId = null;
   renderReplyComposer();
+}
+
+function openReactionPicker(messageId) {
+  if (!messageId || state.selectionMode) return;
+  state.reactionPickerMessageId = state.reactionPickerMessageId === messageId ? null : messageId;
+  renderMessages({ preserveScroll: true });
+}
+
+function clearReactionLongPress() {
+  if (!state.reactionLongPressTimer) return;
+  clearTimeout(state.reactionLongPressTimer);
+  state.reactionLongPressTimer = null;
+}
+
+function startReactionLongPress(event) {
+  const article = event.target.closest("[data-message]");
+  if (!article || event.target.closest("button, a, input, label")) return;
+  clearReactionLongPress();
+  state.reactionLongPressTimer = setTimeout(() => {
+    state.reactionLongPressTimer = null;
+    openReactionPicker(article.dataset.message);
+  }, 550);
 }
 
 function renderMedia(media) {
@@ -788,7 +865,7 @@ async function searchUsers() {
   const { users } = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
   $("searchResults").innerHTML = users.map((user) => `
     <button class="search-result" data-user="${user.id}" type="button">
-      <span class="avatar">${user.displayName.slice(0, 1).toUpperCase()}</span>
+      <span class="avatar">${avatarMarkup(user, user.displayName)}</span>
       <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · hidden" : ""}</small></span>
     </button>
   `).join("");
@@ -827,7 +904,7 @@ function renderHiddenVault(conversations) {
         const last = conversation.lastMessage?.media ? `[${conversation.lastMessage.media.kind}]` : conversation.lastMessage?.text || "No messages yet";
         return `
           <button class="search-result hidden-result" data-hidden-conversation="${conversation.id}" type="button">
-            <span class="avatar">${title.slice(0, 1).toUpperCase()}</span>
+            <span class="avatar">${avatarMarkup(other, title)}</span>
             <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(last)}</small></span>
           </button>`;
       }).join("") || `<p class="hidden-vault-empty">No hidden chats yet.</p>`}
@@ -847,6 +924,7 @@ function requestHiddenChatSecret() {
 }
 
 async function sendMediaFile(file) {
+  if (state.activeConversation?.blockedByMe || state.activeConversation?.blockedMe) throw new Error("Unblock this user before sending media.");
   const form = new FormData();
   form.append("file", file);
   const response = await fetch("/api/upload", {
@@ -1272,6 +1350,30 @@ function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
 
+function renderMessageText(value = "") {
+  const text = String(value);
+  const urlPattern = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
+  let html = "";
+  let lastIndex = 0;
+  let match;
+
+  while ((match = urlPattern.exec(text)) !== null) {
+    const rawUrl = match[0];
+    const trimmedUrl = rawUrl.replace(/[.,!?;:)\]}]+$/g, "");
+    const trailingText = rawUrl.slice(trimmedUrl.length);
+
+    html += escapeHtml(text.slice(lastIndex, match.index));
+    if (trimmedUrl) {
+      const href = trimmedUrl.startsWith("www.") ? `https://${trimmedUrl}` : trimmedUrl;
+      html += `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(trimmedUrl)}</a>`;
+    }
+    html += escapeHtml(trailingText);
+    lastIndex = match.index + rawUrl.length;
+  }
+
+  return html + escapeHtml(text.slice(lastIndex));
+}
+
 function formatFileSize(bytes = 0) {
   if (!bytes) return "";
   const units = ["B", "KB", "MB", "GB"];
@@ -1353,6 +1455,9 @@ document.addEventListener("keydown", (event) => {
 });
 $("profileBtn").addEventListener("click", () => {
   $("profileName").value = state.user.displayName;
+  $("profileUserId").value = state.user.userId || "";
+  $("profileAvatarInput").value = "";
+  renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   $("privacyCodeInput").value = "";
   syncPrivacySettings();
   $("profileMessage").textContent = "";
@@ -1360,6 +1465,14 @@ $("profileBtn").addEventListener("click", () => {
   $("profileModal").classList.remove("hidden");
 });
 $("closeProfileBtn").addEventListener("click", () => $("profileModal").classList.add("hidden"));
+$("profileAvatarInput").addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (!file) {
+    renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
+    return;
+  }
+  $("profileAvatarPreview").innerHTML = `<img src="${URL.createObjectURL(file)}" alt="Profile preview">`;
+});
 document.querySelectorAll(".install-control").forEach((button) => {
   button.addEventListener("click", async () => {
     if (!state.installPrompt) return;
@@ -1427,6 +1540,30 @@ $("hideChatBtn").addEventListener("click", async () => {
     renderMessages();
     $("chatView").classList.remove("conversation-open");
   }
+});
+$("blockUserBtn").addEventListener("click", async () => {
+  if (!state.activeConversation || state.activeConversation.groupId) return;
+  const blocked = state.activeConversation.blockedByMe;
+  const action = blocked ? "unblock-user" : "block-user";
+  if (!blocked && !confirm("Block this user? They will not be able to message you.")) return;
+  const { user, conversation } = await api(`/api/conversations/${state.activeConversation.id}/${action}`, { method: "POST" });
+  if (user) state.user = user;
+  if (conversation) state.activeConversation = conversation;
+  renderHeader();
+  await loadConversations();
+});
+$("deleteUserBtn").addEventListener("click", async () => {
+  if (!state.activeConversation || state.activeConversation.groupId) return;
+  if (!confirm("Delete this user from your account? Admin panel se user delete nahi hoga.")) return;
+  const conversationId = state.activeConversation.id;
+  const { user } = await api(`/api/conversations/${conversationId}/delete-user`, { method: "POST" });
+  if (user) state.user = user;
+  state.activeConversation = null;
+  state.messages = [];
+  renderHeader();
+  renderMessages();
+  await loadConversations();
+  $("chatView").classList.remove("conversation-open");
 });
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
 $("attachBtn").addEventListener("click", () => $("fileInput").click());
@@ -1582,6 +1719,7 @@ $("profileForm").addEventListener("submit", async (event) => {
   const form = new FormData(event.target);
   const body = {
     displayName: form.get("displayName"),
+    userId: form.get("userId"),
     oldPassword: form.get("oldPassword"),
     newPassword: form.get("newPassword")
   };
@@ -1598,6 +1736,22 @@ $("profileForm").addEventListener("submit", async (event) => {
   try {
     const profileResult = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
     state.user = profileResult.user;
+    const avatarFile = $("profileAvatarInput").files?.[0];
+    if (avatarFile) {
+      const avatarBody = new FormData();
+      avatarBody.append("avatar", avatarFile);
+      const avatarResponse = await fetch("/api/me/avatar", {
+        method: "POST",
+        headers: {
+          ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+          ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {})
+        },
+        body: avatarBody
+      });
+      const avatarData = await avatarResponse.json().catch(() => ({}));
+      if (!avatarResponse.ok) throw new Error(avatarData.error || "Profile photo upload failed.");
+      state.user = avatarData.user;
+    }
     const privacyResult = await api("/api/privacy/settings", { method: "PATCH", body: JSON.stringify(privacyBody) });
     state.user = privacyResult.user;
     if (privacyEnabled() && !state.privacyToken) {
@@ -1611,6 +1765,7 @@ $("profileForm").addEventListener("submit", async (event) => {
     showChat();
     event.target.oldPassword.value = "";
     event.target.newPassword.value = "";
+    $("profileAvatarInput").value = "";
     $("privacyCodeInput").value = "";
     $("profileMessage").textContent = "Profile updated.";
     $("profileMessage").classList.add("success-text");
@@ -1709,12 +1864,29 @@ $("messages").addEventListener("click", async (event) => {
     $("messageInput").focus();
     return;
   }
+  const addReactionButton = event.target.closest("[data-add-reaction]");
+  if (addReactionButton) {
+    const emoji = prompt("Emoji add karein", "");
+    if (!emoji?.trim()) return;
+    const nextEmojis = [...new Set([...(state.user.reactionEmojis || []), emoji.trim()])].slice(0, 12);
+    const { user } = await api("/api/me", { method: "PATCH", body: JSON.stringify({ reactionEmojis: nextEmojis }) });
+    state.user = user;
+    state.socket.emit("message:react", {
+      messageId: addReactionButton.dataset.addReaction,
+      emoji: emoji.trim()
+    });
+    state.reactionPickerMessageId = null;
+    renderMessages({ preserveScroll: true });
+    return;
+  }
   const reactionButton = event.target.closest("[data-react]");
   if (reactionButton) {
     state.socket.emit("message:react", {
       messageId: reactionButton.dataset.react,
       emoji: reactionButton.dataset.emoji
     });
+    state.reactionPickerMessageId = null;
+    renderMessages({ preserveScroll: true });
     return;
   }
   const checkbox = event.target.closest("[data-select-message]");
@@ -1725,11 +1897,16 @@ $("messages").addEventListener("click", async (event) => {
     return;
   }
   const article = event.target.closest("[data-message]");
-  if (state.selectionMode && article && !event.target.closest("button")) {
+  if (state.selectionMode && article && !event.target.closest("button, a")) {
     const id = article.dataset.message;
     if (state.selectedMessageIds.has(id)) state.selectedMessageIds.delete(id);
     else state.selectedMessageIds.add(id);
     renderMessages();
+    return;
+  }
+  if (article && state.reactionPickerMessageId && !event.target.closest("button, a, .reaction-picker")) {
+    state.reactionPickerMessageId = null;
+    renderMessages({ preserveScroll: true });
     return;
   }
   const deleteEveryoneButton = event.target.closest("[data-delete-everyone]");
@@ -1749,9 +1926,26 @@ $("messages").addEventListener("click", async (event) => {
   renderMessages();
 });
 
+$("messages").addEventListener("mousedown", startReactionLongPress);
+$("messages").addEventListener("touchstart", startReactionLongPress, { passive: true });
+$("messages").addEventListener("mouseup", clearReactionLongPress);
+$("messages").addEventListener("mouseleave", clearReactionLongPress);
+$("messages").addEventListener("touchend", clearReactionLongPress);
+$("messages").addEventListener("touchcancel", clearReactionLongPress);
+$("messages").addEventListener("contextmenu", (event) => {
+  const article = event.target.closest("[data-message]");
+  if (!article || event.target.closest("button, a, input, label")) return;
+  event.preventDefault();
+  openReactionPicker(article.dataset.message);
+});
+
 $("messageForm").addEventListener("submit", (event) => {
   event.preventDefault();
   if (!state.activeConversation) return;
+  if (state.activeConversation.blockedByMe || state.activeConversation.blockedMe) {
+    alert(state.activeConversation.blockedByMe ? "Unblock this user before sending a message." : "You cannot message this user.");
+    return;
+  }
   const text = $("messageInput").value;
   if (!text.trim()) return;
   state.socket.emit("message:send", { conversationId: state.activeConversation.id, text, replyToId: state.replyToMessageId });

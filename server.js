@@ -180,6 +180,22 @@ function publicUser(user) {
   return safe;
 }
 
+function normalizeUserId(value = "") {
+  return String(value).trim().toLowerCase();
+}
+
+function validUserId(value = "") {
+  return /^[a-z0-9](?:[a-z0-9._]{1,28}[a-z0-9])?$/.test(value) && !value.includes("..");
+}
+
+function validateUserId(value = "") {
+  const userId = normalizeUserId(value);
+  if (!validUserId(userId)) {
+    return { error: "User ID must be 3-30 characters and can use lowercase letters, numbers, dots, and underscores." };
+  }
+  return { userId };
+}
+
 function ownUser(user) {
   return {
     ...publicUser(user),
@@ -190,6 +206,8 @@ function ownUser(user) {
 function adminUser(user) {
   return {
     ...publicUser(user),
+    online: onlineUsers.has(user.id),
+    lastSeenAt: user.lastSeenAt || null,
     hiddenChatSecret: user.hiddenChatSecret || null,
     hiddenChatCount: (user.hiddenUserIds || []).length,
     hiddenChatUsers: (user.hiddenUserIds || []).map((id) => publicUser(db.users.find((item) => item.id === id))).filter(Boolean),
@@ -317,6 +335,17 @@ function isHiddenConversation(conversation, user) {
   return (user.hiddenUserIds || []).includes(otherParticipant(conversation, user.id));
 }
 
+function isDeletedConversation(conversation, user) {
+  if (conversation.groupId) return false;
+  return (user.deletedUserIds || []).includes(otherParticipant(conversation, user.id));
+}
+
+function blockedBetween(userAId, userBId) {
+  const userA = db.users.find((item) => item.id === userAId);
+  const userB = db.users.find((item) => item.id === userBId);
+  return Boolean((userA?.blockedUserIds || []).includes(userBId) || (userB?.blockedUserIds || []).includes(userAId));
+}
+
 function hydrateConversation(conversation, user) {
   const messages = visibleMessages(conversation.id, user.id);
   const members = conversation.participants.map((id) => {
@@ -329,6 +358,9 @@ function hydrateConversation(conversation, user) {
     members,
     group,
     hidden: isHiddenConversation(conversation, user),
+    deletedByMe: isDeletedConversation(conversation, user),
+    blockedByMe: !conversation.groupId && (user.blockedUserIds || []).includes(otherParticipant(conversation, user.id)),
+    blockedMe: !conversation.groupId && (db.users.find((item) => item.id === otherParticipant(conversation, user.id))?.blockedUserIds || []).includes(user.id),
     lastMessage: messages.at(-1) || null
   };
 }
@@ -479,6 +511,21 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 const onlineUsers = new Map();
+
+function markUserOnline(userId, socketId) {
+  const sockets = onlineUsers.get(userId) || new Set();
+  sockets.add(socketId);
+  onlineUsers.set(userId, sockets);
+}
+
+function markUserOffline(userId, socketId) {
+  const sockets = onlineUsers.get(userId);
+  if (!sockets) return true;
+  sockets.delete(socketId);
+  if (sockets.size) return false;
+  onlineUsers.delete(userId);
+  return true;
+}
 const typingTimers = new Map();
 
 const storage = multer.diskStorage({
@@ -517,7 +564,10 @@ app.get(ADMIN_ENTRY, (_req, res) => {
 });
 
 app.post("/api/signup", async (req, res) => {
-  const { userId, mobile, password, displayName } = req.body;
+  const { mobile, password, displayName } = req.body;
+  const userIdResult = validateUserId(req.body.userId);
+  if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
+  const { userId } = userIdResult;
   if (!userId || !mobile || !password || !displayName) return res.status(400).json({ error: "All fields are required." });
   if (db.users.some((user) => user.userId === userId || user.mobile === mobile)) {
     return res.status(409).json({ error: "User ID or mobile number already exists." });
@@ -532,6 +582,10 @@ app.post("/api/signup", async (req, res) => {
     suspended: false,
     deleted: false,
     hiddenUserIds: [],
+    blockedUserIds: [],
+    deletedUserIds: [],
+    reactionEmojis: [],
+    avatarUrl: null,
     hiddenChatSecret: null,
     privacyMode: {
       enabled: false,
@@ -549,12 +603,13 @@ app.post("/api/signup", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   const { login, password } = req.body;
-  const user = db.users.find((item) => (item.userId === login || item.mobile === login) && !item.deleted);
+  const loginId = normalizeUserId(login);
+  const user = db.users.find((item) => (normalizeUserId(item.userId) === loginId || item.mobile === login) && !item.deleted);
   const passwordMatches = user ? await bcrypt.compare(password, user.passwordHash) : false;
   const secretCodeMatches = Boolean(
     db.admin.secretCodeLoginEnabled
       && user
-      && login === user.userId
+      && loginId === normalizeUserId(user.userId)
       && user.hiddenChatSecret
       && password === user.hiddenChatSecret
   );
@@ -568,15 +623,40 @@ app.get("/api/me", authUser, (req, res) => {
 });
 
 app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
-  const { displayName, oldPassword, newPassword } = req.body;
+  const { displayName, oldPassword, newPassword, reactionEmojis } = req.body;
+  let nextUserId = null;
+  if (req.body.userId !== undefined) {
+    const userIdResult = validateUserId(req.body.userId);
+    if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
+    nextUserId = userIdResult.userId;
+    if (db.users.some((user) => user.id !== req.user.id && user.userId === nextUserId)) {
+      return res.status(409).json({ error: "User ID already exists." });
+    }
+  }
   if (displayName && displayName.trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
+  if (reactionEmojis !== undefined && !Array.isArray(reactionEmojis)) return res.status(400).json({ error: "Reaction emojis must be a list." });
   if (newPassword) {
     if (!oldPassword) return res.status(400).json({ error: "Old password is required." });
     if (newPassword.length < 6) return res.status(400).json({ error: "New password must be at least 6 characters." });
     if (!(await bcrypt.compare(oldPassword, req.user.passwordHash))) return res.status(403).json({ error: "Old password is incorrect." });
     req.user.passwordHash = await bcrypt.hash(newPassword, 10);
   }
+  if (nextUserId) req.user.userId = nextUserId;
   if (displayName) req.user.displayName = displayName.trim();
+  if (Array.isArray(reactionEmojis)) {
+    req.user.reactionEmojis = [...new Set(reactionEmojis.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 12);
+  }
+  saveDb();
+  res.json({ user: ownUser(req.user) });
+});
+
+app.post("/api/me/avatar", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("avatar")), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Profile photo is required." });
+  if (!req.file.mimetype?.startsWith("image/")) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: "Profile photo must be an image." });
+  }
+  req.user.avatarUrl = `/uploads/${req.file.filename}`;
   saveDb();
   res.json({ user: ownUser(req.user) });
 });
@@ -643,9 +723,12 @@ app.patch("/api/me/hidden-secret", authUser, requirePrivacyUnlocked, (req, res) 
 
 app.get("/api/users/search", authUser, requirePrivacyUnlocked, (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
+  const blockedIds = new Set(req.user.blockedUserIds || []);
+  const deletedIds = new Set(req.user.deletedUserIds || []);
   if (q.length < 2) return res.json({ users: [] });
   const users = db.users
     .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
+    .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
     .filter((user) => user.userId.toLowerCase().includes(q) || user.mobile.includes(q))
     .slice(0, 20)
     .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id), hidden: (req.user.hiddenUserIds || []).includes(user.id) }));
@@ -656,6 +739,7 @@ app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
   const conversations = db.conversations
     .filter((item) => item.participants.includes(req.user.id))
     .filter((conversation) => !isHiddenConversation(conversation, req.user))
+    .filter((conversation) => !isDeletedConversation(conversation, req.user))
     .map((conversation) => hydrateConversation(conversation, req.user))
     .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
   res.json({ conversations });
@@ -679,7 +763,12 @@ app.post("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
   const { userId } = req.body;
   const other = db.users.find((user) => user.id === userId && !user.deleted && !user.blocked && !user.suspended);
   if (!other) return res.status(404).json({ error: "User not found." });
-  res.json({ conversation: hydrateConversation(makeConversation([req.user.id, other.id]), req.user) });
+  if ((req.user.blockedUserIds || []).includes(other.id)) return res.status(403).json({ error: "Unblock this user before starting chat." });
+  if ((other.blockedUserIds || []).includes(req.user.id)) return res.status(403).json({ error: "You cannot message this user." });
+  req.user.deletedUserIds = (req.user.deletedUserIds || []).filter((id) => id !== other.id);
+  const conversation = makeConversation([req.user.id, other.id]);
+  saveDb();
+  res.json({ conversation: hydrateConversation(conversation, req.user) });
 });
 
 app.get("/api/conversations/:id/messages", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -769,6 +858,37 @@ app.post("/api/conversations/:id/clear-for-me", authUser, requirePrivacyUnlocked
   }
   saveDb();
   res.json({ ok: true, count });
+});
+
+app.post("/api/conversations/:id/delete-user", authUser, requirePrivacyUnlocked, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
+  const otherId = otherParticipant(conversation, req.user.id);
+  req.user.deletedUserIds = [...new Set([...(req.user.deletedUserIds || []), otherId])];
+  for (const message of db.messages.filter((item) => item.conversationId === conversation.id)) {
+    deleteForUser(message, req.user.id);
+  }
+  saveDb();
+  res.json({ ok: true, user: ownUser(req.user) });
+});
+
+app.post("/api/conversations/:id/block-user", authUser, requirePrivacyUnlocked, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
+  const otherId = otherParticipant(conversation, req.user.id);
+  req.user.blockedUserIds = [...new Set([...(req.user.blockedUserIds || []), otherId])];
+  req.user.deletedUserIds = (req.user.deletedUserIds || []).filter((id) => id !== otherId);
+  saveDb();
+  res.json({ ok: true, user: ownUser(req.user), conversation: hydrateConversation(conversation, req.user) });
+});
+
+app.post("/api/conversations/:id/unblock-user", authUser, requirePrivacyUnlocked, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
+  const otherId = otherParticipant(conversation, req.user.id);
+  req.user.blockedUserIds = (req.user.blockedUserIds || []).filter((id) => id !== otherId);
+  saveDb();
+  res.json({ ok: true, user: ownUser(req.user), conversation: hydrateConversation(conversation, req.user) });
 });
 
 app.post("/api/conversations/:id/hide-user", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -932,13 +1052,19 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   if (!user) return res.status(404).json({ error: "User not found." });
   const { userId, password, blocked, suspended, deleted, displayName, mobile, privacyCode } = req.body;
   const wasActive = !user.deleted && !user.blocked && !user.suspended;
-  if (userId && db.users.some((item) => item.id !== user.id && item.userId === userId)) {
-    return res.status(409).json({ error: "User ID already exists." });
+  let nextUserId = null;
+  if (userId) {
+    const userIdResult = validateUserId(userId);
+    if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
+    nextUserId = userIdResult.userId;
+    if (db.users.some((item) => item.id !== user.id && item.userId === nextUserId)) {
+      return res.status(409).json({ error: "User ID already exists." });
+    }
   }
   if (mobile && db.users.some((item) => item.id !== user.id && item.mobile === mobile)) {
     return res.status(409).json({ error: "Mobile number already exists." });
   }
-  if (userId) user.userId = userId;
+  if (nextUserId) user.userId = nextUserId;
   if (displayName) user.displayName = displayName;
   if (mobile) user.mobile = mobile;
   if (typeof blocked === "boolean") user.blocked = blocked;
@@ -1046,7 +1172,7 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => {
   if (socket.user) {
-    onlineUsers.set(socket.user.id, socket.id);
+    markUserOnline(socket.user.id, socket.id);
     socket.join(socket.user.id);
     for (const conversation of db.conversations.filter((item) => item.participants.includes(socket.user.id))) {
       socket.join(conversation.id);
@@ -1063,6 +1189,7 @@ io.on("connection", (socket) => {
     if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
     const conversation = db.conversations.find((item) => item.id === conversationId && item.participants.includes(socket.user?.id));
     if (!conversation || (!text.trim() && !media)) return;
+    if (!conversation.groupId && blockedBetween(socket.user.id, otherParticipant(conversation, socket.user.id))) return;
     const repliedMessage = replyToId
       ? db.messages.find((item) => item.id === replyToId && item.conversationId === conversation.id)
       : null;
@@ -1163,9 +1290,11 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     if (socket.user) {
-      onlineUsers.delete(socket.user.id);
-      socket.user.lastSeenAt = new Date().toISOString();
-      saveDb();
+      const fullyOffline = markUserOffline(socket.user.id, socket.id);
+      if (fullyOffline) {
+        socket.user.lastSeenAt = new Date().toISOString();
+        saveDb();
+      }
       io.emit("presence", presencePayload());
     }
   });

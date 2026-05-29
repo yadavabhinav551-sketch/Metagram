@@ -143,6 +143,19 @@
   margin-top: 3px;
 }
 
+.admin-avatar {
+  margin-bottom: 8px;
+}
+
+.admin-item .presence-line {
+  color: #69746f;
+  font-weight: 700;
+}
+
+.admin-item .presence-line.online {
+  color: #087443;
+}
+
 .hidden-audit {
   display: grid;
   gap: 2px;

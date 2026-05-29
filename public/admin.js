@@ -70,12 +70,38 @@ function renderSettings() {
   $("secretCodeLoginToggle").checked = Boolean(adminState.settings.secretCodeLoginEnabled);
 }
 
+function formatLastSeen(value) {
+  if (!value) return "Offline";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Offline";
+  const now = new Date();
+  const today = now.toDateString() === date.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (today) return `last seen today at ${time}`;
+  if (yesterday.toDateString() === date.toDateString()) return `last seen yesterday at ${time}`;
+  return `last seen ${date.toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" })} at ${time}`;
+}
+
+function userPresenceLabel(user) {
+  return user.online ? "Online now" : formatLastSeen(user.lastSeenAt);
+}
+
+function avatarMarkup(user) {
+  const label = user?.displayName || user?.userId || "User";
+  if (user?.avatarUrl) return `<span class="avatar admin-avatar"><img src="${escapeHtml(user.avatarUrl)}" alt="${escapeHtml(label)}"></span>`;
+  return `<span class="avatar admin-avatar">${escapeHtml(label.slice(0, 1).toUpperCase())}</span>`;
+}
+
 function renderUsers() {
   $("adminUsers").innerHTML = adminState.users.map((user) => `
     <div class="admin-item">
+      ${avatarMarkup(user)}
       <strong>${escapeHtml(user.displayName)}</strong>
       <small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}</small>
       <small>${user.deleted ? "Deleted" : user.blocked ? "Blocked" : user.suspended ? "Suspended" : "Active"}</small>
+      <small class="presence-line ${user.online ? "online" : ""}">${escapeHtml(userPresenceLabel(user))}</small>
       ${renderHiddenChatAudit(user)}
       ${renderPrivacyCodeAudit(user)}
       <div class="admin-actions">
@@ -228,6 +254,11 @@ function connectAdminSocket() {
   adminState.socket.on("admin:conversation-cleared", async ({ conversationId }) => {
     await loadOverview();
     if (adminState.activeConversationId === conversationId) await loadTranscript(conversationId);
+  });
+  adminState.socket.on("presence", (presence = []) => {
+    const presenceById = new Map(presence.map((item) => [item.id, item]));
+    adminState.users = adminState.users.map((user) => ({ ...user, ...(presenceById.get(user.id) || {}) }));
+    renderUsers();
   });
 }
 
