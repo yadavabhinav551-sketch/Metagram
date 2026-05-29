@@ -75,13 +75,27 @@ const api = async (url, options = {}) => {
 function setAppReady() {
   document.body.classList.remove("app-booting");
   ensureTopbarControlsVisible();
+  setTimeout(ensureTopbarControlsVisible, 250);
+  setTimeout(ensureTopbarControlsVisible, 1200);
 }
 
 function ensureTopbarControlsVisible() {
+  const topbar = document.querySelector(".topbar");
+  if (topbar && !document.querySelector(".topbar-actions")) {
+    topbar.insertAdjacentHTML("beforeend", `
+      <div class="topbar-actions">
+        <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
+        <button id="profileBtn" class="icon-button" type="button" title="Profile settings">&#9881;</button>
+        <button id="sidebarInstallBtn" class="icon-button" type="button" title="Install app">&#8595;</button>
+        <button id="logoutBtn" class="icon-button" type="button" title="Logout">&#8856;</button>
+      </div>
+    `);
+  }
   ["panicHideBtn", "profileBtn", "sidebarInstallBtn", "logoutBtn"].forEach((id) => {
     const button = $(id);
     if (!button) return;
     button.classList.remove("hidden");
+    button.hidden = false;
     button.style.removeProperty("display");
     button.style.removeProperty("visibility");
     button.style.removeProperty("opacity");
