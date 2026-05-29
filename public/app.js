@@ -445,7 +445,8 @@ function renderHiddenVault(conversations) {
         <small>${conversations.length} hidden chat${conversations.length === 1 ? "" : "s"}</small>
       </div>
       <div class="hidden-code-change">
-        <input id="hiddenCodeInput" type="password" autocomplete="new-password" placeholder="New secret code">
+        <input id="oldHiddenCodeInput" type="password" autocomplete="current-password" placeholder="Old secret code">
+        <input id="newHiddenCodeInput" type="password" autocomplete="new-password" placeholder="New secret code">
         <button class="text-button" data-change-hidden-code type="button">Change code</button>
         <small id="hiddenCodeMessage"></small>
       </div>
@@ -742,10 +743,16 @@ $("conversationList").addEventListener("click", async (event) => {
 $("searchResults").addEventListener("click", async (event) => {
   const changeCodeButton = event.target.closest("[data-change-hidden-code]");
   if (changeCodeButton) {
-    const input = $("hiddenCodeInput");
+    const oldInput = $("oldHiddenCodeInput");
+    const newInput = $("newHiddenCodeInput");
     const message = $("hiddenCodeMessage");
-    const newSecret = input.value.trim();
+    const currentSecret = oldInput.value.trim();
+    const newSecret = newInput.value.trim();
     message.classList.remove("success-text");
+    if (!currentSecret) {
+      message.textContent = "Old secret code dalna zaroori hai.";
+      return;
+    }
     if (newSecret.length < 4) {
       message.textContent = "Secret code kam se kam 4 characters ka hona chahiye.";
       return;
@@ -754,11 +761,12 @@ $("searchResults").addEventListener("click", async (event) => {
     try {
       const { user } = await api("/api/me/hidden-secret", {
         method: "PATCH",
-        body: JSON.stringify({ currentSecret: state.unlockedHiddenCode, newSecret })
+        body: JSON.stringify({ currentSecret, newSecret })
       });
       state.user = user;
       state.unlockedHiddenCode = newSecret;
-      input.value = "";
+      oldInput.value = "";
+      newInput.value = "";
       message.textContent = "Secret code updated.";
       message.classList.add("success-text");
     } catch (error) {
