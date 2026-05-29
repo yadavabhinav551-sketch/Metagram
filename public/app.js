@@ -14,7 +14,8 @@ const state = {
   pendingShare: null,
   shareRecipients: new Map(),
   hiddenConversations: [],
-  unlockedHiddenCode: ""
+  unlockedHiddenCode: "",
+  replyToMessageId: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -85,6 +86,14 @@ function connectSocket() {
     const message = state.messages.find((item) => item.id === messageId);
     if (message) message.readBy = readBy;
     renderMessages();
+  });
+  state.socket.on("message:reaction", ({ messageId, reactions }) => {
+    const message = state.messages.find((item) => item.id === messageId);
+    if (message) {
+      message.reactions = reactions;
+      renderMessages();
+    }
+    loadConversations();
   });
   state.socket.on("message:deleted", ({ messageId, conversationId, deletedFor }) => {
     if (conversationId !== state.activeConversation?.id || !deletedFor?.includes(state.user.id)) return;
@@ -224,6 +233,7 @@ function renderHeader() {
 
 function renderMessages() {
   if (!state.activeConversation) {
+    clearReplyComposer();
     $("messages").className = "messages empty-state";
     $("messages").textContent = "No conversation selected.";
     return;
@@ -237,17 +247,22 @@ function renderMessages() {
     return `
       <article class="message ${own ? "own" : ""} ${selected ? "selected" : ""}" data-message="${message.id}">
         ${state.selectionMode ? `<label class="message-select"><input type="checkbox" data-select-message="${message.id}" ${selected ? "checked" : ""}> Select</label>` : ""}
+        ${renderReplyPreview(message.replyTo)}
         ${renderMedia(message.media)}
         ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
+        ${renderReactions(message)}
         <footer>
           <time>${new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
           ${own ? `<span class="ticks ${ticks === "blue" ? "blue" : ""}">${ticks === "single" ? "✓" : "✓✓"}</span>` : ""}
+          <button data-reply="${message.id}" type="button" title="Reply">Reply</button>
+          ${renderReactionButtons(message)}
           <button data-delete="${message.id}" type="button" title="Delete for me">Delete</button>
           ${canDeleteEveryone ? `<button data-delete-everyone="${message.id}" type="button" title="Delete for everyone">Everyone</button>` : ""}
         </footer>
       </article>`;
   }).join("");
   $("messages").scrollTop = $("messages").scrollHeight;
+  renderReplyComposer();
   updateBulkActions();
 }
 
@@ -261,6 +276,59 @@ function exitSelectionMode() {
   state.selectionMode = false;
   state.selectedMessageIds.clear();
   renderMessages();
+}
+
+function renderReplyPreview(replyTo) {
+  if (!replyTo) return "";
+  return `
+    <div class="reply-preview">
+      <strong>${escapeHtml(replyTo.senderName || "User")}</strong>
+      <span>${escapeHtml(replyTo.text || replyTo.mediaName || "Message")}</span>
+    </div>
+  `;
+}
+
+function renderReactions(message) {
+  const reactions = Object.entries(message.reactions || {});
+  if (!reactions.length) return "";
+  const grouped = reactions.reduce((items, [, emoji]) => {
+    items.set(emoji, (items.get(emoji) || 0) + 1);
+    return items;
+  }, new Map());
+  return `<div class="message-reactions">${[...grouped.entries()].map(([emoji, count]) => `<span>${escapeHtml(emoji)}${count > 1 ? ` ${count}` : ""}</span>`).join("")}</div>`;
+}
+
+function renderReactionButtons(message) {
+  const options = ["👍", "❤️", "😂", "😮"];
+  const current = message.reactions?.[state.user.id];
+  return `<span class="reaction-actions">${options.map((emoji) => `<button class="${current === emoji ? "active" : ""}" data-react="${message.id}" data-emoji="${emoji}" type="button" title="React ${emoji}">${emoji}</button>`).join("")}</span>`;
+}
+
+function messageSnippet(message) {
+  if (!message) return "";
+  if (message.text) return message.text;
+  if (message.media?.originalName) return message.media.originalName;
+  return "Message";
+}
+
+function senderName(senderId) {
+  if (senderId === state.user.id) return "You";
+  return state.activeConversation?.members?.find((member) => member.id === senderId)?.displayName || "User";
+}
+
+function renderReplyComposer() {
+  const message = state.messages.find((item) => item.id === state.replyToMessageId);
+  $("replyComposer").classList.toggle("hidden", !message);
+  if (!message) {
+    $("replyComposerText").textContent = "";
+    return;
+  }
+  $("replyComposerText").innerHTML = `<strong>${escapeHtml(senderName(message.senderId))}</strong><span>${escapeHtml(messageSnippet(message))}</span>`;
+}
+
+function clearReplyComposer() {
+  state.replyToMessageId = null;
+  renderReplyComposer();
 }
 
 function renderMedia(media) {
@@ -485,7 +553,8 @@ async function sendMediaFile(file) {
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "Upload failed.");
-  state.socket.emit("message:send", { conversationId: state.activeConversation.id, media: data.media });
+  state.socket.emit("message:send", { conversationId: state.activeConversation.id, media: data.media, replyToId: state.replyToMessageId });
+  clearReplyComposer();
 }
 
 async function toggleRecording() {
@@ -733,6 +802,7 @@ $("conversationList").addEventListener("click", async (event) => {
   state.activeConversation = state.conversations.find((item) => item.id === button.dataset.id);
   state.selectionMode = false;
   state.selectedMessageIds.clear();
+  clearReplyComposer();
   state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
   renderHeader();
   renderConversations();
@@ -782,6 +852,7 @@ $("searchResults").addEventListener("click", async (event) => {
     if (!state.activeConversation) return;
     state.selectionMode = false;
     state.selectedMessageIds.clear();
+    clearReplyComposer();
     state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
     renderHeader();
     await loadMessages(state.activeConversation.id);
@@ -797,6 +868,7 @@ $("searchResults").addEventListener("click", async (event) => {
   state.activeConversation = state.conversations.find((item) => item.id === conversation.id) || conversation;
   state.selectionMode = false;
   state.selectedMessageIds.clear();
+  clearReplyComposer();
   state.socket.emit("conversation:join", { conversationId: conversation.id });
   renderHeader();
   await loadMessages(conversation.id);
@@ -806,6 +878,21 @@ $("searchResults").addEventListener("click", async (event) => {
 });
 
 $("messages").addEventListener("click", async (event) => {
+  const replyButton = event.target.closest("[data-reply]");
+  if (replyButton) {
+    state.replyToMessageId = replyButton.dataset.reply;
+    renderReplyComposer();
+    $("messageInput").focus();
+    return;
+  }
+  const reactionButton = event.target.closest("[data-react]");
+  if (reactionButton) {
+    state.socket.emit("message:react", {
+      messageId: reactionButton.dataset.react,
+      emoji: reactionButton.dataset.emoji
+    });
+    return;
+  }
   const checkbox = event.target.closest("[data-select-message]");
   if (checkbox) {
     if (checkbox.checked) state.selectedMessageIds.add(checkbox.dataset.selectMessage);
@@ -843,9 +930,12 @@ $("messageForm").addEventListener("submit", (event) => {
   if (!state.activeConversation) return;
   const text = $("messageInput").value;
   if (!text.trim()) return;
-  state.socket.emit("message:send", { conversationId: state.activeConversation.id, text });
+  state.socket.emit("message:send", { conversationId: state.activeConversation.id, text, replyToId: state.replyToMessageId });
   $("messageInput").value = "";
+  clearReplyComposer();
 });
+
+$("cancelReplyBtn").addEventListener("click", clearReplyComposer);
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();

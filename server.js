@@ -326,21 +326,28 @@ function buildExportHtml() {
     const messages = db.messages
       .filter((message) => message.conversationId === conversation.id)
       .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-      .map((message) => `
-        <tr>
-          <td>${escapeHtml(new Date(message.createdAt).toLocaleString())}</td>
-          <td>${escapeHtml(userLabel(message.senderId))}</td>
-          <td>${escapeHtml(message.text || message.media?.originalName || "")}</td>
-          <td>${escapeHtml(message.media?.kind || "text")}</td>
-          <td>${message.deletedFor?.length || 0}</td>
-        </tr>
-      `).join("");
+      .map((message) => {
+        const reactions = Object.entries(message.reactions || {})
+          .map(([userId, emoji]) => `${emoji} ${userLabel(userId)}`)
+          .join(", ");
+        return `
+          <tr>
+            <td>${escapeHtml(new Date(message.createdAt).toLocaleString())}</td>
+            <td>${escapeHtml(userLabel(message.senderId))}</td>
+            <td>${escapeHtml(message.text || message.media?.originalName || "")}</td>
+            <td>${escapeHtml(message.replyTo ? `${message.replyTo.senderName}: ${message.replyTo.text || message.replyTo.mediaName || "Message"}` : "")}</td>
+            <td>${escapeHtml(reactions)}</td>
+            <td>${escapeHtml(message.media?.kind || "text")}</td>
+            <td>${message.deletedFor?.length || 0}</td>
+          </tr>
+        `;
+      }).join("");
     return `
       <section>
         <h2>${title}</h2>
         <table>
-          <thead><tr><th>Time</th><th>Sender</th><th>Message / File</th><th>Type</th><th>Hidden For</th></tr></thead>
-          <tbody>${messages || `<tr><td colspan="5">No messages.</td></tr>`}</tbody>
+          <thead><tr><th>Time</th><th>Sender</th><th>Message / File</th><th>Reply To</th><th>Reactions</th><th>Type</th><th>Hidden For</th></tr></thead>
+          <tbody>${messages || `<tr><td colspan="7">No messages.</td></tr>`}</tbody>
         </table>
       </section>
     `;
@@ -781,6 +788,19 @@ function presencePayload() {
   return db.users.map((user) => ({ id: user.id, online: onlineUsers.has(user.id), lastSeenAt: user.lastSeenAt }));
 }
 
+function messageReplySnapshot(message) {
+  if (!message) return null;
+  const sender = db.users.find((user) => user.id === message.senderId);
+  return {
+    id: message.id,
+    senderId: message.senderId,
+    senderName: sender?.displayName || sender?.userId || "User",
+    text: message.text || "",
+    mediaName: message.media?.originalName || "",
+    mediaKind: message.media?.kind || null
+  };
+}
+
 io.use((socket, next) => {
   try {
     const payload = jwt.verify(socket.handshake.auth?.token, JWT_SECRET);
@@ -812,10 +832,13 @@ io.on("connection", (socket) => {
     if (allowed) socket.join(conversationId);
   });
 
-  socket.on("message:send", ({ conversationId, text = "", media = null }) => {
+  socket.on("message:send", ({ conversationId, text = "", media = null, replyToId = null }) => {
     if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
     const conversation = db.conversations.find((item) => item.id === conversationId && item.participants.includes(socket.user?.id));
     if (!conversation || (!text.trim() && !media)) return;
+    const repliedMessage = replyToId
+      ? db.messages.find((item) => item.id === replyToId && item.conversationId === conversation.id)
+      : null;
     const now = new Date().toISOString();
     const deliveredTo = conversation.participants.filter((id) => id !== socket.user.id && onlineUsers.has(id));
     const message = {
@@ -827,6 +850,8 @@ io.on("connection", (socket) => {
       createdAt: now,
       deliveredTo,
       readBy: [socket.user.id],
+      replyTo: messageReplySnapshot(repliedMessage),
+      reactions: {},
       deletedFor: [],
       isDeletedBySender: false,
       isDeletedByReceiver: false
@@ -834,6 +859,21 @@ io.on("connection", (socket) => {
     db.messages.push(message);
     saveDb();
     io.to([conversationId, ...conversation.participants]).emit("message:new", message);
+    io.to("admins").emit("admin:message", message);
+  });
+
+  socket.on("message:react", ({ messageId, emoji }) => {
+    if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
+    const allowed = ["👍", "❤️", "😂", "😮"];
+    if (!allowed.includes(emoji)) return;
+    const message = db.messages.find((item) => item.id === messageId);
+    const conversation = db.conversations.find((item) => item.id === message?.conversationId && item.participants.includes(socket.user?.id));
+    if (!message || !conversation) return;
+    message.reactions = message.reactions || {};
+    if (message.reactions[socket.user.id] === emoji) delete message.reactions[socket.user.id];
+    else message.reactions[socket.user.id] = emoji;
+    saveDb();
+    io.to([conversation.id, ...conversation.participants]).emit("message:reaction", { messageId: message.id, reactions: message.reactions });
     io.to("admins").emit("admin:message", message);
   });
 

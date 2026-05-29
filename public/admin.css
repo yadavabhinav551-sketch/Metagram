@@ -196,6 +196,32 @@
   margin: 6px 0;
 }
 
+.admin-reply,
+.admin-reactions {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf9;
+}
+
+.admin-reply strong,
+.admin-reactions span {
+  font-size: 12px;
+}
+
+.admin-reply span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-reactions {
+  display: flex;
+  flex-wrap: wrap;
+}
+
 .admin-message img,
 .admin-message video {
   max-width: 260px;

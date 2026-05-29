@@ -460,6 +460,48 @@ input:focus {
   overflow-wrap: anywhere;
 }
 
+.reply-preview {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 7px;
+  padding: 7px 9px;
+  border-left: 3px solid var(--green);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.reply-preview strong,
+.reply-preview span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-preview strong {
+  color: var(--green);
+  font-size: 12px;
+}
+
+.reply-preview span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.message-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.message-reactions span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  padding: 2px 7px;
+  font-size: 12px;
+}
+
 .message footer {
   display: flex;
   align-items: center;
@@ -476,6 +518,21 @@ input:focus {
   background: transparent;
   color: var(--muted);
   font-size: 11px;
+}
+
+.reaction-actions {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.reaction-actions button {
+  font-size: 14px;
+  opacity: 0.74;
+}
+
+.reaction-actions button.active {
+  opacity: 1;
+  transform: scale(1.12);
 }
 
 .bulk-actions {
@@ -580,6 +637,34 @@ audio,
   background: #fff;
   border-top: 1px solid var(--line);
   box-shadow: 0 -8px 24px rgba(23, 32, 29, 0.06);
+}
+
+.reply-composer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf9;
+}
+
+.reply-composer span span,
+.reply-composer span strong {
+  display: block;
+}
+
+.reply-composer span span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.reply-composer .icon-button {
+  width: 32px;
+  height: 32px;
+  flex-basis: 32px;
 }
 
 .composer input {

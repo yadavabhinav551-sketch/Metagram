@@ -4,6 +4,7 @@ const adminState = {
   conversations: [],
   groups: [],
   settings: { secretCodeLoginEnabled: false },
+  activeConversationId: null,
   socket: null,
   installPrompt: null,
   revealedHiddenCodes: new Set()
@@ -121,6 +122,7 @@ function renderGroupMembers() {
 }
 
 async function loadTranscript(conversationId) {
+  adminState.activeConversationId = conversationId;
   const conversation = adminState.conversations.find((item) => item.id === conversationId);
   const title = conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName).join(" ↔ ");
   $("transcriptTitle").textContent = title || "Transcript";
@@ -131,10 +133,35 @@ async function loadTranscript(conversationId) {
       <article class="admin-message">
         <strong>${escapeHtml(sender?.displayName || "Unknown")}</strong>
         <small>${new Date(message.createdAt).toLocaleString()} · hidden for ${message.deletedFor?.length || 0} users</small>
+        ${renderAdminReply(message.replyTo)}
         ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
         ${renderAdminMedia(message.media)}
+        ${renderAdminReactions(message)}
       </article>`;
   }).join("") || "No messages.";
+}
+
+function renderAdminReply(replyTo) {
+  if (!replyTo) return "";
+  return `
+    <div class="admin-reply">
+      <strong>Reply to ${escapeHtml(replyTo.senderName || "User")}</strong>
+      <span>${escapeHtml(replyTo.text || replyTo.mediaName || "Message")}</span>
+    </div>
+  `;
+}
+
+function renderAdminReactions(message) {
+  const reactions = Object.entries(message.reactions || {});
+  if (!reactions.length) return "";
+  return `
+    <div class="admin-reactions">
+      ${reactions.map(([userId, emoji]) => {
+        const user = adminState.users.find((item) => item.id === userId);
+        return `<span>${escapeHtml(emoji)} ${escapeHtml(user?.displayName || user?.userId || "User")}</span>`;
+      }).join("")}
+    </div>
+  `;
 }
 
 function renderAdminMedia(media) {
@@ -154,7 +181,10 @@ function connectAdminSocket() {
   adminState.socket?.disconnect();
   adminState.socket = io({ auth: { token: adminState.token } });
   adminState.socket.on("connect", () => adminState.socket.emit("admin:join"));
-  adminState.socket.on("admin:message", () => loadOverview());
+  adminState.socket.on("admin:message", async () => {
+    await loadOverview();
+    if (adminState.activeConversationId) await loadTranscript(adminState.activeConversationId);
+  });
 }
 
 $("adminLoginForm").addEventListener("submit", async (event) => {
