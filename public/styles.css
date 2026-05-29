@@ -181,13 +181,16 @@ select:focus {
   height: 100vh;
   height: 100dvh;
   display: grid;
-  grid-template-columns: 372px minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   background: #edf2f4;
+  overflow: hidden;
 }
 
 .sidebar {
   position: relative;
   min-width: 0;
+  max-width: 360px;
+  overflow: hidden;
   border-right: 1px solid var(--line);
   display: grid;
   grid-template-rows: auto auto auto 1fr;
@@ -390,15 +393,20 @@ select:focus {
 .search-row {
   padding: 14px;
   background: #fff;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .search-row input {
+  display: block;
   width: 100%;
 }
 
 .search-results {
+  min-width: 0;
   max-height: 220px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-bottom: 1px solid var(--line);
 }
 
@@ -451,6 +459,8 @@ select:focus {
 .search-result,
 .conversation {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 72px;
   display: flex;
   align-items: center;
@@ -460,6 +470,7 @@ select:focus {
   padding: 10px 12px;
   background: transparent;
   text-align: left;
+  overflow: hidden;
 }
 
 .conversation.active,
@@ -475,6 +486,13 @@ select:focus {
 .conversation-main {
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+}
+
+.search-result > span:not(.avatar) {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .conversation-main strong,
@@ -1276,6 +1294,11 @@ audio,
     height: 100vh;
     height: 100dvh;
     transition: transform 0.22s ease;
+  }
+
+  .sidebar {
+    width: 100vw;
+    max-width: none;
   }
 
   .chat-panel {
