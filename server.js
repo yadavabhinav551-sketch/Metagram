@@ -129,6 +129,7 @@ async function loadDb() {
 }
 
 let db = await loadDb();
+const privacyUnlockAttempts = new Map();
 
 function saveDb() {
   if (stateCollection) {
@@ -169,7 +170,13 @@ function startSelfPing() {
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, hiddenChatSecret, ...safe } = user;
+  const { passwordHash, hiddenChatSecret, privacyCodeHash, ...safe } = user;
+  safe.privacyMode = {
+    enabled: Boolean(user.privacyMode?.enabled),
+    hasCode: Boolean(user.privacyCodeHash),
+    autoLockMinutes: Number(user.privacyMode?.autoLockMinutes || 0),
+    panicShortcut: user.privacyMode?.panicShortcut || "button"
+  };
   return safe;
 }
 
@@ -195,6 +202,57 @@ function signUser(user) {
 
 function signAdmin() {
   return jwt.sign({ role: "admin" }, JWT_SECRET, { expiresIn: "8h" });
+}
+
+function signPrivacy(user) {
+  return jwt.sign({ id: user.id, role: "privacy" }, JWT_SECRET, { expiresIn: "12h" });
+}
+
+function validPrivacyCode(code) {
+  return /^\d{6}$/.test(String(code || "").trim());
+}
+
+function checkPrivacyRateLimit(req, user) {
+  const key = `${user.id}:${req.ip}`;
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  const maxAttempts = 8;
+  const entry = privacyUnlockAttempts.get(key) || { count: 0, resetAt: now + windowMs };
+  if (now > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = now + windowMs;
+  }
+  entry.count += 1;
+  privacyUnlockAttempts.set(key, entry);
+  return entry.count <= maxAttempts;
+}
+
+function privacyRateLimited(req, user) {
+  const entry = privacyUnlockAttempts.get(`${user.id}:${req.ip}`);
+  return Boolean(entry && Date.now() <= entry.resetAt && entry.count >= 8);
+}
+
+function clearPrivacyRateLimit(req, user) {
+  privacyUnlockAttempts.delete(`${user.id}:${req.ip}`);
+}
+
+function privacyModeEnabled(user) {
+  return Boolean(user?.privacyMode?.enabled && user.privacyCodeHash);
+}
+
+function verifyPrivacyToken(user, token) {
+  if (!privacyModeEnabled(user)) return true;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return payload.role === "privacy" && payload.id === user.id;
+  } catch {
+    return false;
+  }
+}
+
+function requirePrivacyUnlocked(req, res, next) {
+  if (verifyPrivacyToken(req.user, req.headers["x-privacy-token"])) return next();
+  res.status(423).json({ error: "Privacy session required." });
 }
 
 function authUser(req, res, next) {
@@ -473,6 +531,12 @@ app.post("/api/signup", async (req, res) => {
     deleted: false,
     hiddenUserIds: [],
     hiddenChatSecret: null,
+    privacyMode: {
+      enabled: false,
+      autoLockMinutes: 0,
+      panicShortcut: "button"
+    },
+    privacyCodeHash: null,
     createdAt: new Date().toISOString(),
     lastSeenAt: null
   };
@@ -501,7 +565,7 @@ app.get("/api/me", authUser, (req, res) => {
   res.json({ user: ownUser(req.user) });
 });
 
-app.patch("/api/me", authUser, async (req, res) => {
+app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   const { displayName, oldPassword, newPassword } = req.body;
   if (displayName && displayName.trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
   if (newPassword) {
@@ -515,7 +579,53 @@ app.patch("/api/me", authUser, async (req, res) => {
   res.json({ user: ownUser(req.user) });
 });
 
-app.patch("/api/me/hidden-secret", authUser, (req, res) => {
+app.patch("/api/privacy/settings", authUser, async (req, res) => {
+  if (privacyModeEnabled(req.user) && !verifyPrivacyToken(req.user, req.headers["x-privacy-token"])) {
+    return res.status(423).json({ error: "Privacy session required." });
+  }
+  const enabled = Boolean(req.body.enabled);
+  const code = String(req.body.code || "").trim();
+  const autoLockMinutes = Number(req.body.autoLockMinutes || 0);
+  const panicShortcut = ["button", "double-tap"].includes(req.body.panicShortcut) ? req.body.panicShortcut : "button";
+  if (!Number.isFinite(autoLockMinutes) || autoLockMinutes < 0 || autoLockMinutes > 120) {
+    return res.status(400).json({ error: "Auto-lock must be between 0 and 120 minutes." });
+  }
+  if (code && !validPrivacyCode(code)) {
+    return res.status(400).json({ error: "Privacy code must be exactly 6 digits." });
+  }
+  if (enabled && !code && !req.user.privacyCodeHash) {
+    return res.status(400).json({ error: "Set a 6-digit privacy code first." });
+  }
+  if (code) req.user.privacyCodeHash = await bcrypt.hash(code, 10);
+  req.user.privacyMode = {
+    enabled,
+    autoLockMinutes,
+    panicShortcut
+  };
+  saveDb();
+  res.json({ ok: true, user: ownUser(req.user) });
+});
+
+app.post("/api/privacy/unlock", authUser, async (req, res) => {
+  const code = String(req.body.code || "").trim();
+  if (!req.user.privacyMode?.enabled || !req.user.privacyCodeHash || !validPrivacyCode(code)) {
+    return res.status(204).end();
+  }
+  const ok = await bcrypt.compare(code, req.user.privacyCodeHash);
+  if (!ok) {
+    if (!privacyRateLimited(req, req.user)) checkPrivacyRateLimit(req, req.user);
+    return res.status(204).end();
+  }
+  clearPrivacyRateLimit(req, req.user);
+  res.json({ ok: true, privacyToken: signPrivacy(req.user), user: ownUser(req.user) });
+});
+
+app.get("/api/privacy/session", authUser, (req, res) => {
+  if (verifyPrivacyToken(req.user, req.headers["x-privacy-token"])) return res.json({ ok: true });
+  res.status(401).json({ error: "Privacy session required." });
+});
+
+app.patch("/api/me/hidden-secret", authUser, requirePrivacyUnlocked, (req, res) => {
   const currentSecret = String(req.body.currentSecret || "").trim();
   const newSecret = String(req.body.newSecret || "").trim();
   if (!req.user.hiddenChatSecret) return res.status(400).json({ error: "Hidden chat secret is not set yet." });
@@ -526,7 +636,7 @@ app.patch("/api/me/hidden-secret", authUser, (req, res) => {
   res.json({ ok: true, user: ownUser(req.user) });
 });
 
-app.get("/api/users/search", authUser, (req, res) => {
+app.get("/api/users/search", authUser, requirePrivacyUnlocked, (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   if (q.length < 2) return res.json({ users: [] });
   const users = db.users
@@ -537,7 +647,7 @@ app.get("/api/users/search", authUser, (req, res) => {
   res.json({ users });
 });
 
-app.get("/api/conversations", authUser, (req, res) => {
+app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
   const conversations = db.conversations
     .filter((item) => item.participants.includes(req.user.id))
     .filter((conversation) => !isHiddenConversation(conversation, req.user))
@@ -546,7 +656,7 @@ app.get("/api/conversations", authUser, (req, res) => {
   res.json({ conversations });
 });
 
-app.get("/api/conversations/hidden", authUser, (req, res) => {
+app.get("/api/conversations/hidden", authUser, requirePrivacyUnlocked, (req, res) => {
   const code = String(req.query.code || "").trim();
   if (!req.user.hiddenChatSecret || code !== req.user.hiddenChatSecret) {
     return res.status(403).json({ error: "Invalid secret code." });
@@ -560,14 +670,14 @@ app.get("/api/conversations/hidden", authUser, (req, res) => {
   res.json({ conversations });
 });
 
-app.post("/api/conversations", authUser, (req, res) => {
+app.post("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
   const { userId } = req.body;
   const other = db.users.find((user) => user.id === userId && !user.deleted && !user.blocked && !user.suspended);
   if (!other) return res.status(404).json({ error: "User not found." });
   res.json({ conversation: hydrateConversation(makeConversation([req.user.id, other.id]), req.user) });
 });
 
-app.get("/api/conversations/:id/messages", authUser, (req, res) => {
+app.get("/api/conversations/:id/messages", authUser, requirePrivacyUnlocked, (req, res) => {
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
   const messages = visibleMessages(conversation.id, req.user.id);
@@ -575,7 +685,7 @@ app.get("/api/conversations/:id/messages", authUser, (req, res) => {
   res.json({ messages });
 });
 
-app.post("/api/messages/:id/delete-for-me", authUser, (req, res) => {
+app.post("/api/messages/:id/delete-for-me", authUser, requirePrivacyUnlocked, (req, res) => {
   const message = db.messages.find((item) => item.id === req.params.id);
   const conversation = db.conversations.find((item) => item.id === message?.conversationId && item.participants.includes(req.user.id));
   if (!message || !conversation) return res.status(404).json({ error: "Message not found." });
@@ -586,7 +696,7 @@ app.post("/api/messages/:id/delete-for-me", authUser, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/messages/:id/delete-everyone", authUser, (req, res) => {
+app.post("/api/messages/:id/delete-everyone", authUser, requirePrivacyUnlocked, (req, res) => {
   const message = db.messages.find((item) => item.id === req.params.id);
   const conversation = db.conversations.find((item) => item.id === message?.conversationId && item.participants.includes(req.user.id));
   if (!message || !conversation) return res.status(404).json({ error: "Message not found." });
@@ -604,7 +714,7 @@ app.post("/api/messages/:id/delete-everyone", authUser, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/messages/bulk-delete-for-me", authUser, (req, res) => {
+app.post("/api/messages/bulk-delete-for-me", authUser, requirePrivacyUnlocked, (req, res) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
   const allowedConversationIds = new Set(db.conversations.filter((item) => item.participants.includes(req.user.id)).map((item) => item.id));
   let count = 0;
@@ -618,7 +728,7 @@ app.post("/api/messages/bulk-delete-for-me", authUser, (req, res) => {
   res.json({ ok: true, count });
 });
 
-app.post("/api/conversations/:id/clear-for-me", authUser, (req, res) => {
+app.post("/api/conversations/:id/clear-for-me", authUser, requirePrivacyUnlocked, (req, res) => {
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
   let count = 0;
@@ -630,7 +740,7 @@ app.post("/api/conversations/:id/clear-for-me", authUser, (req, res) => {
   res.json({ ok: true, count });
 });
 
-app.post("/api/conversations/:id/hide-user", authUser, (req, res) => {
+app.post("/api/conversations/:id/hide-user", authUser, requirePrivacyUnlocked, (req, res) => {
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
   const otherId = otherParticipant(conversation, req.user.id);
@@ -646,7 +756,7 @@ app.post("/api/conversations/:id/hide-user", authUser, (req, res) => {
   res.json({ ok: true, user: ownUser(req.user) });
 });
 
-app.post("/api/conversations/:id/unhide-user", authUser, (req, res) => {
+app.post("/api/conversations/:id/unhide-user", authUser, requirePrivacyUnlocked, (req, res) => {
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
   const otherId = otherParticipant(conversation, req.user.id);
@@ -655,14 +765,14 @@ app.post("/api/conversations/:id/unhide-user", authUser, (req, res) => {
   res.json({ ok: true, user: ownUser(req.user) });
 });
 
-app.post("/api/upload", authUser, handleMulterUpload(upload.single("file")), (req, res) => {
+app.post("/api/upload", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("file")), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "File is required." });
   res.json({
     media: mediaFromFile(req.file)
   });
 });
 
-app.post("/api/call-recordings", authUser, handleMulterUpload(upload.single("file")), (req, res) => {
+app.post("/api/call-recordings", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("file")), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Recording file is required." });
   const conversation = db.conversations.find((item) => item.id === req.body.conversationId && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
@@ -706,13 +816,13 @@ app.post("/api/share-target", handleMulterUpload(shareUpload.any(), { redirectOn
   res.redirect(303, `/?share=${encodeURIComponent(sharedItem.id)}`);
 });
 
-app.get("/api/shared/:id", authUser, (req, res) => {
+app.get("/api/shared/:id", authUser, requirePrivacyUnlocked, (req, res) => {
   const sharedItem = db.sharedItems.find((item) => item.id === req.params.id);
   if (!sharedItem) return res.status(404).json({ error: "Shared content not found." });
   res.json({ sharedItem });
 });
 
-app.delete("/api/shared/:id", authUser, (req, res) => {
+app.delete("/api/shared/:id", authUser, requirePrivacyUnlocked, (req, res) => {
   db.sharedItems = db.sharedItems.filter((item) => item.id !== req.params.id);
   saveDb();
   res.json({ ok: true });
@@ -884,6 +994,7 @@ io.use((socket, next) => {
     }
     const user = db.users.find((item) => item.id === payload.id && !item.deleted && !item.blocked && !item.suspended);
     if (!user) throw new Error("inactive");
+    if (!verifyPrivacyToken(user, socket.handshake.auth?.privacyToken)) throw new Error("privacy locked");
     socket.user = user;
     next();
   } catch {

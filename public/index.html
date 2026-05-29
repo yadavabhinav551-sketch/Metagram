@@ -4,15 +4,15 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#125c4a">
-    <meta name="background-color" content="#f4f6f8">
+    <meta name="background-color" content="#f2f5f7">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Metagram">
-    <title>Business Chat</title>
+    <meta name="apple-mobile-web-app-title" content="Calculator">
+    <title>Calculator</title>
     <link rel="manifest" href="/manifest.json">
-    <link rel="icon" href="/icons/icon-192.png">
-    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <link rel="icon" href="/icons/calculator-192.png">
+    <link rel="apple-touch-icon" href="/icons/calculator-192.png">
     <link rel="preload" href="/styles.css" as="style">
     <link rel="stylesheet" href="/styles.css">
     <script src="/socket.io/socket.io.js" defer></script>
@@ -20,6 +20,35 @@
   </head>
   <body>
     <main class="app-shell">
+      <section id="calculatorPrivacyView" class="calculator-privacy-view hidden" aria-label="Calculator">
+        <div class="calculator-shell">
+          <div class="calculator-display">
+            <span id="calculatorHistory"></span>
+            <strong id="calculatorDisplay">0</strong>
+          </div>
+          <div class="calculator-keys">
+            <button data-calc-action="clear" type="button">AC</button>
+            <button data-calc-action="delete" type="button">DEL</button>
+            <button data-calc-value="/" type="button">/</button>
+            <button data-calc-value="*" type="button">x</button>
+            <button data-calc-value="7" type="button">7</button>
+            <button data-calc-value="8" type="button">8</button>
+            <button data-calc-value="9" type="button">9</button>
+            <button data-calc-value="-" type="button">-</button>
+            <button data-calc-value="4" type="button">4</button>
+            <button data-calc-value="5" type="button">5</button>
+            <button data-calc-value="6" type="button">6</button>
+            <button data-calc-value="+" type="button">+</button>
+            <button data-calc-value="1" type="button">1</button>
+            <button data-calc-value="2" type="button">2</button>
+            <button data-calc-value="3" type="button">3</button>
+            <button class="calculator-equals" data-calc-action="equals" type="button">=</button>
+            <button class="calculator-zero" data-calc-value="0" type="button">0</button>
+            <button data-calc-value="." type="button">.</button>
+          </div>
+        </div>
+      </section>
+
       <section id="authView" class="auth-view">
         <div class="brand-block">
           <img src="/icon.svg" alt="" class="brand-icon">
@@ -55,6 +84,7 @@
               <strong id="meName"></strong>
               <span id="meHandle"></span>
             </div>
+            <button id="panicHideBtn" class="icon-button privacy-panic-button hidden" type="button" title="Hide">H</button>
             <button id="profileBtn" class="icon-button" type="button" title="Profile settings">⚙</button>
             <button class="icon-button install-control hidden" type="button" title="Install app">↓</button>
             <button id="logoutBtn" class="icon-button" type="button" title="Logout">⎋</button>
@@ -129,6 +159,36 @@
             New password
             <input name="newPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep same">
           </label>
+          <div class="privacy-settings">
+            <label class="setting-toggle">
+              <input id="privacyModeToggle" type="checkbox">
+              <span>
+                <strong>Calculator Privacy Mode</strong>
+                <small>Show calculator before opening chat</small>
+              </span>
+            </label>
+            <label>
+              6-digit unlock code
+              <input id="privacyCodeInput" name="privacyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" placeholder="Leave blank to keep current">
+            </label>
+            <label>
+              Auto-lock
+              <select id="privacyAutoLock" name="privacyAutoLock">
+                <option value="0">Off</option>
+                <option value="1">After 1 minute</option>
+                <option value="5">After 5 minutes</option>
+                <option value="15">After 15 minutes</option>
+                <option value="30">After 30 minutes</option>
+              </select>
+            </label>
+            <label>
+              Panic shortcut
+              <select id="privacyPanicShortcut" name="privacyPanicShortcut">
+                <option value="button">Hide button</option>
+                <option value="double-tap">Hide button + double tap</option>
+              </select>
+            </label>
+          </div>
           <button class="primary" type="submit">Save changes</button>
           <p id="profileMessage" class="error-text"></p>
         </form>

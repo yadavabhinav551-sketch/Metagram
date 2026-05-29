@@ -1,5 +1,6 @@
 const state = {
   token: localStorage.getItem("chatToken"),
+  privacyToken: sessionStorage.getItem("privacyToken"),
   user: null,
   socket: null,
   conversations: [],
@@ -20,6 +21,10 @@ const state = {
   shareRecipients: new Map(),
   hiddenConversations: [],
   unlockedHiddenCode: "",
+  calculatorExpression: "",
+  calculatorJustEvaluated: false,
+  privacyAutoLockTimer: null,
+  privacyAwayStartedAt: Number(localStorage.getItem("privacyAwayStartedAt") || 0),
   replyToMessageId: null,
   call: {
     peerConnection: null,
@@ -53,6 +58,7 @@ const api = async (url, options = {}) => {
     headers: {
       "Content-Type": "application/json",
       ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+      ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
       ...(options.headers || {})
     }
   });
@@ -70,26 +76,35 @@ function setAuthMode(mode) {
 }
 
 function showChat() {
+  $("calculatorPrivacyView").classList.add("hidden");
+  $("calculatorPrivacyView").classList.remove("unlocking");
   $("authView").classList.add("hidden");
   $("chatView").classList.remove("hidden");
   $("meName").textContent = state.user.displayName;
   $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
   $("profileName").value = state.user.displayName;
+  syncPrivacySettings();
+  clearPrivacyAwayLock();
 }
 
 function showAuth() {
   endCall(false);
   localStorage.removeItem("chatToken");
+  sessionStorage.removeItem("privacyToken");
   state.token = null;
+  state.privacyToken = null;
   state.user = null;
   state.socket?.disconnect();
+  clearTimeout(state.privacyAutoLockTimer);
+  clearPrivacyAwayLock();
+  $("calculatorPrivacyView").classList.add("hidden");
   $("authView").classList.remove("hidden");
   $("chatView").classList.add("hidden");
 }
 
 function connectSocket() {
   state.socket?.disconnect();
-  state.socket = io({ auth: { token: state.token } });
+  state.socket = io({ auth: { token: state.token, privacyToken: state.privacyToken } });
   state.socket.on("presence", (presence) => {
     state.presence = presence;
     renderConversations();
@@ -183,6 +198,14 @@ async function bootstrap() {
   try {
     const { user } = await api("/api/me");
     state.user = user;
+    if (privacyEnabled() && privacyAwayExpired()) {
+      lockToCalculator();
+      return;
+    }
+    if (privacyEnabled() && !(await verifyPrivacySession())) {
+      showCalculatorPrivacy();
+      return;
+    }
     showChat();
     connectSocket();
     await loadConversations();
@@ -204,6 +227,205 @@ function setInstallButtonsVisible(visible) {
   document.querySelectorAll(".install-control").forEach((button) => {
     button.classList.toggle("hidden", !visible);
   });
+}
+
+function privacyEnabled() {
+  return Boolean(state.user?.privacyMode?.enabled && state.user.privacyMode.hasCode);
+}
+
+function syncPrivacySettings() {
+  if (!$("privacyModeToggle") || !state.user) return;
+  const settings = state.user.privacyMode || {};
+  $("privacyModeToggle").checked = Boolean(settings.enabled);
+  $("privacyAutoLock").value = String(settings.autoLockMinutes || 0);
+  $("privacyPanicShortcut").value = settings.panicShortcut || "button";
+  $("panicHideBtn").classList.toggle("hidden", !privacyEnabled());
+}
+
+async function verifyPrivacySession() {
+  if (!privacyEnabled()) return true;
+  if (!state.privacyToken) return false;
+  try {
+    await api("/api/privacy/session", { headers: { "X-Privacy-Token": state.privacyToken } });
+    return true;
+  } catch {
+    sessionStorage.removeItem("privacyToken");
+    state.privacyToken = null;
+    return false;
+  }
+}
+
+function showCalculatorPrivacy() {
+  endCall(false);
+  clearTimeout(state.privacyAutoLockTimer);
+  clearPrivacyAwayLock();
+  state.socket?.disconnect();
+  state.calculatorExpression = "";
+  state.calculatorJustEvaluated = false;
+  $("calculatorHistory").textContent = "";
+  $("calculatorDisplay").textContent = "0";
+  $("profileModal").classList.add("hidden");
+  $("shareModal").classList.add("hidden");
+  $("callModal").classList.add("hidden");
+  $("videoPreviewModal").classList.add("hidden");
+  $("authView").classList.add("hidden");
+  $("chatView").classList.add("hidden");
+  $("calculatorPrivacyView").classList.remove("hidden", "unlocking");
+}
+
+async function openUnlockedChat() {
+  $("calculatorPrivacyView").classList.add("unlocking");
+  await new Promise((resolve) => setTimeout(resolve, 160));
+  showChat();
+  connectSocket();
+  await loadConversations();
+  await loadPendingShare();
+}
+
+function lockToCalculator() {
+  if (!privacyEnabled()) return;
+  sessionStorage.removeItem("privacyToken");
+  state.privacyToken = null;
+  showCalculatorPrivacy();
+}
+
+function privacyAutoLockMs() {
+  const minutes = Number(state.user?.privacyMode?.autoLockMinutes || 0);
+  return privacyEnabled() && minutes > 0 ? minutes * 60 * 1000 : 0;
+}
+
+function clearPrivacyAwayLock() {
+  clearTimeout(state.privacyAutoLockTimer);
+  state.privacyAwayStartedAt = 0;
+  localStorage.removeItem("privacyAwayStartedAt");
+}
+
+function startPrivacyAwayLock() {
+  clearTimeout(state.privacyAutoLockTimer);
+  const timeoutMs = privacyAutoLockMs();
+  if (!timeoutMs || $("chatView").classList.contains("hidden")) return;
+  if (!state.privacyAwayStartedAt) {
+    state.privacyAwayStartedAt = Date.now();
+    localStorage.setItem("privacyAwayStartedAt", String(state.privacyAwayStartedAt));
+  }
+  const elapsed = Date.now() - state.privacyAwayStartedAt;
+  const remaining = Math.max(0, timeoutMs - elapsed);
+  state.privacyAutoLockTimer = setTimeout(lockToCalculator, remaining);
+}
+
+function privacyAwayExpired() {
+  const timeoutMs = privacyAutoLockMs();
+  const startedAt = Number(localStorage.getItem("privacyAwayStartedAt") || state.privacyAwayStartedAt || 0);
+  return Boolean(timeoutMs && startedAt && Date.now() - startedAt >= timeoutMs);
+}
+
+function handlePrivacyReturn() {
+  if (!privacyEnabled()) return;
+  if (privacyAwayExpired()) {
+    lockToCalculator();
+    return;
+  }
+  clearPrivacyAwayLock();
+}
+
+function handlePrivacyVisibilityChange() {
+  if (document.visibilityState === "hidden") startPrivacyAwayLock();
+  else handlePrivacyReturn();
+}
+
+function formatCalculatorValue(value) {
+  if (!Number.isFinite(value)) return "Error";
+  return String(Number(value.toPrecision(12))).slice(0, 16);
+}
+
+function evaluateCalculator(expression) {
+  if (!/^[\d+\-*/. ]+$/.test(expression)) return "Error";
+  const rawTokens = expression.match(/\d*\.?\d+|[+\-*/]/g);
+  if (!rawTokens?.length) return "0";
+  try {
+    const tokens = [];
+    for (let index = 0; index < rawTokens.length; index += 1) {
+      const token = rawTokens[index];
+      if (token === "-" && (index === 0 || /[+\-*/]/.test(rawTokens[index - 1]))) {
+        const next = rawTokens[index + 1];
+        if (!/^\d*\.?\d+$/.test(next || "")) throw new Error("Invalid expression");
+        tokens.push(String(-Number(next)));
+        index += 1;
+      } else {
+        tokens.push(token);
+      }
+    }
+    const values = [];
+    const operators = [];
+    const precedence = { "+": 1, "-": 1, "*": 2, "/": 2 };
+    const applyOperator = () => {
+      const operator = operators.pop();
+      const right = values.pop();
+      const left = values.pop();
+      if (!operator || left === undefined || right === undefined) throw new Error("Invalid expression");
+      if (operator === "+") values.push(left + right);
+      if (operator === "-") values.push(left - right);
+      if (operator === "*") values.push(left * right);
+      if (operator === "/") values.push(left / right);
+    };
+
+    tokens.forEach((token) => {
+      if (/^-?\d*\.?\d+$/.test(token)) {
+        values.push(Number(token));
+        return;
+      }
+      while (operators.length && precedence[operators.at(-1)] >= precedence[token]) applyOperator();
+      operators.push(token);
+    });
+    while (operators.length) applyOperator();
+    if (values.length !== 1) throw new Error("Invalid expression");
+    const value = values[0];
+    return formatCalculatorValue(value);
+  } catch {
+    return "Error";
+  }
+}
+
+async function tryPrivacyUnlock(code) {
+  try {
+    const data = await api("/api/privacy/unlock", { method: "POST", body: JSON.stringify({ code }) });
+    if (!data.ok || !data.privacyToken) return false;
+    state.privacyToken = data.privacyToken;
+    sessionStorage.setItem("privacyToken", data.privacyToken);
+    state.user = data.user;
+    await openUnlockedChat();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function appendCalculatorValue(value) {
+  if (state.calculatorJustEvaluated && /\d|\./.test(value)) {
+    state.calculatorExpression = "";
+  }
+  state.calculatorJustEvaluated = false;
+  const last = state.calculatorExpression.slice(-1);
+  if ("+-*/".includes(value) && (!state.calculatorExpression || "+-*/".includes(last))) {
+    if (value !== "-" || last === "-") return;
+  }
+  if (value === ".") {
+    const part = state.calculatorExpression.split(/[+\-*/]/).pop();
+    if (part.includes(".")) return;
+  }
+  state.calculatorExpression = (state.calculatorExpression + value).slice(0, 32);
+  $("calculatorDisplay").textContent = state.calculatorExpression || "0";
+}
+
+async function handleCalculatorEquals() {
+  const expression = state.calculatorExpression.trim();
+  const unlockMatch = expression.match(/^(\d{6})$/);
+  if (unlockMatch && await tryPrivacyUnlock(unlockMatch[1])) return;
+  const result = evaluateCalculator(expression || "0");
+  $("calculatorHistory").textContent = expression ? `${expression} =` : "";
+  $("calculatorDisplay").textContent = result;
+  state.calculatorExpression = result === "Error" ? "" : result;
+  state.calculatorJustEvaluated = true;
 }
 
 async function loadConversations() {
@@ -615,7 +837,10 @@ async function sendMediaFile(file) {
   form.append("file", file);
   const response = await fetch("/api/upload", {
     method: "POST",
-    headers: { Authorization: `Bearer ${state.token}` },
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {})
+    },
     body: form
   });
   const data = await response.json();
@@ -629,7 +854,10 @@ async function uploadMediaToConversation(file, conversationId, text = "") {
   form.append("file", file);
   const response = await fetch("/api/upload", {
     method: "POST",
-    headers: { Authorization: `Bearer ${state.token}` },
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {})
+    },
     body: form
   });
   const data = await response.json();
@@ -645,7 +873,10 @@ async function uploadCallRecording(file, conversationId, callType = "voice") {
   form.append("callType", callType);
   const response = await fetch("/api/call-recordings", {
     method: "POST",
-    headers: { Authorization: `Bearer ${state.token}` },
+    headers: {
+      Authorization: `Bearer ${state.token}`,
+      ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {})
+    },
     body: form
   });
   const data = await response.json();
@@ -1064,8 +1295,52 @@ function insertEmoji(emoji) {
 $("loginTab").addEventListener("click", () => setAuthMode("login"));
 $("signupTab").addEventListener("click", () => setAuthMode("signup"));
 $("logoutBtn").addEventListener("click", showAuth);
+$("calculatorPrivacyView").addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  const value = button.dataset.calcValue;
+  const action = button.dataset.calcAction;
+  if (value) appendCalculatorValue(value);
+  if (action === "clear") {
+    state.calculatorExpression = "";
+    state.calculatorJustEvaluated = false;
+    $("calculatorHistory").textContent = "";
+    $("calculatorDisplay").textContent = "0";
+  }
+  if (action === "delete") {
+    state.calculatorExpression = state.calculatorExpression.slice(0, -1);
+    $("calculatorDisplay").textContent = state.calculatorExpression || "0";
+  }
+  if (action === "equals") handleCalculatorEquals();
+});
+$("panicHideBtn").addEventListener("click", lockToCalculator);
+document.addEventListener("visibilitychange", handlePrivacyVisibilityChange);
+window.addEventListener("blur", startPrivacyAwayLock);
+window.addEventListener("focus", handlePrivacyReturn);
+window.addEventListener("pagehide", startPrivacyAwayLock);
+document.addEventListener("dblclick", () => {
+  if (state.user?.privacyMode?.panicShortcut === "double-tap") lockToCalculator();
+});
+document.addEventListener("keydown", (event) => {
+  if ($("calculatorPrivacyView").classList.contains("hidden")) return;
+  if (/^\d$/.test(event.key) || ["+", "-", "*", "/", "."].includes(event.key)) {
+    appendCalculatorValue(event.key);
+  }
+  if (event.key === "Enter" || event.key === "=") handleCalculatorEquals();
+  if (event.key === "Backspace") {
+    state.calculatorExpression = state.calculatorExpression.slice(0, -1);
+    $("calculatorDisplay").textContent = state.calculatorExpression || "0";
+  }
+  if (event.key === "Escape") {
+    state.calculatorExpression = "";
+    $("calculatorHistory").textContent = "";
+    $("calculatorDisplay").textContent = "0";
+  }
+});
 $("profileBtn").addEventListener("click", () => {
   $("profileName").value = state.user.displayName;
+  $("privacyCodeInput").value = "";
+  syncPrivacySettings();
   $("profileMessage").textContent = "";
   $("profileMessage").classList.remove("success-text");
   $("profileModal").classList.remove("hidden");
@@ -1242,6 +1517,11 @@ $("loginForm").addEventListener("submit", async (event) => {
     state.token = token;
     state.user = user;
     localStorage.setItem("chatToken", token);
+    if (privacyEnabled()) {
+      showCalculatorPrivacy();
+      if ("Notification" in window) Notification.requestPermission();
+      return;
+    }
     showChat();
     connectSocket();
     await loadConversations();
@@ -1277,16 +1557,33 @@ $("profileForm").addEventListener("submit", async (event) => {
     oldPassword: form.get("oldPassword"),
     newPassword: form.get("newPassword")
   };
+  const privacyBody = {
+    enabled: $("privacyModeToggle").checked,
+    code: String(form.get("privacyCode") || "").trim(),
+    autoLockMinutes: Number(form.get("privacyAutoLock") || 0),
+    panicShortcut: form.get("privacyPanicShortcut") || "button"
+  };
   if (!body.newPassword) {
     delete body.oldPassword;
     delete body.newPassword;
   }
   try {
-    const { user } = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
-    state.user = user;
+    const profileResult = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
+    state.user = profileResult.user;
+    const privacyResult = await api("/api/privacy/settings", { method: "PATCH", body: JSON.stringify(privacyBody) });
+    state.user = privacyResult.user;
+    if (privacyEnabled() && !state.privacyToken) {
+      event.target.oldPassword.value = "";
+      event.target.newPassword.value = "";
+      $("privacyCodeInput").value = "";
+      $("profileMessage").textContent = "";
+      showCalculatorPrivacy();
+      return;
+    }
     showChat();
     event.target.oldPassword.value = "";
     event.target.newPassword.value = "";
+    $("privacyCodeInput").value = "";
     $("profileMessage").textContent = "Profile updated.";
     $("profileMessage").classList.add("success-text");
   } catch (error) {
