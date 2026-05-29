@@ -290,9 +290,21 @@ select:focus {
 }
 
 .topbar {
-  justify-content: space-between;
+  justify-content: flex-start;
   background: linear-gradient(135deg, #0d4b41, #123f57);
   color: #fff;
+}
+
+.topbar > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.topbar > div:first-child strong,
+.topbar > div:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .topbar span,
@@ -319,9 +331,14 @@ select:focus {
 }
 
 .topbar .icon-button {
+  flex: 0 0 50px;
   border-color: rgba(255, 255, 255, 0.35);
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
+}
+
+.topbar .install-control.hidden {
+  display: grid !important;
 }
 
 .icon-button:hover {

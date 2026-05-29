@@ -1599,7 +1599,10 @@ $("profileAvatarInput").addEventListener("change", (event) => {
 });
 document.querySelectorAll(".install-control").forEach((button) => {
   button.addEventListener("click", async () => {
-    if (!state.installPrompt) return;
+    if (!state.installPrompt) {
+      alert("Browser menu se Install app ya Add to Home screen option use karein.");
+      return;
+    }
     state.installPrompt.prompt();
     await state.installPrompt.userChoice;
     state.installPrompt = null;
