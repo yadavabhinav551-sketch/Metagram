@@ -41,7 +41,7 @@ function registerAdminPwa() {
 
 function setInstallButtonsVisible(visible) {
   document.querySelectorAll(".install-control").forEach((button) => {
-    button.classList.toggle("hidden", isStandaloneApp() || !visible);
+    button.classList.toggle("hidden", !visible);
   });
 }
 
