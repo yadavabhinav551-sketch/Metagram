@@ -1,5 +1,8 @@
 .admin-shell {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   background: #f4f6f8;
 }
 
@@ -12,9 +15,12 @@
 }
 
 .admin-app {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: grid;
   grid-template-rows: auto 1fr;
+  overflow: hidden;
 }
 
 .admin-header {
@@ -66,6 +72,7 @@
   gap: 12px;
   padding: 12px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .admin-panel {
@@ -76,6 +83,11 @@
   border-radius: 8px;
   background: #fff;
   padding: 12px;
+}
+
+.transcript {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .admin-panel h2 {
@@ -207,6 +219,8 @@
 }
 
 .admin-messages {
+  min-height: 0;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -276,6 +290,7 @@ select[multiple] {
 @media (max-width: 1180px) {
   .admin-grid {
     grid-template-columns: 1fr 1fr;
+    overflow: auto;
   }
 
   .transcript {
@@ -284,11 +299,24 @@ select[multiple] {
 }
 
 @media (max-width: 720px) {
+  .admin-shell,
+  .admin-app {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
   .admin-grid {
     grid-template-columns: 1fr;
+    align-content: start;
+    overflow: visible;
+    padding: 10px;
   }
 
   .admin-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     align-items: flex-start;
     flex-direction: column;
   }
@@ -300,5 +328,33 @@ select[multiple] {
   .admin-header-actions .export-link {
     flex: 1;
     text-align: center;
+  }
+
+  .admin-panel {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .transcript {
+    min-height: 60vh;
+  }
+
+  .admin-messages {
+    max-height: 62vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-message {
+    overflow-wrap: anywhere;
+  }
+
+  .admin-message img,
+  .admin-message video {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 46vh;
   }
 }
