@@ -638,6 +638,21 @@ async function uploadMediaToConversation(file, conversationId, text = "") {
   return data.media;
 }
 
+async function uploadCallRecording(file, conversationId, callType = "voice") {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("conversationId", conversationId);
+  form.append("callType", callType);
+  const response = await fetch("/api/call-recordings", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${state.token}` },
+    body: form
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Call recording upload failed.");
+  return data.recording;
+}
+
 async function toggleRecording() {
   if (state.recorder?.state === "recording") {
     state.recorder.stop();
@@ -750,11 +765,9 @@ function mixedCallAudioStream(localStream, remoteStream) {
 function startCallRecording() {
   if (state.call.recorder || !state.call.localStream || !state.call.remoteStream) return;
   if (!state.call.shouldRecord) {
-    $("callRecordingStatus").textContent = "The caller is saving this call recording.";
     return;
   }
   if (!window.MediaRecorder) {
-    $("callRecordingStatus").textContent = "Call recording is not supported in this browser.";
     return;
   }
   const mixedAudio = mixedCallAudioStream(state.call.localStream, state.call.remoteStream);
@@ -808,17 +821,12 @@ function startCallRecording() {
     const blob = new Blob(chunks, { type: isVideo ? "video/webm" : "audio/webm" });
     const file = new File([blob], `${type}-call-${Date.now()}.webm`, { type: blob.type });
     try {
-      setUploadStatus("Uploading call recording...");
-      await uploadMediaToConversation(file, conversationId, `${isVideo ? "Video" : "Voice"} call recording`);
-      setUploadStatus("Call recording saved.");
-      setTimeout(() => setUploadStatus(""), 1800);
+      await uploadCallRecording(file, conversationId, type);
     } catch (error) {
-      setUploadStatus("");
       alert(`Call recording upload failed: ${error.message}`);
     }
   };
   state.call.recorder.start(1000);
-  $("callRecordingStatus").textContent = "Recording in background. It will save after the call ends.";
 }
 
 function createPeerConnection() {
@@ -852,7 +860,6 @@ async function prepareCall({ conversationId, peerId, incoming = false, type = "v
   $("callTitle").textContent = type === "video" ? "Video call" : "Voice call";
   $("callModal").classList.remove("hidden");
   $("callVideoGrid").classList.toggle("hidden", type !== "video");
-  $("callRecordingStatus").textContent = "Recording will save after call ends.";
   $("incomingCallActions").classList.toggle("hidden", !incoming);
   $("endCallBtn").classList.toggle("hidden", incoming);
   $("callBtn").classList.add("active-call");

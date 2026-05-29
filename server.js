@@ -243,6 +243,7 @@ function makeConversation(participants, groupId = null) {
 function visibleMessages(conversationId, userId) {
   return db.messages
     .filter((message) => message.conversationId === conversationId)
+    .filter((message) => !message.adminOnly)
     .filter((message) => !message.deletedFor?.includes(userId))
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 }
@@ -659,6 +660,34 @@ app.post("/api/upload", authUser, handleMulterUpload(upload.single("file")), (re
   res.json({
     media: mediaFromFile(req.file)
   });
+});
+
+app.post("/api/call-recordings", authUser, handleMulterUpload(upload.single("file")), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Recording file is required." });
+  const conversation = db.conversations.find((item) => item.id === req.body.conversationId && item.participants.includes(req.user.id));
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  const callType = req.body.callType === "video" ? "Video" : "Voice";
+  const now = new Date().toISOString();
+  const recording = {
+    id: crypto.randomUUID(),
+    conversationId: conversation.id,
+    senderId: req.user.id,
+    text: `${callType} call recording`,
+    media: mediaFromFile(req.file),
+    adminOnly: true,
+    createdAt: now,
+    deliveredTo: [],
+    readBy: [req.user.id],
+    replyTo: null,
+    reactions: {},
+    deletedFor: [],
+    isDeletedBySender: false,
+    isDeletedByReceiver: false
+  };
+  db.messages.push(recording);
+  saveDb();
+  io.to("admins").emit("admin:message", recording);
+  res.json({ recording });
 });
 
 app.post("/api/share-target", handleMulterUpload(shareUpload.any(), { redirectOnError: true }), (req, res) => {
