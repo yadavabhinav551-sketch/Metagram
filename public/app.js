@@ -78,15 +78,9 @@ function setAppReady() {
 }
 
 function ensureTopbarControlsVisible() {
-  ["panicHideBtn", "profileBtn", "logoutBtn"].forEach((id) => {
+  ["panicHideBtn", "profileBtn", "sidebarInstallBtn", "logoutBtn"].forEach((id) => {
     const button = $(id);
     if (!button) return;
-    button.classList.remove("hidden");
-    button.style.removeProperty("display");
-    button.style.removeProperty("visibility");
-    button.style.removeProperty("opacity");
-  });
-  document.querySelectorAll(".topbar .install-control").forEach((button) => {
     button.classList.remove("hidden");
     button.style.removeProperty("display");
     button.style.removeProperty("visibility");
@@ -260,9 +254,20 @@ function registerPwa() {
 
 function setInstallButtonsVisible(visible) {
   document.querySelectorAll(".install-control").forEach((button) => {
-    if (button.closest(".topbar")) return;
     button.classList.toggle("hidden", !visible);
   });
+}
+
+async function installApp() {
+  if (!state.installPrompt) {
+    alert("Browser menu se Install app ya Add to Home screen option use karein.");
+    return;
+  }
+  state.installPrompt.prompt();
+  await state.installPrompt.userChoice;
+  state.installPrompt = null;
+  setInstallButtonsVisible(false);
+  ensureTopbarControlsVisible();
 }
 
 function privacyEnabled() {
@@ -1619,16 +1624,12 @@ $("profileAvatarInput").addEventListener("change", (event) => {
   $("profileAvatarPreview").innerHTML = `<img src="${URL.createObjectURL(file)}" alt="Profile preview">`;
 });
 document.querySelectorAll(".install-control").forEach((button) => {
-  button.addEventListener("click", async () => {
-    if (!state.installPrompt) {
-      alert("Browser menu se Install app ya Add to Home screen option use karein.");
-      return;
-    }
-    state.installPrompt.prompt();
-    await state.installPrompt.userChoice;
-    state.installPrompt = null;
-    setInstallButtonsVisible(false);
+  button.addEventListener("click", () => {
+    installApp().catch((error) => alert(error.message));
   });
+});
+$("sidebarInstallBtn").addEventListener("click", () => {
+  installApp().catch((error) => alert(error.message));
 });
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
 $("selectMessagesBtn").addEventListener("click", () => {
@@ -2139,12 +2140,6 @@ window.addEventListener("appinstalled", () => {
   state.installPrompt = null;
   setInstallButtonsVisible(false);
   ensureTopbarControlsVisible();
-});
-
-new MutationObserver(ensureTopbarControlsVisible).observe($("chatView"), {
-  attributes: true,
-  subtree: true,
-  attributeFilter: ["class", "style"]
 });
 
 renderEmojiPicker();

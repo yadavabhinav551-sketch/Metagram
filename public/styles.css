@@ -293,24 +293,30 @@ select:focus {
 }
 
 .topbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, 50px);
+  display: flex;
   gap: 8px;
-  justify-content: stretch;
+  justify-content: space-between;
   background: linear-gradient(135deg, #0d4b41, #123f57);
   color: #fff;
 }
 
-.topbar > div:first-child {
+.topbar-user {
+  flex: 1 1 auto;
   min-width: 0;
-  grid-column: 1;
 }
 
-.topbar > div:first-child strong,
-.topbar > div:first-child span {
+.topbar-user strong,
+.topbar-user span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.topbar-actions {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, 50px);
+  gap: 8px;
 }
 
 .topbar span,
@@ -349,8 +355,7 @@ select:focus {
   overflow: hidden;
 }
 
-.topbar .icon-button,
-.topbar .icon-button.hidden {
+.topbar .icon-button {
   display: grid !important;
   visibility: visible !important;
   opacity: 1 !important;
