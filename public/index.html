@@ -100,18 +100,23 @@
           <header class="chat-header">
             <button id="backBtn" class="icon-button mobile-only" type="button" title="Back">‹</button>
             <div class="avatar" id="chatAvatar">B</div>
-            <div>
+            <div id="chatIdentity" class="chat-identity" title="Long press for user actions">
               <strong id="chatTitle">Select a chat</strong>
               <span id="chatStatus">Search a registered user to begin.</span>
             </div>
             <div class="chat-actions">
               <button id="callBtn" class="text-button hidden" type="button">Voice</button>
               <button id="videoCallBtn" class="text-button hidden" type="button">Video</button>
-              <button id="hideChatBtn" class="text-button hidden" type="button">Hide</button>
-              <button id="blockUserBtn" class="text-button hidden" type="button">Block</button>
-              <button id="deleteUserBtn" class="text-button danger hidden" type="button">Delete user</button>
+              <button id="hideChatBtn" class="text-button user-management-action hidden" type="button">Hide</button>
+              <button id="blockUserBtn" class="text-button user-management-action hidden" type="button">Block</button>
+              <button id="deleteUserBtn" class="text-button danger user-management-action hidden" type="button">Delete user</button>
               <button id="selectMessagesBtn" class="text-button" type="button">Select</button>
               <button id="clearChatBtn" class="text-button danger" type="button">Clear</button>
+            </div>
+            <div id="userActionMenu" class="user-action-menu hidden" role="menu" aria-label="User actions">
+              <button id="menuHideChatBtn" type="button" role="menuitem">Hide user</button>
+              <button id="menuBlockUserBtn" type="button" role="menuitem">Block user</button>
+              <button id="menuDeleteUserBtn" class="danger" type="button" role="menuitem">Delete user</button>
             </div>
           </header>
           <div id="messages" class="messages empty-state">No conversation selected.</div>

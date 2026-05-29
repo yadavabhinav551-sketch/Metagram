@@ -28,6 +28,7 @@ const state = {
   replyToMessageId: null,
   reactionPickerMessageId: null,
   reactionLongPressTimer: null,
+  userActionLongPressTimer: null,
   call: {
     peerConnection: null,
     localStream: null,
@@ -549,6 +550,7 @@ function renderHeader() {
   const conversation = state.activeConversation;
   $("selectMessagesBtn").disabled = !conversation;
   $("clearChatBtn").disabled = !conversation;
+  closeUserActionMenu();
   $("callBtn").classList.add("hidden");
   $("videoCallBtn").classList.add("hidden");
   $("hideChatBtn").classList.add("hidden");
@@ -570,7 +572,46 @@ function renderHeader() {
     $("blockUserBtn").classList.remove("hidden");
     $("deleteUserBtn").classList.remove("hidden");
     $("blockUserBtn").textContent = conversation.blockedByMe ? "Unblock" : "Block";
+    syncUserActionMenuLabels();
   }
+}
+
+function syncUserActionMenuLabels() {
+  const conversation = state.activeConversation;
+  $("menuHideChatBtn").textContent = conversation?.hidden ? "Unhide user" : "Hide user";
+  $("menuBlockUserBtn").textContent = conversation?.blockedByMe ? "Unblock user" : "Block user";
+}
+
+function canShowUserActionMenu() {
+  return Boolean(state.activeConversation && !state.activeConversation.groupId && getOtherMember(state.activeConversation)?.id);
+}
+
+function openUserActionMenu(anchor = $("chatIdentity")) {
+  if (!canShowUserActionMenu()) return;
+  syncUserActionMenuLabels();
+  const menu = $("userActionMenu");
+  const headerRect = anchor.closest(".chat-header").getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+  menu.style.left = `${Math.max(12, anchorRect.left - headerRect.left)}px`;
+  menu.style.top = `${Math.min(headerRect.height - 4, anchorRect.bottom - headerRect.top + 8)}px`;
+  menu.classList.remove("hidden");
+}
+
+function closeUserActionMenu() {
+  $("userActionMenu")?.classList.add("hidden");
+}
+
+function startUserActionLongPress(event) {
+  if (!canShowUserActionMenu()) return;
+  clearTimeout(state.userActionLongPressTimer);
+  state.userActionLongPressTimer = setTimeout(() => {
+    event.preventDefault();
+    openUserActionMenu(event.currentTarget);
+  }, 520);
+}
+
+function cancelUserActionLongPress() {
+  clearTimeout(state.userActionLongPressTimer);
 }
 
 function renderMessages({ preserveScroll = false } = {}) {
@@ -1465,6 +1506,34 @@ $("profileBtn").addEventListener("click", () => {
   $("profileModal").classList.remove("hidden");
 });
 $("closeProfileBtn").addEventListener("click", () => $("profileModal").classList.add("hidden"));
+$("chatIdentity").addEventListener("pointerdown", startUserActionLongPress);
+$("chatIdentity").addEventListener("pointerup", cancelUserActionLongPress);
+$("chatIdentity").addEventListener("pointerleave", cancelUserActionLongPress);
+$("chatIdentity").addEventListener("pointercancel", cancelUserActionLongPress);
+$("chatIdentity").addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  openUserActionMenu(event.currentTarget);
+});
+$("chatIdentity").addEventListener("dblclick", (event) => {
+  event.preventDefault();
+  openUserActionMenu(event.currentTarget);
+});
+$("menuHideChatBtn").addEventListener("click", () => {
+  closeUserActionMenu();
+  $("hideChatBtn").click();
+});
+$("menuBlockUserBtn").addEventListener("click", () => {
+  closeUserActionMenu();
+  $("blockUserBtn").click();
+});
+$("menuDeleteUserBtn").addEventListener("click", () => {
+  closeUserActionMenu();
+  $("deleteUserBtn").click();
+});
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#userActionMenu") || event.target.closest("#chatIdentity")) return;
+  closeUserActionMenu();
+});
 $("profileAvatarInput").addEventListener("change", (event) => {
   const file = event.target.files?.[0];
   if (!file) {

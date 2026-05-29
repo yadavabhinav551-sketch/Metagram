@@ -328,6 +328,16 @@ $("adminConversations").addEventListener("click", async (event) => {
 
 $("clearTranscriptBtn").addEventListener("click", clearActiveTranscript);
 
+$("adminLogoutBtn").addEventListener("click", () => {
+  adminState.socket?.disconnect();
+  adminState.token = null;
+  localStorage.removeItem("adminToken");
+  $("adminApp").classList.add("hidden");
+  $("adminLogin").classList.remove("hidden");
+  $("adminLoginForm").reset();
+  $("adminError").textContent = "";
+});
+
 $("credentialsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const body = Object.fromEntries(new FormData(event.target));

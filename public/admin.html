@@ -45,16 +45,13 @@
           <div class="admin-header-actions">
             <button class="export-link install-control" type="button">Install App</button>
             <a class="export-link" href="/api/admin/export" id="exportLink">Export data</a>
+            <button class="export-link danger" id="adminLogoutBtn" type="button">Logout</button>
           </div>
         </header>
         <section class="admin-grid">
-          <aside class="admin-panel">
+          <aside class="admin-panel users-panel">
             <h2>Users</h2>
             <div id="adminUsers"></div>
-          </aside>
-          <aside class="admin-panel">
-            <h2>Chats</h2>
-            <div id="adminConversations"></div>
           </aside>
           <section class="admin-panel transcript">
             <div class="transcript-head">
@@ -63,7 +60,11 @@
             </div>
             <div id="adminMessages" class="admin-messages">Select a chat.</div>
           </section>
-          <aside class="admin-panel">
+          <aside class="admin-panel chats-panel">
+            <h2>Chats</h2>
+            <div id="adminConversations"></div>
+          </aside>
+          <aside class="admin-panel settings-panel">
             <h2>Admin Settings</h2>
             <label class="setting-toggle">
               <input id="secretCodeLoginToggle" type="checkbox">
