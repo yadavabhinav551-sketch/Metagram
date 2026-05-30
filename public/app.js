@@ -159,11 +159,12 @@ function ensureTopbarControlsVisible() {
         <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
         <button id="profileBtn" class="icon-button" type="button" title="Profile settings">&#9881;</button>
         <button id="sidebarInstallBtn" class="icon-button" type="button" title="Install app">&#8595;</button>
+        <button id="shareAppBtn" class="icon-button" type="button" title="Share app">&#8593;</button>
         <button id="logoutBtn" class="icon-button" type="button" title="Logout">&#8856;</button>
       </div>
     `);
   }
-  ["panicHideBtn", "profileBtn", "sidebarInstallBtn", "logoutBtn"].forEach((id) => {
+  ["panicHideBtn", "profileBtn", "sidebarInstallBtn", "shareAppBtn", "logoutBtn"].forEach((id) => {
     const button = $(id);
     if (!button) return;
     button.classList.remove("hidden");
@@ -445,6 +446,26 @@ async function installApp() {
   state.installPrompt = null;
   setInstallButtonsVisible(false);
   ensureTopbarControlsVisible();
+}
+
+async function shareApp() {
+  const appUrl = new URL("/", location.origin).href;
+  const shareData = {
+    title: "Calculator",
+    text: "Is app ko open karke Install App ya Add to Home screen se download kar sakte hain.",
+    url: appUrl
+  };
+  if (navigator.share) {
+    await navigator.share(shareData);
+    return;
+  }
+  const copiedText = `${shareData.text}\n${appUrl}`;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(copiedText);
+    alert("App link copied. Ab ise kisi bhi user ko bhej sakte hain.");
+    return;
+  }
+  prompt("App link copy karein", appUrl);
 }
 
 function privacyEnabled() {
@@ -1917,6 +1938,11 @@ $("updateNowBtn").addEventListener("click", () => {
 });
 $("sidebarInstallBtn").addEventListener("click", () => {
   installApp().catch((error) => alert(error.message));
+});
+$("shareAppBtn").addEventListener("click", () => {
+  shareApp().catch((error) => {
+    if (error.name !== "AbortError") alert(error.message);
+  });
 });
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
 $("selectMessagesBtn").addEventListener("click", () => {

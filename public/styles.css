@@ -372,9 +372,9 @@ select:focus {
   top: 12px;
   right: 14px;
   z-index: 20;
-  flex: 0 0 224px;
+  flex: 0 0 282px;
   display: grid;
-  grid-template-columns: repeat(4, 50px);
+  grid-template-columns: repeat(5, 50px);
   gap: 8px;
 }
 
@@ -423,6 +423,7 @@ select:focus {
 #panicHideBtn,
 #profileBtn,
 #sidebarInstallBtn,
+#shareAppBtn,
 #logoutBtn {
   display: grid !important;
   visibility: visible !important;
@@ -1379,13 +1380,13 @@ audio,
   }
 
   .topbar-user {
-    max-width: calc(100% - 212px);
+    max-width: calc(100% - 266px);
   }
 
   .sidebar-fixed-actions {
     top: 17px;
     right: 10px;
-    grid-template-columns: repeat(4, 46px);
+    grid-template-columns: repeat(5, 46px);
     gap: 6px;
   }
 
