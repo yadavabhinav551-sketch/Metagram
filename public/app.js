@@ -157,14 +157,17 @@ function ensureTopbarControlsVisible() {
     sidebar.insertAdjacentHTML("afterbegin", `
       <div class="sidebar-fixed-actions">
         <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
-        <button id="profileBtn" class="icon-button" type="button" title="Profile settings">&#9881;</button>
-        <button id="sidebarInstallBtn" class="icon-button" type="button" title="Install app">&#8595;</button>
-        <button id="shareAppBtn" class="icon-button" type="button" title="Share app">&#8593;</button>
-        <button id="logoutBtn" class="icon-button" type="button" title="Logout">&#8856;</button>
+        <button id="topbarMenuBtn" class="icon-button" type="button" title="More options">&#8942;</button>
+        <div id="topbarActionMenu" class="topbar-action-menu hidden" role="menu" aria-label="More options">
+          <button id="profileBtn" type="button" role="menuitem"><span>&#9881;</span> Profile</button>
+          <button id="sidebarInstallBtn" type="button" role="menuitem"><span>&#8595;</span> Install app</button>
+          <button id="shareAppBtn" type="button" role="menuitem"><span>&#8593;</span> Share app</button>
+          <button id="logoutBtn" type="button" role="menuitem"><span>&#8856;</span> Logout</button>
+        </div>
       </div>
     `);
   }
-  ["panicHideBtn", "profileBtn", "sidebarInstallBtn", "shareAppBtn", "logoutBtn"].forEach((id) => {
+  ["panicHideBtn", "topbarMenuBtn", "profileBtn", "sidebarInstallBtn", "shareAppBtn", "logoutBtn"].forEach((id) => {
     const button = $(id);
     if (!button) return;
     button.classList.remove("hidden");
@@ -466,6 +469,14 @@ async function shareApp() {
     return;
   }
   prompt("App link copy karein", appUrl);
+}
+
+function closeTopbarMenu() {
+  $("topbarActionMenu")?.classList.add("hidden");
+}
+
+function toggleTopbarMenu() {
+  $("topbarActionMenu")?.classList.toggle("hidden");
 }
 
 function privacyEnabled() {
@@ -1836,7 +1847,10 @@ function insertEmoji(emoji) {
 
 $("loginTab").addEventListener("click", () => setAuthMode("login"));
 $("signupTab").addEventListener("click", () => setAuthMode("signup"));
-$("logoutBtn").addEventListener("click", showAuth);
+$("logoutBtn").addEventListener("click", () => {
+  closeTopbarMenu();
+  showAuth();
+});
 $("calculatorPrivacyView").addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button) return;
@@ -1880,6 +1894,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 $("profileBtn").addEventListener("click", () => {
+  closeTopbarMenu();
   $("profileName").value = state.user.displayName;
   $("profileUserId").value = state.user.userId || "";
   $("profileStatusInput").value = state.user.statusText || "";
@@ -1937,12 +1952,22 @@ $("updateNowBtn").addEventListener("click", () => {
   performRequiredUpdate();
 });
 $("sidebarInstallBtn").addEventListener("click", () => {
+  closeTopbarMenu();
   installApp().catch((error) => alert(error.message));
 });
 $("shareAppBtn").addEventListener("click", () => {
+  closeTopbarMenu();
   shareApp().catch((error) => {
     if (error.name !== "AbortError") alert(error.message);
   });
+});
+$("topbarMenuBtn").addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleTopbarMenu();
+});
+document.addEventListener("click", (event) => {
+  if (event.target.closest(".sidebar-fixed-actions")) return;
+  closeTopbarMenu();
 });
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
 $("selectMessagesBtn").addEventListener("click", () => {
