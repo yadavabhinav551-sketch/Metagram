@@ -1015,9 +1015,9 @@ function clearReplyComposer() {
   renderReplyComposer();
 }
 
-function openReactionPicker(messageId) {
+function openReactionPicker(messageId, { toggle = true } = {}) {
   if (!messageId || state.selectionMode) return;
-  state.reactionPickerMessageId = state.reactionPickerMessageId === messageId ? null : messageId;
+  state.reactionPickerMessageId = toggle && state.reactionPickerMessageId === messageId ? null : messageId;
   renderMessages({ preserveScroll: true });
 }
 
@@ -1035,10 +1035,10 @@ function startReactionLongPress(event) {
     state.reactionLongPressTimer = null;
     state.suppressNextMessageClick = true;
     event.preventDefault();
-    openReactionPicker(article.dataset.message);
+    openReactionPicker(article.dataset.message, { toggle: false });
     setTimeout(() => {
       state.suppressNextMessageClick = false;
-    }, 350);
+    }, 900);
   }, 550);
 }
 
@@ -2453,7 +2453,8 @@ $("messages").addEventListener("contextmenu", (event) => {
   const article = event.target.closest("[data-message]");
   if (!article || event.target.closest("button, a, input, label")) return;
   event.preventDefault();
-  openReactionPicker(article.dataset.message);
+  clearReactionLongPress();
+  openReactionPicker(article.dataset.message, { toggle: false });
 });
 
 $("messageForm").addEventListener("submit", (event) => {

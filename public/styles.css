@@ -667,6 +667,8 @@ select:focus {
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 6px 18px rgba(23, 32, 29, 0.08);
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .message.selected {
