@@ -12,11 +12,11 @@
     <link rel="manifest" href="/admin-manifest.json">
     <link rel="icon" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
-    <link rel="preload" href="/styles.css?v=call-recording-29" as="style">
-    <link rel="stylesheet" href="/styles.css?v=call-recording-29">
-    <link rel="stylesheet" href="/admin.css?v=call-recording-29">
+    <link rel="preload" href="/styles.css?v=update-notify-31" as="style">
+    <link rel="stylesheet" href="/styles.css?v=update-notify-31">
+    <link rel="stylesheet" href="/admin.css?v=update-notify-31">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/admin.js?v=call-recording-29" defer></script>
+    <script src="/admin.js?v=update-notify-31" defer></script>
   </head>
   <body class="admin-page">
     <main class="admin-shell">
@@ -73,6 +73,21 @@
                 <small>Allow User ID + hidden secret code login</small>
               </span>
             </label>
+            <div class="update-notify-box">
+              <label class="setting-toggle">
+                <input id="updateNotifyToggle" type="checkbox">
+                <span>
+                  <strong>Update notify</strong>
+                  <small>Force installed user apps to update before chat opens</small>
+                </span>
+              </label>
+              <input id="updateNotifyMessage" maxlength="180" placeholder="Update message for users">
+              <div class="update-notify-actions">
+                <button id="sendUpdateNotifyBtn" class="primary" type="button">Send update notify</button>
+                <button id="saveUpdateNotifyBtn" type="button">Save</button>
+              </div>
+              <small id="updateNotifyStatus" class="settings-note"></small>
+            </div>
             <p id="settingsMessage" class="settings-message"></p>
             <form id="credentialsForm" class="stack">
               <input name="loginId" placeholder="New Admin Login ID" required>

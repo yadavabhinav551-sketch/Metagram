@@ -37,6 +37,8 @@ const state = {
   reactionLongPressTimer: null,
   suppressNextMessageClick: false,
   userActionLongPressTimer: null,
+  updateNotify: null,
+  updateBlocked: false,
   call: {
     peerConnection: null,
     localStream: null,
@@ -56,6 +58,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const APP_VERSION_STORAGE_KEY = "metagramInstalledVersion";
 const EMOJI_OPTIONS = [
   "\u{1F600}", "\u{1F602}", "\u{1F60A}", "\u{1F60D}", "\u{1F618}", "\u{1F60E}",
   "\u{1F973}", "\u{1F622}", "\u{1F621}", "\u{1F64F}", "\u{1F44D}", "\u{1F44E}",
@@ -180,6 +183,8 @@ function setAuthMode(mode) {
 }
 
 function showChat() {
+  if (state.updateBlocked) return;
+  $("updateRequiredView").classList.add("hidden");
   $("calculatorPrivacyView").classList.add("hidden");
   $("calculatorPrivacyView").classList.remove("unlocking");
   $("authView").classList.add("hidden");
@@ -197,6 +202,8 @@ function showChat() {
 }
 
 function showAuth() {
+  if (state.updateBlocked) return;
+  $("updateRequiredView").classList.add("hidden");
   endCall(false);
   localStorage.removeItem("chatToken");
   sessionStorage.removeItem("privacyToken");
@@ -220,6 +227,9 @@ function connectSocket() {
   state.socket = io({ auth: { token: state.token, privacyToken: state.privacyToken } });
   state.socket.on("connect", () => {
     flushOfflineOutbox();
+  });
+  state.socket.on("app:update", async ({ updateNotify } = {}) => {
+    await checkRequiredUpdate(updateNotify);
   });
   state.socket.on("presence", (presence) => {
     state.presence = presence;
@@ -307,6 +317,8 @@ function connectSocket() {
 async function bootstrap() {
   registerPwa();
   showPendingShareError();
+  const canContinue = await checkRequiredUpdate();
+  if (!canContinue) return;
   if (!state.token) {
     showPendingShareLoginHint();
     setAppReady();
@@ -345,6 +357,67 @@ async function bootstrap() {
     renderConversations();
     renderHeader();
     renderMessages();
+  }
+}
+
+async function checkRequiredUpdate(updateNotify = null) {
+  try {
+    const config = updateNotify ? { updateNotify } : await api("/api/app-config");
+    const notify = config.updateNotify || {};
+    state.updateNotify = notify;
+    const serverVersion = Number(notify.version || 1);
+    const installedVersion = Number(localStorage.getItem(APP_VERSION_STORAGE_KEY) || 0);
+    if (!notify.enabled || installedVersion >= serverVersion) {
+      state.updateBlocked = false;
+      $("updateRequiredView").classList.add("hidden");
+      if (serverVersion > installedVersion) {
+        localStorage.setItem(APP_VERSION_STORAGE_KEY, String(serverVersion));
+      }
+      return true;
+    }
+    showRequiredUpdate(notify);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function showRequiredUpdate(updateNotify) {
+  state.updateBlocked = true;
+  endCall(false);
+  state.socket?.disconnect();
+  $("calculatorPrivacyView").classList.add("hidden");
+  $("authView").classList.add("hidden");
+  $("chatView").classList.add("hidden");
+  $("profileModal").classList.add("hidden");
+  $("shareModal").classList.add("hidden");
+  $("callModal").classList.add("hidden");
+  $("videoPreviewModal").classList.add("hidden");
+  $("updateRequiredMessage").textContent = updateNotify.message || "Please update the app to continue.";
+  $("updateRequiredView").classList.remove("hidden");
+  setAppReady();
+}
+
+async function performRequiredUpdate() {
+  const button = $("updateNowBtn");
+  button.disabled = true;
+  button.textContent = "Updating...";
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    const nextVersion = Number(state.updateNotify?.version || 1);
+    localStorage.setItem(APP_VERSION_STORAGE_KEY, String(nextVersion));
+    location.replace(`/?updated=${encodeURIComponent(nextVersion)}&t=${Date.now()}`);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Update app";
+    $("updateHelpText").textContent = "Update failed. Please close and reopen the app, then tap Update app again.";
   }
 }
 
@@ -417,6 +490,7 @@ async function refreshPrivacyTokenFromCachedPin() {
 }
 
 function showCalculatorPrivacy() {
+  if (state.updateBlocked) return;
   endCall(false);
   clearTimeout(state.privacyAutoLockTimer);
   clearPrivacyAwayLock();
@@ -1837,6 +1911,9 @@ document.querySelectorAll(".install-control").forEach((button) => {
   button.addEventListener("click", () => {
     installApp().catch((error) => alert(error.message));
   });
+});
+$("updateNowBtn").addEventListener("click", () => {
+  performRequiredUpdate();
 });
 $("sidebarInstallBtn").addEventListener("click", () => {
   installApp().catch((error) => alert(error.message));

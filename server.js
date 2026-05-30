@@ -75,14 +75,24 @@ const defaultDb = {
     loginId: "6388391842",
     passwordHash: bcrypt.hashSync("123456", 10),
     updatedAt: new Date().toISOString(),
-    secretCodeLoginEnabled: false
+    secretCodeLoginEnabled: false,
+    updateNotify: {
+      enabled: false,
+      version: 1,
+      message: "Please update the app to continue.",
+      updatedAt: null
+    }
   }
 };
 
 function normalizeDb(raw = {}) {
   const admin = {
     ...defaultDb.admin,
-    ...(raw.admin || {})
+    ...(raw.admin || {}),
+    updateNotify: {
+      ...defaultDb.admin.updateNotify,
+      ...((raw.admin || {}).updateNotify || {})
+    }
   };
   return {
     users: raw.users || [],
@@ -564,6 +574,18 @@ app.get("/healthz", (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
+app.get("/api/app-config", (_req, res) => {
+  const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
+  res.json({
+    updateNotify: {
+      enabled: Boolean(updateNotify.enabled),
+      version: Number(updateNotify.version || 1),
+      message: updateNotify.message || defaultDb.admin.updateNotify.message,
+      updatedAt: updateNotify.updatedAt || null
+    }
+  });
+});
+
 app.get(ADMIN_ENTRY, (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
@@ -1000,9 +1022,16 @@ app.post("/api/admin/login", async (req, res) => {
 });
 
 app.get("/api/admin/overview", authAdmin, (_req, res) => {
+  const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
   res.json({
     settings: {
-      secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled)
+      secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled),
+      updateNotify: {
+        enabled: Boolean(updateNotify.enabled),
+        version: Number(updateNotify.version || 1),
+        message: updateNotify.message || defaultDb.admin.updateNotify.message,
+        updatedAt: updateNotify.updatedAt || null
+      }
     },
     users: db.users.map(adminUser),
     conversations: db.conversations.map((conversation) => ({
@@ -1049,12 +1078,43 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
   if (typeof req.body.secretCodeLoginEnabled === "boolean") {
     db.admin.secretCodeLoginEnabled = req.body.secretCodeLoginEnabled;
   }
+  if (req.body.updateNotify && typeof req.body.updateNotify === "object") {
+    const currentUpdate = db.admin.updateNotify || defaultDb.admin.updateNotify;
+    const enabled = typeof req.body.updateNotify.enabled === "boolean"
+      ? req.body.updateNotify.enabled
+      : Boolean(currentUpdate.enabled);
+    const message = String(req.body.updateNotify.message || currentUpdate.message || defaultDb.admin.updateNotify.message).trim().slice(0, 180);
+    const shouldBumpVersion = enabled && (!currentUpdate.enabled || req.body.updateNotify.bumpVersion === true);
+    db.admin.updateNotify = {
+      enabled,
+      version: shouldBumpVersion ? Number(currentUpdate.version || 1) + 1 : Number(currentUpdate.version || 1),
+      message: message || defaultDb.admin.updateNotify.message,
+      updatedAt: enabled ? new Date().toISOString() : currentUpdate.updatedAt || null
+    };
+  }
   db.admin.updatedAt = new Date().toISOString();
   saveDb();
+  const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
+  if (req.body.updateNotify && typeof req.body.updateNotify === "object") {
+    io.emit("app:update", {
+      updateNotify: {
+        enabled: Boolean(updateNotify.enabled),
+        version: Number(updateNotify.version || 1),
+        message: updateNotify.message || defaultDb.admin.updateNotify.message,
+        updatedAt: updateNotify.updatedAt || null
+      }
+    });
+  }
   res.json({
     ok: true,
     settings: {
-      secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled)
+      secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled),
+      updateNotify: {
+        enabled: Boolean(updateNotify.enabled),
+        version: Number(updateNotify.version || 1),
+        message: updateNotify.message || defaultDb.admin.updateNotify.message,
+        updatedAt: updateNotify.updatedAt || null
+      }
     }
   });
 });

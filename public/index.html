@@ -13,13 +13,23 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png">
     <link rel="apple-touch-icon" href="/icons/calculator-192.png">
-    <link rel="preload" href="/styles.css?v=offline-lock-30" as="style">
-    <link rel="stylesheet" href="/styles.css?v=offline-lock-30">
+    <link rel="preload" href="/styles.css?v=update-notify-31" as="style">
+    <link rel="stylesheet" href="/styles.css?v=update-notify-31">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=offline-lock-30" defer></script>
+    <script src="/app.js?v=update-notify-31" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
+      <section id="updateRequiredView" class="update-required-view hidden" aria-label="App update required">
+        <div class="update-required-card">
+          <img src="/icons/calculator-192.png" alt="" class="update-required-icon">
+          <strong>App update required</strong>
+          <p id="updateRequiredMessage">Please update the app to continue.</p>
+          <button id="updateNowBtn" class="primary" type="button">Update app</button>
+          <small id="updateHelpText">One tap update. The app will restart automatically.</small>
+        </div>
+      </section>
+
       <section id="calculatorPrivacyView" class="calculator-privacy-view hidden" aria-label="Calculator">
         <div class="calculator-shell">
           <div class="calculator-display">

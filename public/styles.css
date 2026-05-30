@@ -47,12 +47,61 @@ button:disabled {
 }
 
 body.app-booting #authView,
-body.app-booting #chatView {
+body.app-booting #chatView,
+body.app-booting #updateRequiredView {
   visibility: hidden;
 }
 
 .app-shell {
   min-height: 100vh;
+}
+
+.update-required-view {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(18, 92, 74, 0.1), rgba(47, 111, 189, 0.12)),
+    #eef3f5;
+}
+
+.update-required-card {
+  width: min(380px, 100%);
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.update-required-card strong {
+  font-size: 22px;
+}
+
+.update-required-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.update-required-card small {
+  color: var(--muted);
+}
+
+.update-required-card .primary {
+  width: 100%;
+}
+
+.update-required-icon {
+  width: 64px;
+  height: 64px;
 }
 
 .auth-view {

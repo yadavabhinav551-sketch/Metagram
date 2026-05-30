@@ -3,7 +3,7 @@ const adminState = {
   users: [],
   conversations: [],
   groups: [],
-  settings: { secretCodeLoginEnabled: false },
+  settings: { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } },
   activeConversationId: null,
   socket: null,
   installPrompt: null,
@@ -59,7 +59,7 @@ async function loadOverview() {
   adminState.users = data.users;
   adminState.conversations = data.conversations;
   adminState.groups = data.groups;
-  adminState.settings = data.settings || { secretCodeLoginEnabled: false };
+  adminState.settings = data.settings || { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } };
   renderUsers();
   renderConversations();
   renderGroupMembers();
@@ -68,6 +68,11 @@ async function loadOverview() {
 
 function renderSettings() {
   $("secretCodeLoginToggle").checked = Boolean(adminState.settings.secretCodeLoginEnabled);
+  const updateNotify = adminState.settings.updateNotify || {};
+  $("updateNotifyToggle").checked = Boolean(updateNotify.enabled);
+  $("updateNotifyMessage").value = updateNotify.message || "Please update the app to continue.";
+  const updatedAt = updateNotify.updatedAt ? new Date(updateNotify.updatedAt).toLocaleString() : "not sent yet";
+  $("updateNotifyStatus").textContent = `Version ${updateNotify.version || 1} · ${updatedAt}`;
 }
 
 function formatLastSeen(value) {
@@ -369,6 +374,44 @@ $("secretCodeLoginToggle").addEventListener("change", async (event) => {
     event.target.checked = !enabled;
     $("settingsMessage").textContent = error.message;
   }
+});
+
+async function saveUpdateNotify({ bumpVersion = false } = {}) {
+  const enabled = $("updateNotifyToggle").checked;
+  const message = $("updateNotifyMessage").value.trim() || "Please update the app to continue.";
+  $("settingsMessage").textContent = "Saving...";
+  try {
+    const { settings } = await adminApi("/api/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        updateNotify: {
+          enabled,
+          message,
+          bumpVersion
+        }
+      })
+    });
+    adminState.settings = settings;
+    renderSettings();
+    $("settingsMessage").textContent = enabled
+      ? (bumpVersion ? "Update notify sent to users." : "Update notify saved.")
+      : "Update notify disabled.";
+  } catch (error) {
+    $("settingsMessage").textContent = error.message;
+  }
+}
+
+$("saveUpdateNotifyBtn").addEventListener("click", () => {
+  saveUpdateNotify().catch((error) => {
+    $("settingsMessage").textContent = error.message;
+  });
+});
+
+$("sendUpdateNotifyBtn").addEventListener("click", () => {
+  $("updateNotifyToggle").checked = true;
+  saveUpdateNotify({ bumpVersion: true }).catch((error) => {
+    $("settingsMessage").textContent = error.message;
+  });
 });
 
 $("groupForm").addEventListener("submit", async (event) => {

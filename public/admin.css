@@ -260,6 +260,42 @@ button.admin-item:hover,
   background: #f7faf9;
 }
 
+.update-notify-box {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid #cdded9;
+  border-radius: 8px;
+  background: #f9fbfb;
+}
+
+.update-notify-box .setting-toggle {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.update-notify-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.update-notify-actions button:not(.primary) {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  color: #153d36;
+  font-weight: 700;
+}
+
+.settings-note {
+  color: var(--muted);
+}
+
 .setting-toggle input {
   width: 18px;
   height: 18px;

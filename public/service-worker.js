@@ -1,4 +1,4 @@
-const CACHE_VERSION = "metagram-pwa-v30";
+const CACHE_VERSION = "metagram-pwa-v31";
 const APP_SHELL = [
   "/",
   "/offline.html",
