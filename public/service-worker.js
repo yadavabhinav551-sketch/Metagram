@@ -1,4 +1,4 @@
-const CACHE_VERSION = "metagram-pwa-v29";
+const CACHE_VERSION = "metagram-pwa-v30";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -7,6 +7,7 @@ const APP_SHELL = [
   "/admin.css",
   "/admin.js",
   "/admin.html",
+  "/socket.io/socket.io.js",
   "/manifest.json",
   "/admin-manifest.json",
   "/icon.svg",
@@ -43,8 +44,16 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
+  if (url.pathname === "/socket.io/socket.io.js") {
+    event.respondWith(staleWhileRevalidate(request));
+    return;
+  }
+
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/socket.io/")) {
-    event.respondWith(fetch(request).catch(() => caches.match("/offline.html")));
+    event.respondWith(fetch(request).catch(() => new Response(JSON.stringify({ error: "Offline" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" }
+    })));
     return;
   }
 

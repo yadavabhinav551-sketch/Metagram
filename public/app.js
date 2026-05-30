@@ -25,6 +25,13 @@ const state = {
   calculatorJustEvaluated: false,
   privacyAutoLockTimer: null,
   privacyAwayStartedAt: Number(localStorage.getItem("privacyAwayStartedAt") || 0),
+  offlineOutbox: (() => {
+    try {
+      return JSON.parse(localStorage.getItem("offlineOutbox") || "[]");
+    } catch {
+      return [];
+    }
+  })(),
   replyToMessageId: null,
   reactionPickerMessageId: null,
   reactionLongPressTimer: null,
@@ -58,19 +65,81 @@ const EMOJI_OPTIONS = [
 ];
 const DEFAULT_REACTION_EMOJIS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}"];
 const api = async (url, options = {}) => {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-      ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
-      ...(options.headers || {})
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+        ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
+        ...(options.headers || {})
+      }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(data.error || "Request failed.");
+      error.status = response.status;
+      throw error;
     }
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Request failed.");
-  return data;
+    return data;
+  } catch (error) {
+    if (error.status) throw error;
+    error.offline = true;
+    throw error;
+  }
 };
+
+function cacheKey(name) {
+  return state.token ? `${name}:${state.token.slice(0, 24)}` : name;
+}
+
+function readJson(key, fallback = null) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function cacheCurrentUser() {
+  if (!state.user) return;
+  writeJson(cacheKey("cachedUser"), state.user);
+}
+
+function loadCachedUser() {
+  return readJson(cacheKey("cachedUser"));
+}
+
+function cacheConversations() {
+  writeJson(cacheKey("cachedConversations"), state.conversations);
+}
+
+function loadCachedConversations() {
+  return readJson(cacheKey("cachedConversations"), []);
+}
+
+function cacheMessages(conversationId, messages = state.messages) {
+  if (!conversationId) return;
+  writeJson(cacheKey(`cachedMessages:${conversationId}`), messages);
+}
+
+function loadCachedMessages(conversationId) {
+  return readJson(cacheKey(`cachedMessages:${conversationId}`), []);
+}
+
+function cacheOfflineUnlockCode(code) {
+  if (state.user?.id && /^\d{6}$/.test(code)) {
+    localStorage.setItem(cacheKey(`offlinePrivacyCode:${state.user.id}`), code);
+  }
+}
+
+function getOfflineUnlockCode() {
+  return state.user?.id ? localStorage.getItem(cacheKey(`offlinePrivacyCode:${state.user.id}`)) : null;
+}
 
 function setAppReady() {
   document.body.classList.remove("app-booting");
@@ -131,9 +200,11 @@ function showAuth() {
   endCall(false);
   localStorage.removeItem("chatToken");
   sessionStorage.removeItem("privacyToken");
+  localStorage.removeItem("offlineOutbox");
   state.token = null;
   state.privacyToken = null;
   state.user = null;
+  state.offlineOutbox = [];
   state.socket?.disconnect();
   clearTimeout(state.privacyAutoLockTimer);
   clearPrivacyAwayLock();
@@ -144,8 +215,12 @@ function showAuth() {
 }
 
 function connectSocket() {
+  if (!state.token || (privacyEnabled() && !state.privacyToken) || typeof io !== "function") return;
   state.socket?.disconnect();
   state.socket = io({ auth: { token: state.token, privacyToken: state.privacyToken } });
+  state.socket.on("connect", () => {
+    flushOfflineOutbox();
+  });
   state.socket.on("presence", (presence) => {
     state.presence = presence;
     renderConversations();
@@ -240,6 +315,7 @@ async function bootstrap() {
   try {
     const { user } = await api("/api/me");
     state.user = user;
+    cacheCurrentUser();
     if (privacyEnabled() && privacyAwayExpired()) {
       lockToCalculator();
       return;
@@ -253,8 +329,22 @@ async function bootstrap() {
     await loadConversations();
     await loadPendingShare();
     ensureTopbarControlsVisible();
-  } catch {
-    showAuth();
+  } catch (error) {
+    const cachedUser = loadCachedUser();
+    if (!cachedUser || error.status === 401 || error.status === 403) {
+      showAuth();
+      return;
+    }
+    state.user = cachedUser;
+    state.conversations = loadCachedConversations();
+    if (privacyEnabled()) {
+      showCalculatorPrivacy();
+      return;
+    }
+    showChat();
+    renderConversations();
+    renderHeader();
+    renderMessages();
   }
 }
 
@@ -306,6 +396,22 @@ async function verifyPrivacySession() {
   } catch {
     sessionStorage.removeItem("privacyToken");
     state.privacyToken = null;
+    return false;
+  }
+}
+
+async function refreshPrivacyTokenFromCachedPin() {
+  const code = getOfflineUnlockCode();
+  if (!privacyEnabled() || state.privacyToken || !code) return false;
+  try {
+    const data = await api("/api/privacy/unlock", { method: "POST", body: JSON.stringify({ code }) });
+    if (!data.ok || !data.privacyToken) return false;
+    state.privacyToken = data.privacyToken;
+    sessionStorage.setItem("privacyToken", data.privacyToken);
+    state.user = data.user;
+    cacheCurrentUser();
+    return true;
+  } catch {
     return false;
   }
 }
@@ -443,12 +549,18 @@ function evaluateCalculator(expression) {
 }
 
 async function tryPrivacyUnlock(code) {
+  if (!navigator.onLine && getOfflineUnlockCode() === code) {
+    await openUnlockedChat();
+    return true;
+  }
   try {
     const data = await api("/api/privacy/unlock", { method: "POST", body: JSON.stringify({ code }) });
     if (!data.ok || !data.privacyToken) return false;
     state.privacyToken = data.privacyToken;
     sessionStorage.setItem("privacyToken", data.privacyToken);
     state.user = data.user;
+    cacheCurrentUser();
+    cacheOfflineUnlockCode(code);
     await openUnlockedChat();
     return true;
   } catch {
@@ -485,8 +597,14 @@ async function handleCalculatorEquals() {
 }
 
 async function loadConversations() {
-  const { conversations } = await api("/api/conversations");
-  state.conversations = conversations;
+  try {
+    const { conversations } = await api("/api/conversations");
+    state.conversations = conversations;
+    cacheConversations();
+  } catch (error) {
+    if (!error.offline && error.status !== 503) throw error;
+    state.conversations = loadCachedConversations();
+  }
   renderConversations();
 }
 
@@ -522,8 +640,14 @@ async function loadPendingShare() {
 }
 
 async function loadMessages(conversationId) {
-  const { messages } = await api(`/api/conversations/${conversationId}/messages`);
-  state.messages = messages;
+  try {
+    const { messages } = await api(`/api/conversations/${conversationId}/messages`);
+    state.messages = messages;
+    cacheMessages(conversationId);
+  } catch (error) {
+    if (!error.offline && error.status !== 503) throw error;
+    state.messages = loadCachedMessages(conversationId);
+  }
   renderMessages();
 }
 
@@ -977,10 +1101,77 @@ async function sendPendingShare() {
 }
 
 function tickLabel(message) {
+  if (message.pending) return "single";
   const others = state.activeConversation.participants.filter((id) => id !== state.user.id);
   if (others.every((id) => message.readBy?.includes(id))) return "blue";
   if (others.some((id) => message.deliveredTo?.includes(id))) return "double";
   return "single";
+}
+
+function saveOfflineOutbox() {
+  localStorage.setItem("offlineOutbox", JSON.stringify(state.offlineOutbox));
+}
+
+function updateCachedConversationPreview(conversationId, message) {
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (!conversation) return;
+  conversation.lastMessage = message;
+  cacheConversations();
+  renderConversations();
+}
+
+function addLocalOutgoingMessage({ conversationId, text, replyToId }) {
+  const replyTo = state.messages.find((message) => message.id === replyToId);
+  const message = {
+    id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    conversationId,
+    senderId: state.user.id,
+    text: text.trim(),
+    media: null,
+    createdAt: new Date().toISOString(),
+    deliveredTo: [],
+    readBy: [state.user.id],
+    replyTo: replyTo ? {
+      id: replyTo.id,
+      senderId: replyTo.senderId,
+      senderName: senderName(replyTo.senderId),
+      text: replyTo.text || "",
+      mediaName: replyTo.media?.originalName || ""
+    } : null,
+    reactions: {},
+    deletedFor: [],
+    pending: true
+  };
+  state.messages.push(message);
+  cacheMessages(conversationId);
+  updateCachedConversationPreview(conversationId, message);
+  renderMessages();
+  return message;
+}
+
+function sendTextMessage(conversationId, text, replyToId = null) {
+  const payload = { conversationId, text: text.trim(), replyToId };
+  if (!payload.text) return;
+  if (state.socket?.connected) {
+    state.socket.emit("message:send", payload);
+    return;
+  }
+  state.offlineOutbox.push({ ...payload, queuedAt: new Date().toISOString() });
+  saveOfflineOutbox();
+  addLocalOutgoingMessage(payload);
+}
+
+async function flushOfflineOutbox() {
+  if (!state.offlineOutbox.length || !state.socket?.connected) return;
+  if (privacyEnabled() && !state.privacyToken && !(await refreshPrivacyTokenFromCachedPin())) return;
+  const queued = [...state.offlineOutbox];
+  state.offlineOutbox = [];
+  saveOfflineOutbox();
+  queued.forEach((payload) => state.socket.emit("message:send", payload));
+  if (state.activeConversation) {
+    await loadMessages(state.activeConversation.id).catch(() => {});
+  }
+  await loadConversations().catch(() => {});
 }
 
 function notifyNewMessage(message) {
@@ -1545,7 +1736,7 @@ function insertEmoji(emoji) {
   const nextPosition = start + emoji.length;
   input.focus();
   input.setSelectionRange(nextPosition, nextPosition);
-  if (state.activeConversation) state.socket.emit("typing", { conversationId: state.activeConversation.id, typing: true });
+  if (state.activeConversation && state.socket?.connected) state.socket.emit("typing", { conversationId: state.activeConversation.id, typing: true });
 }
 
 $("loginTab").addEventListener("click", () => setAuthMode("login"));
@@ -1839,7 +2030,7 @@ $("declineCallBtn").addEventListener("click", () => {
 $("endCallBtn").addEventListener("click", () => endCall(true));
 $("closeCallBtn").addEventListener("click", () => endCall(true));
 $("messageInput").addEventListener("input", () => {
-  if (state.activeConversation) state.socket.emit("typing", { conversationId: state.activeConversation.id, typing: true });
+  if (state.activeConversation && state.socket?.connected) state.socket.emit("typing", { conversationId: state.activeConversation.id, typing: true });
 });
 
 $("loginForm").addEventListener("submit", async (event) => {
@@ -1850,6 +2041,7 @@ $("loginForm").addEventListener("submit", async (event) => {
     state.token = token;
     state.user = user;
     localStorage.setItem("chatToken", token);
+    cacheCurrentUser();
     if (privacyEnabled()) {
       showCalculatorPrivacy();
       if ("Notification" in window) Notification.requestPermission();
@@ -1873,6 +2065,7 @@ $("signupForm").addEventListener("submit", async (event) => {
     state.token = token;
     state.user = user;
     localStorage.setItem("chatToken", token);
+    cacheCurrentUser();
     showChat();
     connectSocket();
     await loadConversations();
@@ -1923,6 +2116,8 @@ $("profileForm").addEventListener("submit", async (event) => {
     }
     const privacyResult = await api("/api/privacy/settings", { method: "PATCH", body: JSON.stringify(privacyBody) });
     state.user = privacyResult.user;
+    cacheCurrentUser();
+    if (/^\d{6}$/.test(privacyBody.code)) cacheOfflineUnlockCode(privacyBody.code);
     if (privacyEnabled() && !state.privacyToken) {
       event.target.oldPassword.value = "";
       event.target.newPassword.value = "";
@@ -1951,7 +2146,7 @@ $("conversationList").addEventListener("click", async (event) => {
   state.selectionMode = false;
   state.selectedMessageIds.clear();
   clearReplyComposer();
-  state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
+  if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
   renderHeader();
   renderConversations();
   await loadMessages(state.activeConversation.id);
@@ -2001,7 +2196,7 @@ $("searchResults").addEventListener("click", async (event) => {
     state.selectionMode = false;
     state.selectedMessageIds.clear();
     clearReplyComposer();
-    state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
+    if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
     renderHeader();
     await loadMessages(state.activeConversation.id);
     $("searchResults").innerHTML = "";
@@ -2017,7 +2212,7 @@ $("searchResults").addEventListener("click", async (event) => {
   state.selectionMode = false;
   state.selectedMessageIds.clear();
   clearReplyComposer();
-  state.socket.emit("conversation:join", { conversationId: conversation.id });
+  if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: conversation.id });
   renderHeader();
   await loadMessages(conversation.id);
   $("searchResults").innerHTML = "";
@@ -2142,7 +2337,7 @@ $("messageForm").addEventListener("submit", (event) => {
   }
   const text = $("messageInput").value;
   if (!text.trim()) return;
-  state.socket.emit("message:send", { conversationId: state.activeConversation.id, text, replyToId: state.replyToMessageId });
+  sendTextMessage(state.activeConversation.id, text, state.replyToMessageId);
   $("messageInput").value = "";
   clearReplyComposer();
 });
@@ -2159,6 +2354,14 @@ window.addEventListener("appinstalled", () => {
   state.installPrompt = null;
   setInstallButtonsVisible(false);
   ensureTopbarControlsVisible();
+});
+
+window.addEventListener("online", async () => {
+  if (!state.token || !state.user) return;
+  if (privacyEnabled() && !state.privacyToken) await refreshPrivacyTokenFromCachedPin();
+  connectSocket();
+  await flushOfflineOutbox();
+  await loadConversations().catch(() => {});
 });
 
 renderEmojiPicker();
