@@ -13,10 +13,10 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png">
     <link rel="apple-touch-icon" href="/icons/calculator-192.png">
-    <link rel="preload" href="/styles.css?v=pro-features-45" as="style">
-    <link rel="stylesheet" href="/styles.css?v=pro-features-45">
+    <link rel="preload" href="/styles.css?v=pro-features-46" as="style">
+    <link rel="stylesheet" href="/styles.css?v=pro-features-46">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=pro-features-45" defer></script>
+    <script src="/app.js?v=pro-features-46" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -120,6 +120,11 @@
             <input id="statusImageInput" class="hidden" type="file" accept="image/*,video/*">
             <button id="statusImageBtn" type="button">Media</button>
             <button id="postStatusBtn" class="primary" type="button">Post</button>
+            <div id="statusFilePreview" class="status-file-preview hidden"></div>
+            <div id="statusUploadProgressWrap" class="status-upload-progress hidden">
+              <progress id="statusUploadProgress" value="0" max="100"></progress>
+              <small id="statusUploadText">Ready</small>
+            </div>
           </div>
           <div id="searchResults" class="search-results"></div>
           <div id="conversationList" class="conversation-list"></div>

@@ -11,6 +11,7 @@ const state = {
   statuses: [],
   messageSearch: { open: false, query: "", date: "", matches: [], index: 0 },
   editingMessageId: null,
+  statusPreviewUrl: null,
   presence: [],
   recorder: null,
   audioChunks: [],
@@ -2497,7 +2498,87 @@ async function validateStatusFile(file) {
   throw new Error("Status me sirf image ya 1 minute tak ka video upload kar sakte hain.");
 }
 
+function setStatusUploadProgress(percent = 0, text = "") {
+  $("statusUploadProgress").value = Math.max(0, Math.min(100, Number(percent) || 0));
+  $("statusUploadText").textContent = text || `${Math.round($("statusUploadProgress").value)}% uploaded`;
+  $("statusUploadProgressWrap").classList.toggle("hidden", !text && percent <= 0);
+}
+
+function clearStatusFilePreview() {
+  if (state.statusPreviewUrl) URL.revokeObjectURL(state.statusPreviewUrl);
+  state.statusPreviewUrl = null;
+  $("statusFilePreview").innerHTML = "";
+  $("statusFilePreview").classList.add("hidden");
+  setStatusUploadProgress(0, "");
+}
+
+function renderStatusFilePreview(file, meta = {}) {
+  if (state.statusPreviewUrl) URL.revokeObjectURL(state.statusPreviewUrl);
+  state.statusPreviewUrl = URL.createObjectURL(file);
+  const mediaHtml = meta.kind === "video"
+    ? `<video src="${state.statusPreviewUrl}" muted playsinline preload="metadata"></video>`
+    : `<img src="${state.statusPreviewUrl}" alt="${escapeHtml(file.name)}">`;
+  const duration = meta.duration ? ` · ${Math.round(meta.duration)}s` : "";
+  $("statusFilePreview").innerHTML = `
+    ${mediaHtml}
+    <div>
+      <strong>${escapeHtml(file.name)}</strong>
+      <small>${escapeHtml(formatFileSize(file.size))}${duration}</small>
+    </div>
+    <button id="clearStatusFileBtn" type="button" title="Remove media">x</button>
+  `;
+  $("statusFilePreview").classList.remove("hidden");
+}
+
+function uploadStatusFile(file, onProgress = () => {}) {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const request = new XMLHttpRequest();
+    request.open("POST", "/api/upload");
+    if (state.token) request.setRequestHeader("Authorization", `Bearer ${state.token}`);
+    if (state.privacyToken) request.setRequestHeader("X-Privacy-Token", state.privacyToken);
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    request.onload = () => {
+      let data = {};
+      try {
+        data = JSON.parse(request.responseText || "{}");
+      } catch {
+        reject(new Error("Upload response invalid hai."));
+        return;
+      }
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(data.error || "Upload failed."));
+        return;
+      }
+      resolve(data.media);
+    };
+    request.onerror = () => reject(new Error("Upload failed. Network check karein."));
+    request.send(formData);
+  });
+}
+
 $("statusImageBtn").addEventListener("click", () => $("statusImageInput").click());
+$("statusImageInput").addEventListener("change", async () => {
+  clearStatusFilePreview();
+  const file = $("statusImageInput").files?.[0];
+  if (!file) return;
+  try {
+    const meta = await validateStatusFile(file);
+    renderStatusFilePreview(file, meta);
+  } catch (error) {
+    $("statusImageInput").value = "";
+    alert(error.message);
+  }
+});
+$("statusFilePreview").addEventListener("click", (event) => {
+  if (!event.target.closest("#clearStatusFileBtn")) return;
+  $("statusImageInput").value = "";
+  clearStatusFilePreview();
+});
 $("postStatusBtn").addEventListener("click", async () => {
   const button = $("postStatusBtn");
   button.disabled = true;
@@ -2506,19 +2587,10 @@ $("postStatusBtn").addEventListener("click", async () => {
     const file = $("statusImageInput").files?.[0];
     if (file) {
       const statusFileMeta = await validateStatusFile(file);
-      const formData = new FormData();
-      formData.append("file", file);
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        headers: {
-          ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-          ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {})
-        },
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Upload failed.");
-      media = { ...data.media, ...statusFileMeta };
+      setStatusUploadProgress(0, "Uploading 0%");
+      const uploadedMedia = await uploadStatusFile(file, (percent) => setStatusUploadProgress(percent, `Uploading ${percent}%`));
+      media = { ...uploadedMedia, ...statusFileMeta };
+      setStatusUploadProgress(100, "Upload complete");
     }
     await api("/api/statuses", {
       method: "POST",
@@ -2526,6 +2598,7 @@ $("postStatusBtn").addEventListener("click", async () => {
     });
     $("statusTextInput").value = "";
     $("statusImageInput").value = "";
+    clearStatusFilePreview();
     await loadStatuses();
   } catch (error) {
     alert(error.message);
