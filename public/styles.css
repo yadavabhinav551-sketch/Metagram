@@ -99,6 +99,24 @@ body.app-booting #updateRequiredView {
   width: 100%;
 }
 
+.update-link {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  color: var(--green);
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+}
+
+.update-link:hover {
+  border-color: var(--green);
+  background: #f3fbf8;
+}
+
 .update-required-icon {
   width: 64px;
   height: 64px;

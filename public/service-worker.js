@@ -1,4 +1,4 @@
-const CACHE_VERSION = "metagram-pwa-v42";
+const CACHE_VERSION = "metagram-pwa-v43";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -73,6 +73,10 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(cacheFirst(request));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 function isStaticAsset(request) {

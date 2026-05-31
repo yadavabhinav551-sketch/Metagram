@@ -433,7 +433,13 @@ async function checkRequiredUpdate(updateNotify = null) {
     const notify = config.updateNotify || {};
     state.updateNotify = notify;
     const serverVersion = Number(notify.version || 1);
-    const installedVersion = Number(localStorage.getItem(APP_VERSION_STORAGE_KEY) || 0);
+    const updatedVersion = Number(new URLSearchParams(location.search).get("updated") || 0);
+    let installedVersion = Number(localStorage.getItem(APP_VERSION_STORAGE_KEY) || 0);
+    if (updatedVersion >= serverVersion) {
+      installedVersion = updatedVersion;
+      localStorage.setItem(APP_VERSION_STORAGE_KEY, String(updatedVersion));
+      history.replaceState(null, "", location.pathname);
+    }
     if (!notify.enabled || installedVersion >= serverVersion) {
       state.updateBlocked = false;
       $("updateRequiredView").classList.add("hidden");
@@ -449,6 +455,10 @@ async function checkRequiredUpdate(updateNotify = null) {
   }
 }
 
+function buildUpdateUrl(version = state.updateNotify?.version || 1) {
+  return `${location.origin}/?updated=${encodeURIComponent(version)}&t=${Date.now()}`;
+}
+
 function showRequiredUpdate(updateNotify) {
   state.updateBlocked = true;
   endCall(false);
@@ -461,6 +471,8 @@ function showRequiredUpdate(updateNotify) {
   $("callModal").classList.add("hidden");
   $("videoPreviewModal").classList.add("hidden");
   $("updateRequiredMessage").textContent = updateNotify.message || "Please update the app to continue.";
+  $("updateAppLink").href = buildUpdateUrl(updateNotify.version || 1);
+  $("updateHelpText").textContent = "One tap update. The app will restart automatically, or open the update link.";
   $("updateRequiredView").classList.remove("hidden");
   setAppReady();
 }
@@ -469,29 +481,35 @@ async function performRequiredUpdate() {
   const button = $("updateNowBtn");
   button.disabled = true;
   button.textContent = "Updating...";
+  const updateUrl = buildUpdateUrl(state.updateNotify?.version || 1);
+  $("updateAppLink").href = updateUrl;
   try {
     if ("serviceWorker" in navigator) {
       const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map((registration) => registration.unregister()));
+      await Promise.all(registrations.map(async (registration) => {
+        await registration.update().catch(() => {});
+        registration.waiting?.postMessage({ type: "SKIP_WAITING" });
+        return registration.unregister();
+      }));
     }
     if ("caches" in window) {
       const keys = await caches.keys();
       await Promise.all(keys.map((key) => caches.delete(key)));
     }
-    const nextVersion = Number(state.updateNotify?.version || 1);
-    localStorage.setItem(APP_VERSION_STORAGE_KEY, String(nextVersion));
-    location.replace(`/?updated=${encodeURIComponent(nextVersion)}&t=${Date.now()}`);
+    location.replace(updateUrl);
   } catch (error) {
     button.disabled = false;
     button.textContent = "Update app";
-    $("updateHelpText").textContent = "Update failed. Please close and reopen the app, then tap Update app again.";
+    $("updateHelpText").textContent = "Update failed. Open the update link, or close and reopen the app.";
   }
 }
 
 function registerPwa() {
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+      navigator.serviceWorker.register("/service-worker.js")
+        .then((registration) => registration.update().catch(() => {}))
+        .catch(() => {});
     });
   }
 }
@@ -1027,8 +1045,6 @@ function renderMessages({ preserveScroll = false } = {}) {
     const selected = state.selectedMessageIds.has(message.id);
     const searchHit = state.messageSearch.matches.includes(message.id);
     const currentHit = searchHit && state.messageSearch.matches[state.messageSearch.index] === message.id;
-    const canDeleteEveryone = own && Date.now() - new Date(message.createdAt).getTime() <= 5 * 60 * 1000;
-    const canEdit = own && !message.media && Date.now() - new Date(message.createdAt).getTime() <= 15 * 60 * 1000;
     const starred = (state.user.starredMessageIds || []).includes(message.id);
     return `
       <article class="message ${own ? "own" : ""} ${selected ? "selected" : ""} ${searchHit ? "search-hit" : ""} ${currentHit ? "current-hit" : ""}" data-message="${message.id}">
@@ -1042,12 +1058,6 @@ function renderMessages({ preserveScroll = false } = {}) {
           ${message.editedAt ? `<span class="edited-label">edited</span>` : ""}
           ${starred ? `<span class="star-label">saved</span>` : ""}
           ${own ? `<span class="ticks ${ticks === "blue" ? "blue" : ""}">${ticks === "single" ? "&check;" : "&check;&check;"}</span>` : ""}
-          <button data-reply="${message.id}" type="button" title="Reply">Reply</button>
-          ${canEdit ? `<button data-edit="${message.id}" type="button" title="Edit">Edit</button>` : ""}
-          ${own ? `<button data-details="${message.id}" type="button" title="Details">Details</button>` : ""}
-          <button data-star="${message.id}" type="button" title="Save">${starred ? "Unsave" : "Save"}</button>
-          <button data-delete="${message.id}" type="button" title="Delete for me">Delete</button>
-          ${canDeleteEveryone ? `<button data-delete-everyone="${message.id}" type="button" title="Delete for everyone">Everyone</button>` : ""}
         </footer>
         ${state.reactionPickerMessageId === message.id ? renderReactionPicker(message) : ""}
       </article>`;
@@ -1104,6 +1114,17 @@ function renderReactionButtons(message) {
   return `<span class="reaction-actions">${options.map((emoji) => `<button class="${current === emoji ? "active" : ""}" data-react="${message.id}" data-emoji="${emoji}" type="button" title="React ${emoji}">${emoji}</button>`).join("")}</span>`;
 }
 
+function canEditMessage(message) {
+  return message.senderId === state.user.id
+    && !message.media
+    && Date.now() - new Date(message.createdAt).getTime() <= 15 * 60 * 1000;
+}
+
+function canDeleteMessageForEveryone(message) {
+  return message.senderId === state.user.id
+    && Date.now() - new Date(message.createdAt).getTime() <= 5 * 60 * 1000;
+}
+
 function renderReactionPicker(message) {
   return `
     <div class="reaction-picker message-action-popover" role="menu" aria-label="Message actions">
@@ -1112,11 +1133,12 @@ function renderReactionPicker(message) {
       <span class="message-action-divider"></span>
       <button class="message-action-button" data-action-reply="${message.id}" type="button">Reply</button>
       <button class="message-action-button" data-star="${message.id}" type="button">${(state.user.starredMessageIds || []).includes(message.id) ? "Unsave" : "Save"}</button>
-      ${message.senderId === state.user.id && !message.media ? `<button class="message-action-button" data-edit="${message.id}" type="button">Edit</button>` : ""}
+      ${canEditMessage(message) ? `<button class="message-action-button" data-edit="${message.id}" type="button">Edit</button>` : ""}
       ${message.senderId === state.user.id ? `<button class="message-action-button" data-details="${message.id}" type="button">Details</button>` : ""}
       <button class="message-action-button" data-share-message="${message.id}" type="button">Forward</button>
       <button class="message-action-button" data-share-outside="${message.id}" type="button">Share outside</button>
       <button class="message-action-button danger" data-delete="${message.id}" type="button">Delete</button>
+      ${canDeleteMessageForEveryone(message) ? `<button class="message-action-button danger" data-delete-everyone="${message.id}" type="button">Delete everyone</button>` : ""}
     </div>
   `;
 }
