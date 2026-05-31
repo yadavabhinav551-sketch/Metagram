@@ -926,7 +926,7 @@ function renderConversations() {
         <span class="avatar">${avatarMarkup(status.user, "S")}</span>
         <span class="conversation-main">
           <strong>${escapeHtml(status.user?.displayName || "Status")}</strong>
-          <small>${escapeHtml(status.text || status.media?.originalName || "Image status")} · ${status.viewerCount || 0} views</small>
+          <small>${escapeHtml(statusPreviewText(status))} · ${status.viewerCount || 0} views</small>
         </span>
       </button>
     `).join("") || `<div class="empty-list">No recent statuses.</div>`;
@@ -1147,6 +1147,36 @@ function renderReactionPicker(message) {
       ` : ""}
     </div>
   `;
+}
+
+function statusPreviewText(status) {
+  if (status.text) return status.text;
+  if (status.media?.kind === "video") return "Video status";
+  if (status.media?.kind === "image") return "Photo status";
+  return "Status";
+}
+
+function renderStatusMedia(status) {
+  const media = status.media;
+  if (!media) return "";
+  if (media.kind === "image") {
+    return `<img class="status-viewer-media" src="${media.url}" alt="${escapeHtml(media.originalName || "Status image")}">`;
+  }
+  if (media.kind === "video") {
+    return `<video class="status-viewer-media" controls playsinline preload="metadata" src="${media.url}"></video>`;
+  }
+  return "";
+}
+
+function openStatusViewer(status) {
+  $("statusViewerTitle").textContent = status.user?.displayName || "Status";
+  $("statusViewerBody").innerHTML = `
+    ${renderStatusMedia(status)}
+    ${status.text ? `<p>${escapeHtml(status.text)}</p>` : ""}
+  ` || "<p>Status unavailable.</p>";
+  const created = status.createdAt ? new Date(status.createdAt).toLocaleString() : "";
+  $("statusViewerMeta").textContent = `${status.viewerCount || 0} views${created ? ` · ${created}` : ""}`;
+  $("statusViewerModal").classList.remove("hidden");
 }
 
 function messageSnippet(message) {
@@ -2323,6 +2353,7 @@ $("messageSearchNext").addEventListener("click", () => {
 });
 $("messageSearchClose").addEventListener("click", () => setMessageSearchOpen(false));
 $("closeDetailsBtn").addEventListener("click", () => $("detailsModal").classList.add("hidden"));
+$("closeStatusViewerBtn").addEventListener("click", () => $("statusViewerModal").classList.add("hidden"));
 $("groupInfoBtn").addEventListener("click", () => {
   const group = state.activeConversation?.group;
   if (!group) return;
@@ -2437,6 +2468,35 @@ $("deleteUserBtn").addEventListener("click", async () => {
   $("chatView").classList.remove("conversation-open");
 });
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
+
+function getVideoDuration(file) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(Number(video.duration || 0));
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Video file read nahi ho pa raha."));
+    };
+    video.src = url;
+  });
+}
+
+async function validateStatusFile(file) {
+  if (!file) return null;
+  if (file.type.startsWith("image/")) return { kind: "image" };
+  if (file.type.startsWith("video/")) {
+    const duration = await getVideoDuration(file);
+    if (duration > 60.5) throw new Error("Status video 1 minute ya usse kam hona chahiye.");
+    return { kind: "video", duration };
+  }
+  throw new Error("Status me sirf image ya 1 minute tak ka video upload kar sakte hain.");
+}
+
 $("statusImageBtn").addEventListener("click", () => $("statusImageInput").click());
 $("postStatusBtn").addEventListener("click", async () => {
   const button = $("postStatusBtn");
@@ -2445,6 +2505,7 @@ $("postStatusBtn").addEventListener("click", async () => {
     let media = null;
     const file = $("statusImageInput").files?.[0];
     if (file) {
+      const statusFileMeta = await validateStatusFile(file);
       const formData = new FormData();
       formData.append("file", file);
       const response = await fetch("/api/upload", {
@@ -2457,7 +2518,7 @@ $("postStatusBtn").addEventListener("click", async () => {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Upload failed.");
-      media = data.media;
+      media = { ...data.media, ...statusFileMeta };
     }
     await api("/api/statuses", {
       method: "POST",
@@ -2696,8 +2757,10 @@ $("conversationList").addEventListener("click", async (event) => {
   if (statusButton) {
     const status = state.statuses.find((item) => item.id === statusButton.dataset.status);
     if (!status) return;
-    await api(`/api/statuses/${status.id}/view`, { method: "POST" });
-    alert(`${status.user?.displayName || "Status"}\n\n${status.text || status.media?.originalName || "Image status"}\nViews: ${status.viewerCount || 0}`);
+    const result = await api(`/api/statuses/${status.id}/view`, { method: "POST" });
+    status.viewerCount = result.viewerCount || status.viewerCount || 0;
+    status.viewedByMe = true;
+    openStatusViewer(status);
     await loadStatuses();
     return;
   }

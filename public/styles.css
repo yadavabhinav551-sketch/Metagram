@@ -1224,6 +1224,29 @@ audio,
   object-fit: contain;
 }
 
+.status-viewer-card {
+  width: min(560px, 100%);
+}
+
+.status-viewer-body {
+  display: grid;
+  gap: 12px;
+}
+
+.status-viewer-body p {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.status-viewer-media {
+  width: 100%;
+  max-height: min(68vh, 620px);
+  border-radius: 8px;
+  object-fit: contain;
+  background: #0f1715;
+}
+
 .video-preview-actions {
   display: flex;
   align-items: center;

@@ -1090,8 +1090,14 @@ app.get("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
 app.post("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
   const text = String(req.body.text || "").trim().slice(0, 500);
   const media = req.body.media || null;
-  if (!text && !media) return res.status(400).json({ error: "Status text or image is required." });
-  if (media && media.kind !== "image") return res.status(400).json({ error: "Only image status is supported." });
+  if (!text && !media) return res.status(400).json({ error: "Status text, image, or video is required." });
+  if (media && !["image", "video"].includes(media.kind)) return res.status(400).json({ error: "Only image or video status is supported." });
+  if (media?.kind === "video") {
+    const duration = Number(media.duration || 0);
+    if (!Number.isFinite(duration) || duration <= 0 || duration > 60.5) {
+      return res.status(400).json({ error: "Status video must be 1 minute or less." });
+    }
+  }
   const status = {
     id: crypto.randomUUID(),
     userId: req.user.id,
