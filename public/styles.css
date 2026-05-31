@@ -1305,6 +1305,19 @@ audio,
   overflow-wrap: anywhere;
 }
 
+.status-viewers {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.status-viewers small {
+  color: var(--muted);
+}
+
 .status-viewer-media {
   width: 100%;
   max-height: min(68vh, 620px);

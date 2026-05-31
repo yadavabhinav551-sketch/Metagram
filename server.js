@@ -28,6 +28,7 @@ let dbFile = path.join(activeDataDir, "db.json");
 const DELETE_EVERYONE_WINDOW_MS = 5 * 60 * 1000;
 const EDIT_MESSAGE_WINDOW_MS = 15 * 60 * 1000;
 const STATUS_EXPIRE_MS = 24 * 60 * 60 * 1000;
+const STATUS_VIDEO_MAX_SECONDS = 60;
 const UPLOAD_FILE_SIZE_LIMIT = Number(process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024);
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB = process.env.MONGODB_DB || "metagram";
@@ -79,6 +80,7 @@ const defaultDb = {
     passwordHash: bcrypt.hashSync("123456", 10),
     updatedAt: new Date().toISOString(),
     secretCodeLoginEnabled: false,
+    hiddenAdminConversationIds: [],
     updateNotify: {
       enabled: false,
       version: 1,
@@ -92,6 +94,7 @@ function normalizeDb(raw = {}) {
   const admin = {
     ...defaultDb.admin,
     ...(raw.admin || {}),
+    hiddenAdminConversationIds: Array.isArray(raw.admin?.hiddenAdminConversationIds) ? raw.admin.hiddenAdminConversationIds : [],
     updateNotify: {
       ...defaultDb.admin.updateNotify,
       ...((raw.admin || {}).updateNotify || {})
@@ -190,6 +193,10 @@ function publicUser(user) {
     hasCode: Boolean(user.privacyCodeHash),
     autoLockMinutes: Number(user.privacyMode?.autoLockMinutes || 0),
     panicShortcut: user.privacyMode?.panicShortcut || "button"
+  };
+  safe.messageAutoDelete = {
+    enabled: Boolean(user.messageAutoDelete?.enabled),
+    ttlHours: Number(user.messageAutoDelete?.ttlHours || 0)
   };
   return safe;
 }
@@ -342,6 +349,7 @@ function ensureUserCollections(user) {
   user.archivedConversationIds ||= [];
   user.starredMessageIds ||= [];
   user.reactionEmojis ||= [];
+  user.messageAutoDelete ||= { enabled: false, ttlHours: 0 };
   return user;
 }
 
@@ -365,11 +373,22 @@ function groupCanManage(group, userId) {
   return Boolean(group?.ownerId === userId || (group?.adminIds || []).includes(userId));
 }
 
-function visibleMessages(conversationId, userId) {
+function messageExpiredForUser(message, user) {
+  const ttlHours = Number(user?.messageAutoDelete?.ttlHours || 0);
+  if (!user?.messageAutoDelete?.enabled || !Number.isFinite(ttlHours) || ttlHours <= 0) return false;
+  const createdAt = new Date(message.createdAt).getTime();
+  if (!Number.isFinite(createdAt)) return false;
+  return Date.now() - createdAt >= ttlHours * 60 * 60 * 1000;
+}
+
+function visibleMessages(conversationId, userOrId) {
+  const user = typeof userOrId === "string" ? db.users.find((item) => item.id === userOrId) : userOrId;
+  const userId = user?.id || userOrId;
   return db.messages
     .filter((message) => message.conversationId === conversationId)
     .filter((message) => !message.adminOnly)
     .filter((message) => !message.deletedFor?.includes(userId))
+    .filter((message) => !messageExpiredForUser(message, user))
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 }
 
@@ -396,7 +415,7 @@ function blockedBetween(userAId, userBId) {
 function hydrateConversation(conversation, user) {
   ensureUserCollections(user);
   ensureConversationCollections(conversation);
-  const messages = visibleMessages(conversation.id, user.id);
+  const messages = visibleMessages(conversation.id, user);
   const members = conversation.participants.map((id) => {
     const member = db.users.find((item) => item.id === id);
     return { ...publicUser(member), online: onlineUsers.has(id) };
@@ -463,18 +482,52 @@ function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
 
-function removeMessageMediaFiles(messages) {
-  for (const message of messages) {
-    const url = message.media?.url;
-    if (!url?.startsWith("/uploads/")) continue;
-    const filename = path.basename(url);
-    const filePath = path.join(activeUploadDir, filename);
-    try {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (error) {
-      console.error(`Could not remove media file "${filename}":`, error);
-    }
+function removeUploadedMediaFile(media) {
+  const url = media?.url;
+  if (!url?.startsWith("/uploads/")) return;
+  const filename = path.basename(url);
+  const filePath = path.join(activeUploadDir, filename);
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch (error) {
+    console.error(`Could not remove media file "${filename}":`, error);
   }
+}
+
+function removeMessageMediaFiles(messages) {
+  for (const message of messages) removeUploadedMediaFile(message.media);
+}
+
+function activeStatuses() {
+  const cutoff = Date.now() - STATUS_EXPIRE_MS;
+  db.statuses = (db.statuses || []).filter((status) => new Date(status.createdAt).getTime() >= cutoff);
+  return db.statuses;
+}
+
+function statusViewers(status, { includeOwner = false } = {}) {
+  return (status.viewedBy || [])
+    .filter((view) => includeOwner || view.userId !== status.userId)
+    .map((view) => {
+      const user = db.users.find((item) => item.id === view.userId);
+      if (!user || user.deleted) return null;
+      return { user: publicUser(user), at: view.at };
+    })
+    .filter(Boolean);
+}
+
+function statusResponse(status, viewerUser) {
+  const isOwner = status.userId === viewerUser.id;
+  const viewers = statusViewers(status);
+  const { viewedBy: _viewedBy, ...safeStatus } = status;
+  return {
+    ...safeStatus,
+    media: status.media?.kind === "video" ? { ...status.media, clipTo: STATUS_VIDEO_MAX_SECONDS } : status.media,
+    user: publicUser(db.users.find((user) => user.id === status.userId)),
+    viewedByMe: isOwner || (status.viewedBy || []).some((view) => view.userId === viewerUser.id),
+    viewerCount: viewers.length,
+    viewers: isOwner ? viewers : undefined,
+    canDelete: isOwner
+  };
 }
 
 async function closeUserSessions(user, reason = "Account is not active.") {
@@ -658,6 +711,7 @@ app.post("/api/signup", async (req, res) => {
     archivedConversationIds: [],
     starredMessageIds: [],
     reactionEmojis: [],
+    messageAutoDelete: { enabled: false, ttlHours: 0 },
     statusText: "",
     statusUpdatedAt: null,
     avatarUrl: null,
@@ -698,7 +752,7 @@ app.get("/api/me", authUser, (req, res) => {
 });
 
 app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
-  const { displayName, oldPassword, newPassword, reactionEmojis, statusText } = req.body;
+  const { displayName, oldPassword, newPassword, reactionEmojis, statusText, messageAutoDelete } = req.body;
   let nextUserId = null;
   if (req.body.userId !== undefined) {
     const userIdResult = validateUserId(req.body.userId);
@@ -711,6 +765,9 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   if (displayName && displayName.trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
   if (reactionEmojis !== undefined && !Array.isArray(reactionEmojis)) return res.status(400).json({ error: "Reaction emojis must be a list." });
   if (statusText !== undefined && String(statusText).trim().length > 140) return res.status(400).json({ error: "Status must be 140 characters or less." });
+  if (messageAutoDelete !== undefined && (!messageAutoDelete || typeof messageAutoDelete !== "object")) {
+    return res.status(400).json({ error: "Auto delete setting is invalid." });
+  }
   if (newPassword) {
     if (!oldPassword) return res.status(400).json({ error: "Old password is required." });
     if (newPassword.length < 6) return res.status(400).json({ error: "New password must be at least 6 characters." });
@@ -725,6 +782,18 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   }
   if (Array.isArray(reactionEmojis)) {
     req.user.reactionEmojis = [...new Set(reactionEmojis.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 12);
+  }
+  if (messageAutoDelete && typeof messageAutoDelete === "object") {
+    const enabled = Boolean(messageAutoDelete.enabled);
+    const ttlHours = Number(messageAutoDelete.ttlHours || 0);
+    const allowedHours = new Set([1, 6, 12, 24, 48, 72, 168, 720]);
+    if (enabled && !allowedHours.has(ttlHours)) {
+      return res.status(400).json({ error: "Auto delete time is invalid." });
+    }
+    req.user.messageAutoDelete = {
+      enabled,
+      ttlHours: enabled ? ttlHours : 0
+    };
   }
   saveDb();
   res.json({ user: ownUser(req.user) });
@@ -919,6 +988,7 @@ app.get("/api/messages/starred", authUser, requirePrivacyUnlocked, (req, res) =>
     .filter((message) => ids.has(message.id))
     .filter((message) => db.conversations.some((conversation) => conversation.id === message.conversationId && conversation.participants.includes(req.user.id)))
     .filter((message) => !(message.deletedFor || []).includes(req.user.id))
+    .filter((message) => !messageExpiredForUser(message, req.user))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json({ messages });
 });
@@ -1068,20 +1138,14 @@ app.post("/api/upload", authUser, requirePrivacyUnlocked, handleMulterUpload(upl
 });
 
 app.get("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
-  const cutoff = Date.now() - STATUS_EXPIRE_MS;
-  db.statuses = (db.statuses || []).filter((status) => new Date(status.createdAt).getTime() >= cutoff);
+  activeStatuses();
   const visibleUserIds = new Set([req.user.id]);
   for (const conversation of db.conversations.filter((item) => item.participants.includes(req.user.id))) {
     conversation.participants.forEach((id) => visibleUserIds.add(id));
   }
   const statuses = db.statuses
     .filter((status) => visibleUserIds.has(status.userId))
-    .map((status) => ({
-      ...status,
-      user: publicUser(db.users.find((user) => user.id === status.userId)),
-      viewedByMe: (status.viewedBy || []).some((view) => view.userId === req.user.id),
-      viewerCount: (status.viewedBy || []).length
-    }))
+    .map((status) => statusResponse(status, req.user))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   saveDb();
   res.json({ statuses });
@@ -1094,9 +1158,9 @@ app.post("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
   if (media && !["image", "video"].includes(media.kind)) return res.status(400).json({ error: "Only image or video status is supported." });
   if (media?.kind === "video") {
     const duration = Number(media.duration || 0);
-    if (!Number.isFinite(duration) || duration <= 0 || duration > 60.5) {
-      return res.status(400).json({ error: "Status video must be 1 minute or less." });
-    }
+    media.originalDuration = Number.isFinite(duration) && duration > 0 ? duration : null;
+    media.duration = Number.isFinite(duration) && duration > 0 ? Math.min(duration, STATUS_VIDEO_MAX_SECONDS) : STATUS_VIDEO_MAX_SECONDS;
+    media.clipTo = STATUS_VIDEO_MAX_SECONDS;
   }
   const status = {
     id: crypto.randomUUID(),
@@ -1105,24 +1169,37 @@ app.post("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
     media,
     createdAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + STATUS_EXPIRE_MS).toISOString(),
-    viewedBy: [{ userId: req.user.id, at: new Date().toISOString() }]
+    viewedBy: []
   };
   db.statuses ||= [];
   db.statuses.push(status);
   saveDb();
-  io.emit("status:new", { status: { ...status, user: publicUser(req.user), viewerCount: 1, viewedByMe: true } });
-  res.json({ status });
+  io.emit("status:new", { status: statusResponse(status, req.user) });
+  io.to("admins").emit("admin:status", { statusId: status.id });
+  res.json({ status: statusResponse(status, req.user) });
 });
 
 app.post("/api/statuses/:id/view", authUser, requirePrivacyUnlocked, (req, res) => {
   const status = (db.statuses || []).find((item) => item.id === req.params.id);
   if (!status) return res.status(404).json({ error: "Status not found." });
   status.viewedBy ||= [];
-  if (!status.viewedBy.some((view) => view.userId === req.user.id)) {
+  if (status.userId !== req.user.id && !status.viewedBy.some((view) => view.userId === req.user.id)) {
     status.viewedBy.push({ userId: req.user.id, at: new Date().toISOString() });
     saveDb();
   }
-  res.json({ ok: true, viewerCount: status.viewedBy.length });
+  res.json({ ok: true, viewerCount: statusViewers(status).length, status: statusResponse(status, req.user) });
+});
+
+app.delete("/api/statuses/:id", authUser, requirePrivacyUnlocked, (req, res) => {
+  const status = (db.statuses || []).find((item) => item.id === req.params.id);
+  if (!status) return res.status(404).json({ error: "Status not found." });
+  if (status.userId !== req.user.id) return res.status(403).json({ error: "Only your own status can be deleted." });
+  db.statuses = (db.statuses || []).filter((item) => item.id !== status.id);
+  removeUploadedMediaFile(status.media);
+  saveDb();
+  io.emit("status:deleted", { statusId: status.id, userId: req.user.id });
+  io.to("admins").emit("admin:status-deleted", { statusId: status.id });
+  res.json({ ok: true });
 });
 
 app.patch("/api/groups/:id", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -1251,6 +1328,8 @@ app.post("/api/admin/login", async (req, res) => {
 
 app.get("/api/admin/overview", authAdmin, (_req, res) => {
   const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
+  activeStatuses();
+  const hiddenAdminConversationIds = new Set(db.admin.hiddenAdminConversationIds || []);
   const uploadsUsage = fs.readdirSync(activeUploadDir, { withFileTypes: true })
     .filter((item) => item.isFile())
     .reduce((total, item) => {
@@ -1299,12 +1378,23 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       recentActivity
     },
     users: db.users.map(adminUser),
-    conversations: db.conversations.map((conversation) => ({
-      ...conversation,
-      members: conversation.participants.map((id) => publicUser(db.users.find((user) => user.id === id))),
-      group: db.groups.find((group) => group.id === conversation.groupId) || null,
-      messageCount: db.messages.filter((message) => message.conversationId === conversation.id).length
-    })),
+    conversations: db.conversations
+      .filter((conversation) => !hiddenAdminConversationIds.has(conversation.id))
+      .map((conversation) => ({
+        ...conversation,
+        members: conversation.participants.map((id) => publicUser(db.users.find((user) => user.id === id))),
+        group: db.groups.find((group) => group.id === conversation.groupId) || null,
+        messageCount: db.messages.filter((message) => message.conversationId === conversation.id).length
+      })),
+    statuses: db.statuses
+      .map((status) => ({
+        ...status,
+        media: status.media?.kind === "video" ? { ...status.media, clipTo: STATUS_VIDEO_MAX_SECONDS } : status.media,
+        user: publicUser(db.users.find((user) => user.id === status.userId)),
+        viewerCount: statusViewers(status).length,
+        viewers: statusViewers(status)
+      }))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
     groups: db.groups
   });
 });
@@ -1327,6 +1417,16 @@ app.delete("/api/admin/conversations/:id/messages", authAdmin, (req, res) => {
   io.to([conversation.id, ...conversation.participants]).emit("conversation:cleared", { conversationId: conversation.id });
   io.to("admins").emit("admin:conversation-cleared", { conversationId: conversation.id, removedCount: removedMessages.length });
   res.json({ ok: true, removedCount: removedMessages.length });
+});
+
+app.delete("/api/admin/conversations/:id", authAdmin, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id);
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  db.admin.hiddenAdminConversationIds = [...new Set([...(db.admin.hiddenAdminConversationIds || []), conversation.id])];
+  db.admin.updatedAt = new Date().toISOString();
+  saveDb();
+  io.to("admins").emit("admin:conversation-hidden", { conversationId: conversation.id });
+  res.json({ ok: true });
 });
 
 app.post("/api/admin/credentials", authAdmin, async (req, res) => {

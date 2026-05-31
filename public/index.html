@@ -13,10 +13,10 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png">
     <link rel="apple-touch-icon" href="/icons/calculator-192.png">
-    <link rel="preload" href="/styles.css?v=pro-features-46" as="style">
-    <link rel="stylesheet" href="/styles.css?v=pro-features-46">
+    <link rel="preload" href="/styles.css?v=pro-features-47" as="style">
+    <link rel="stylesheet" href="/styles.css?v=pro-features-47">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=pro-features-46" defer></script>
+    <script src="/app.js?v=pro-features-47" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -296,6 +296,28 @@
               <select id="privacyPanicShortcut" name="privacyPanicShortcut">
                 <option value="button">Hide button</option>
                 <option value="double-tap">Hide button + double tap</option>
+              </select>
+            </label>
+          </div>
+          <div class="privacy-settings">
+            <label class="setting-toggle">
+              <input id="messageAutoDeleteToggle" type="checkbox">
+              <span>
+                <strong>Auto delete all messages</strong>
+                <small>Only hide messages from your account; admin panel keeps them.</small>
+              </span>
+            </label>
+            <label>
+              Delete after
+              <select id="messageAutoDeleteTtl" name="messageAutoDeleteTtl">
+                <option value="1">1 hour</option>
+                <option value="6">6 hours</option>
+                <option value="12">12 hours</option>
+                <option value="24">1 day</option>
+                <option value="48">2 days</option>
+                <option value="72">3 days</option>
+                <option value="168">7 days</option>
+                <option value="720">30 days</option>
               </select>
             </label>
           </div>

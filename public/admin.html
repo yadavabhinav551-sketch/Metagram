@@ -12,11 +12,11 @@
     <link rel="manifest" href="/admin-manifest.json">
     <link rel="icon" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
-    <link rel="preload" href="/styles.css?v=pro-features-46" as="style">
-    <link rel="stylesheet" href="/styles.css?v=pro-features-46">
-    <link rel="stylesheet" href="/admin.css?v=pro-features-46">
+    <link rel="preload" href="/styles.css?v=pro-features-47" as="style">
+    <link rel="stylesheet" href="/styles.css?v=pro-features-47">
+    <link rel="stylesheet" href="/admin.css?v=pro-features-47">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/admin.js?v=pro-features-46" defer></script>
+    <script src="/admin.js?v=pro-features-47" defer></script>
   </head>
   <body class="admin-page">
     <main class="admin-shell">
@@ -58,6 +58,7 @@
           <section class="admin-panel transcript">
             <div class="transcript-head">
               <h2 id="transcriptTitle">Transcript</h2>
+              <button id="deleteAdminConversationBtn" class="danger-action" type="button" disabled>Delete from admin</button>
               <button id="clearTranscriptBtn" class="danger-action" type="button" disabled>Clear chat</button>
             </div>
             <div id="adminMessages" class="admin-messages">Select a chat.</div>
@@ -65,6 +66,8 @@
           <aside class="admin-panel chats-panel">
             <h2>Chats</h2>
             <div id="adminConversations"></div>
+            <h2>User Statuses</h2>
+            <div id="adminStatuses"></div>
           </aside>
           <aside class="admin-panel settings-panel">
             <h2>Admin Settings</h2>

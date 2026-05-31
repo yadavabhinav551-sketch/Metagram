@@ -440,6 +440,16 @@ button.admin-item:hover,
   background: #000;
 }
 
+.admin-status-card {
+  gap: 8px;
+}
+
+.admin-status-card p {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
 select[multiple] {
   min-height: 170px;
   border: 1px solid var(--line);

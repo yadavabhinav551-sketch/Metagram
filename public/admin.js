@@ -2,6 +2,7 @@ const adminState = {
   token: localStorage.getItem("adminToken"),
   users: [],
   conversations: [],
+  statuses: [],
   groups: [],
   stats: null,
   settings: { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } },
@@ -60,11 +61,13 @@ async function loadOverview() {
   const data = await adminApi("/api/admin/overview");
   adminState.users = data.users;
   adminState.conversations = data.conversations;
+  adminState.statuses = data.statuses || [];
   adminState.groups = data.groups;
   adminState.stats = data.stats;
   adminState.settings = data.settings || { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } };
   renderUsers();
   renderConversations();
+  renderStatuses();
   renderGroupMembers();
   renderSettings();
   renderStats();
@@ -186,6 +189,19 @@ function renderConversations() {
   }).join("");
 }
 
+function renderStatuses() {
+  const container = $("adminStatuses");
+  if (!container) return;
+  container.innerHTML = adminState.statuses.map((status) => `
+    <article class="admin-item admin-status-card">
+      <strong>${escapeHtml(status.user?.displayName || status.user?.userId || "User")}</strong>
+      <small>${new Date(status.createdAt).toLocaleString()} · ${status.viewerCount || 0} views</small>
+      ${status.text ? `<p>${escapeHtml(status.text)}</p>` : ""}
+      ${renderAdminMedia(status.media)}
+    </article>
+  `).join("") || `<div class="admin-item"><small>No active statuses.</small></div>`;
+}
+
 function renderGroupMembers() {
   $("groupMembers").innerHTML = adminState.users
     .filter((user) => !user.deleted)
@@ -199,6 +215,7 @@ async function loadTranscript(conversationId) {
   const title = conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName).join(" ↔ ");
   $("transcriptTitle").textContent = title || "Transcript";
   $("clearTranscriptBtn").disabled = false;
+  $("deleteAdminConversationBtn").disabled = false;
   const { messages } = await adminApi(`/api/admin/conversations/${conversationId}/messages`);
   $("adminMessages").innerHTML = messages.map((message) => {
     const sender = adminState.users.find((user) => user.id === message.senderId);
@@ -230,6 +247,26 @@ async function clearActiveTranscript() {
     alert(error.message);
   } finally {
     $("clearTranscriptBtn").disabled = false;
+  }
+}
+
+async function deleteActiveConversationFromAdmin() {
+  const conversationId = adminState.activeConversationId;
+  if (!conversationId) return;
+  const conversation = adminState.conversations.find((item) => item.id === conversationId);
+  const title = conversation?.group?.name || conversation?.members?.filter(Boolean).map((user) => user.displayName).join(" â†” ") || "this chat";
+  if (!confirm(`Delete ${title} from admin panel only? Users will still keep their chat.`)) return;
+  $("deleteAdminConversationBtn").disabled = true;
+  try {
+    await adminApi(`/api/admin/conversations/${conversationId}`, { method: "DELETE" });
+    adminState.activeConversationId = null;
+    $("transcriptTitle").textContent = "Transcript";
+    $("adminMessages").textContent = "Select a chat.";
+    $("clearTranscriptBtn").disabled = true;
+    await loadOverview();
+  } catch (error) {
+    alert(error.message);
+    $("deleteAdminConversationBtn").disabled = false;
   }
 }
 
@@ -287,6 +324,18 @@ function connectAdminSocket() {
     await loadOverview();
     if (adminState.activeConversationId === conversationId) await loadTranscript(conversationId);
   });
+  adminState.socket.on("admin:conversation-hidden", async ({ conversationId }) => {
+    await loadOverview();
+    if (adminState.activeConversationId === conversationId) {
+      adminState.activeConversationId = null;
+      $("transcriptTitle").textContent = "Transcript";
+      $("adminMessages").textContent = "Select a chat.";
+      $("clearTranscriptBtn").disabled = true;
+      $("deleteAdminConversationBtn").disabled = true;
+    }
+  });
+  adminState.socket.on("admin:status", () => loadOverview().catch(() => {}));
+  adminState.socket.on("admin:status-deleted", () => loadOverview().catch(() => {}));
   adminState.socket.on("admin:restore", () => loadOverview().catch(() => {}));
   adminState.socket.on("presence", (presence = []) => {
     const presenceById = new Map(presence.map((item) => [item.id, item]));
@@ -360,6 +409,7 @@ $("adminConversations").addEventListener("click", async (event) => {
 });
 
 $("clearTranscriptBtn").addEventListener("click", clearActiveTranscript);
+$("deleteAdminConversationBtn").addEventListener("click", deleteActiveConversationFromAdmin);
 
 $("adminLogoutBtn").addEventListener("click", () => {
   adminState.socket?.disconnect();

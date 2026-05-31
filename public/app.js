@@ -235,6 +235,7 @@ function showChat() {
   $("profileStatusInput").value = state.user.statusText || "";
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   syncPrivacySettings();
+  syncMessageAutoDeleteSettings();
   clearPrivacyAwayLock();
   requestNotificationPermission();
 }
@@ -338,6 +339,11 @@ function connectSocket() {
   });
   state.socket.on("status:new", () => {
     if (state.conversationView === "status") loadStatuses();
+  });
+  state.socket.on("status:deleted", ({ statusId }) => {
+    state.statuses = state.statuses.filter((status) => status.id !== statusId);
+    if (!$("statusViewerModal").classList.contains("hidden")) $("statusViewerModal").classList.add("hidden");
+    if (state.conversationView === "status") renderConversations();
   });
   state.socket.on("app:restore", () => {
     alert("Backup restore hua hai. App sync ke liye refresh hoga.");
@@ -573,6 +579,14 @@ function syncPrivacySettings() {
   $("privacyAutoLock").value = String(settings.autoLockMinutes || 0);
   $("privacyPanicShortcut").value = settings.panicShortcut || "button";
   ensureTopbarControlsVisible();
+}
+
+function syncMessageAutoDeleteSettings() {
+  if (!$("messageAutoDeleteToggle") || !state.user) return;
+  const settings = state.user.messageAutoDelete || {};
+  $("messageAutoDeleteToggle").checked = Boolean(settings.enabled);
+  $("messageAutoDeleteTtl").value = String(settings.ttlHours || 24);
+  $("messageAutoDeleteTtl").disabled = !$("messageAutoDeleteToggle").checked;
 }
 
 async function verifyPrivacySession() {
@@ -1164,20 +1178,42 @@ function renderStatusMedia(status) {
     return `<img class="status-viewer-media" src="${media.url}" alt="${escapeHtml(media.originalName || "Status image")}">`;
   }
   if (media.kind === "video") {
-    return `<video class="status-viewer-media" controls playsinline preload="metadata" src="${media.url}"></video>`;
+    return `<video class="status-viewer-media" controls playsinline preload="metadata" data-status-clip="${media.clipTo || 60}" src="${media.url}#t=0,${media.clipTo || 60}"></video>`;
   }
   return "";
 }
 
 function openStatusViewer(status) {
   $("statusViewerTitle").textContent = status.user?.displayName || "Status";
+  const viewers = Array.isArray(status.viewers) ? status.viewers : [];
+  const viewerHtml = status.canDelete
+    ? `<div class="status-viewers">
+        <strong>Viewed by ${status.viewerCount || 0}</strong>
+        ${viewers.map((view) => `<small>${escapeHtml(view.user?.displayName || view.user?.userId || "User")} · ${new Date(view.at).toLocaleString()}</small>`).join("") || "<small>No viewers yet.</small>"}
+      </div>
+      <button class="text-button danger" data-delete-status="${status.id}" type="button">Delete status</button>`
+    : "";
   $("statusViewerBody").innerHTML = `
     ${renderStatusMedia(status)}
     ${status.text ? `<p>${escapeHtml(status.text)}</p>` : ""}
+    ${viewerHtml}
   ` || "<p>Status unavailable.</p>";
   const created = status.createdAt ? new Date(status.createdAt).toLocaleString() : "";
   $("statusViewerMeta").textContent = `${status.viewerCount || 0} views${created ? ` · ${created}` : ""}`;
   $("statusViewerModal").classList.remove("hidden");
+  enforceStatusVideoClip($("statusViewerBody").querySelector("video[data-status-clip]"));
+}
+
+function enforceStatusVideoClip(video) {
+  if (!video) return;
+  const clipTo = Number(video.dataset.statusClip || 60);
+  if (!Number.isFinite(clipTo) || clipTo <= 0) return;
+  video.addEventListener("timeupdate", () => {
+    if (video.currentTime >= clipTo) {
+      video.pause();
+      video.currentTime = 0;
+    }
+  });
 }
 
 function messageSnippet(message) {
@@ -2247,11 +2283,15 @@ $("profileBtn").addEventListener("click", () => {
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   $("privacyCodeInput").value = "";
   syncPrivacySettings();
+  syncMessageAutoDeleteSettings();
   $("profileMessage").textContent = "";
   $("profileMessage").classList.remove("success-text");
   $("profileModal").classList.remove("hidden");
 });
 $("closeProfileBtn").addEventListener("click", () => $("profileModal").classList.add("hidden"));
+$("messageAutoDeleteToggle").addEventListener("change", () => {
+  $("messageAutoDeleteTtl").disabled = !$("messageAutoDeleteToggle").checked;
+});
 $("chatIdentity").addEventListener("pointerdown", startUserActionLongPress);
 $("chatIdentity").addEventListener("pointerup", cancelUserActionLongPress);
 $("chatIdentity").addEventListener("pointerleave", cancelUserActionLongPress);
@@ -2355,6 +2395,21 @@ $("messageSearchNext").addEventListener("click", () => {
 $("messageSearchClose").addEventListener("click", () => setMessageSearchOpen(false));
 $("closeDetailsBtn").addEventListener("click", () => $("detailsModal").classList.add("hidden"));
 $("closeStatusViewerBtn").addEventListener("click", () => $("statusViewerModal").classList.add("hidden"));
+$("statusViewerBody").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-delete-status]");
+  if (!button) return;
+  if (!confirm("Delete this status?")) return;
+  button.disabled = true;
+  try {
+    await api(`/api/statuses/${button.dataset.deleteStatus}`, { method: "DELETE" });
+    state.statuses = state.statuses.filter((status) => status.id !== button.dataset.deleteStatus);
+    $("statusViewerModal").classList.add("hidden");
+    renderConversations();
+  } catch (error) {
+    button.disabled = false;
+    alert(error.message);
+  }
+});
 $("groupInfoBtn").addEventListener("click", () => {
   const group = state.activeConversation?.group;
   if (!group) return;
@@ -2474,28 +2529,45 @@ function getVideoDuration(file) {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     const url = URL.createObjectURL(file);
+    const cleanup = () => URL.revokeObjectURL(url);
+    const fallbackTimer = setTimeout(() => {
+      cleanup();
+      resolve(0);
+    }, 5000);
     video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
     video.onloadedmetadata = () => {
-      URL.revokeObjectURL(url);
+      clearTimeout(fallbackTimer);
+      cleanup();
       resolve(Number(video.duration || 0));
     };
     video.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Video file read nahi ho pa raha."));
+      clearTimeout(fallbackTimer);
+      cleanup();
+      resolve(0);
     };
     video.src = url;
+    video.load();
   });
 }
 
 async function validateStatusFile(file) {
   if (!file) return null;
-  if (file.type.startsWith("image/")) return { kind: "image" };
-  if (file.type.startsWith("video/")) {
+  const name = String(file.name || "").toLowerCase();
+  const isImage = file.type.startsWith("image/") || /\.(jpe?g|png|gif|webp|bmp|heic|heif)$/.test(name);
+  const isVideo = file.type.startsWith("video/") || /\.(mp4|m4v|mov|webm|mkv|avi|3gp|mpeg|mpg)$/.test(name);
+  if (isImage) return { kind: "image" };
+  if (isVideo) {
     const duration = await getVideoDuration(file);
-    if (duration > 60.5) throw new Error("Status video 1 minute ya usse kam hona chahiye.");
-    return { kind: "video", duration };
+    return {
+      kind: "video",
+      duration: duration > 0 ? Math.min(duration, 60) : 60,
+      originalDuration: duration > 0 ? duration : null,
+      clipTo: 60
+    };
   }
-  throw new Error("Status me sirf image ya 1 minute tak ka video upload kar sakte hain.");
+  throw new Error("Status me sirf image ya video upload kar sakte hain.");
 }
 
 function setStatusUploadProgress(percent = 0, text = "") {
@@ -2764,7 +2836,11 @@ $("profileForm").addEventListener("submit", async (event) => {
     userId: form.get("userId"),
     statusText: form.get("statusText"),
     oldPassword: form.get("oldPassword"),
-    newPassword: form.get("newPassword")
+    newPassword: form.get("newPassword"),
+    messageAutoDelete: {
+      enabled: $("messageAutoDeleteToggle").checked,
+      ttlHours: Number(form.get("messageAutoDeleteTtl") || 24)
+    }
   };
   const privacyBody = {
     enabled: $("privacyModeToggle").checked,
@@ -2833,6 +2909,7 @@ $("conversationList").addEventListener("click", async (event) => {
     const result = await api(`/api/statuses/${status.id}/view`, { method: "POST" });
     status.viewerCount = result.viewerCount || status.viewerCount || 0;
     status.viewedByMe = true;
+    if (result.status) Object.assign(status, result.status);
     openStatusViewer(status);
     await loadStatuses();
     return;
