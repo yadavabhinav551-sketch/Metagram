@@ -39,6 +39,7 @@ const state = {
   })(),
   replyToMessageId: null,
   reactionPickerMessageId: null,
+  deleteOptionsMessageId: null,
   reactionLongPressTimer: null,
   suppressNextMessageClick: false,
   userActionLongPressTimer: null,
@@ -1126,6 +1127,7 @@ function canDeleteMessageForEveryone(message) {
 }
 
 function renderReactionPicker(message) {
+  const showDeleteOptions = state.deleteOptionsMessageId === message.id;
   return `
     <div class="reaction-picker message-action-popover" role="menu" aria-label="Message actions">
       ${renderReactionButtons(message)}
@@ -1137,8 +1139,12 @@ function renderReactionPicker(message) {
       ${message.senderId === state.user.id ? `<button class="message-action-button" data-details="${message.id}" type="button">Details</button>` : ""}
       <button class="message-action-button" data-share-message="${message.id}" type="button">Forward</button>
       <button class="message-action-button" data-share-outside="${message.id}" type="button">Share outside</button>
-      <button class="message-action-button danger" data-delete="${message.id}" type="button">Delete</button>
-      ${canDeleteMessageForEveryone(message) ? `<button class="message-action-button danger" data-delete-everyone="${message.id}" type="button">Delete everyone</button>` : ""}
+      <button class="message-action-button danger ${showDeleteOptions ? "active" : ""}" data-delete-options="${message.id}" type="button">Delete</button>
+      ${showDeleteOptions ? `
+        <span class="message-action-divider delete-divider"></span>
+        <button class="message-action-button danger" data-delete-for-me="${message.id}" type="button">Delete for me</button>
+        ${canDeleteMessageForEveryone(message) ? `<button class="message-action-button danger" data-delete-everyone="${message.id}" type="button">Delete everyone</button>` : ""}
+      ` : ""}
     </div>
   `;
 }
@@ -1262,6 +1268,7 @@ function renderGroupMembersList() {
 function openReactionPicker(messageId, { toggle = true } = {}) {
   if (!messageId || state.selectionMode) return;
   state.reactionPickerMessageId = toggle && state.reactionPickerMessageId === messageId ? null : messageId;
+  state.deleteOptionsMessageId = null;
   renderMessages({ preserveScroll: true });
 }
 
@@ -2870,6 +2877,16 @@ $("messages").addEventListener("click", async (event) => {
   }
   if (article && state.reactionPickerMessageId && !event.target.closest("button, a, .reaction-picker")) {
     state.reactionPickerMessageId = null;
+    state.deleteOptionsMessageId = null;
+    renderMessages({ preserveScroll: true });
+    return;
+  }
+  const deleteOptionsButton = event.target.closest("[data-delete-options]");
+  if (deleteOptionsButton) {
+    state.reactionPickerMessageId = deleteOptionsButton.dataset.deleteOptions;
+    state.deleteOptionsMessageId = state.deleteOptionsMessageId === deleteOptionsButton.dataset.deleteOptions
+      ? null
+      : deleteOptionsButton.dataset.deleteOptions;
     renderMessages({ preserveScroll: true });
     return;
   }
@@ -2879,14 +2896,18 @@ $("messages").addEventListener("click", async (event) => {
     await api(`/api/messages/${deleteEveryoneButton.dataset.deleteEveryone}/delete-everyone`, { method: "POST" });
     state.messages = state.messages.filter((message) => message.id !== deleteEveryoneButton.dataset.deleteEveryone);
     state.selectedMessageIds.delete(deleteEveryoneButton.dataset.deleteEveryone);
+    state.reactionPickerMessageId = null;
+    state.deleteOptionsMessageId = null;
     renderMessages();
     await loadConversations();
     return;
   }
-  const button = event.target.closest("[data-delete]");
+  const button = event.target.closest("[data-delete-for-me]");
   if (!button) return;
-  await api(`/api/messages/${button.dataset.delete}/delete-for-me`, { method: "POST" });
-  state.messages = state.messages.filter((message) => message.id !== button.dataset.delete);
+  await api(`/api/messages/${button.dataset.deleteForMe}/delete-for-me`, { method: "POST" });
+  state.messages = state.messages.filter((message) => message.id !== button.dataset.deleteForMe);
+  state.reactionPickerMessageId = null;
+  state.deleteOptionsMessageId = null;
   renderMessages();
 });
 

@@ -972,6 +972,17 @@ select:focus {
   background: #fff7f7;
 }
 
+.message-action-button.danger.active,
+.message-action-button.danger:focus-visible {
+  background: #ffe9e9;
+  outline: 2px solid #f0bcbc;
+  outline-offset: 1px;
+}
+
+.delete-divider {
+  margin-top: 4px;
+}
+
 .reaction-add {
   width: 26px;
   height: 26px;
