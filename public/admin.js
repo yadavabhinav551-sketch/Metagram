@@ -3,6 +3,7 @@ const adminState = {
   users: [],
   conversations: [],
   groups: [],
+  stats: null,
   settings: { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } },
   activeConversationId: null,
   socket: null,
@@ -30,6 +31,7 @@ function showAdminApp() {
   $("adminLogin").classList.add("hidden");
   $("adminApp").classList.remove("hidden");
   $("exportLink").setAttribute("href", `/api/admin/export?token=${encodeURIComponent(adminState.token)}`);
+  $("backupLink").setAttribute("href", `/api/admin/backup?token=${encodeURIComponent(adminState.token)}`);
 }
 
 function registerAdminPwa() {
@@ -59,11 +61,28 @@ async function loadOverview() {
   adminState.users = data.users;
   adminState.conversations = data.conversations;
   adminState.groups = data.groups;
+  adminState.stats = data.stats;
   adminState.settings = data.settings || { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } };
   renderUsers();
   renderConversations();
   renderGroupMembers();
   renderSettings();
+  renderStats();
+}
+
+function renderStats() {
+  const stats = adminState.stats || {};
+  $("adminStats").innerHTML = `
+    <div><strong>${stats.totalUsers || 0}</strong><small>Total users</small></div>
+    <div><strong>${stats.onlineUsers || 0}</strong><small>Online</small></div>
+    <div><strong>${stats.totalConversations || 0}</strong><small>Chats</small></div>
+    <div><strong>${stats.totalMessages || 0}</strong><small>Messages</small></div>
+    <div><strong>${formatFileSize(stats.uploadsUsage || 0)}</strong><small>Uploads</small></div>
+    <section>
+      <strong>Top active users</strong>
+      ${(stats.topActiveUsers || []).map((item) => `<small>${escapeHtml(item.user?.displayName || "User")} · ${item.messageCount} messages</small>`).join("") || "<small>No activity yet</small>"}
+    </section>
+  `;
 }
 
 function renderSettings() {
@@ -268,6 +287,7 @@ function connectAdminSocket() {
     await loadOverview();
     if (adminState.activeConversationId === conversationId) await loadTranscript(conversationId);
   });
+  adminState.socket.on("admin:restore", () => loadOverview().catch(() => {}));
   adminState.socket.on("presence", (presence = []) => {
     const presenceById = new Map(presence.map((item) => [item.id, item]));
     adminState.users = adminState.users.map((user) => ({ ...user, ...(presenceById.get(user.id) || {}) }));
@@ -423,6 +443,26 @@ $("groupForm").addEventListener("submit", async (event) => {
   await loadOverview();
 });
 
+$("restoreBtn").addEventListener("click", async () => {
+  const file = $("restoreInput").files?.[0];
+  if (!file) {
+    $("settingsMessage").textContent = "Select a JSON backup first.";
+    return;
+  }
+  if (!confirm("Restore this backup? Current server data will be replaced.")) return;
+  const text = await file.text();
+  let backup;
+  try {
+    backup = JSON.parse(text);
+  } catch {
+    $("settingsMessage").textContent = "Invalid JSON backup.";
+    return;
+  }
+  await adminApi("/api/admin/restore", { method: "POST", body: JSON.stringify(backup) });
+  $("settingsMessage").textContent = "Backup restored. Connected clients will refresh.";
+  await loadOverview();
+});
+
 document.querySelectorAll(".install-control").forEach((button) => {
   button.addEventListener("click", async () => {
     if (!adminState.installPrompt) {
@@ -438,6 +478,18 @@ document.querySelectorAll(".install-control").forEach((button) => {
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+}
+
+function formatFileSize(bytes = 0) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = Number(bytes);
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size.toFixed(size >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
 if (adminState.token) {

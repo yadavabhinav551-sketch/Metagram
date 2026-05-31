@@ -4,8 +4,13 @@ const state = {
   user: null,
   socket: null,
   conversations: [],
+  conversationView: "active",
   activeConversation: null,
   messages: [],
+  starredMessages: [],
+  statuses: [],
+  messageSearch: { open: false, query: "", date: "", matches: [], index: 0 },
+  editingMessageId: null,
   presence: [],
   recorder: null,
   audioChunks: [],
@@ -147,6 +152,7 @@ function getOfflineUnlockCode() {
 function setAppReady() {
   document.body.classList.remove("app-booting");
   ensureTopbarControlsVisible();
+  normalizeUiText();
   setTimeout(ensureTopbarControlsVisible, 250);
   setTimeout(ensureTopbarControlsVisible, 1200);
 }
@@ -178,6 +184,31 @@ function ensureTopbarControlsVisible() {
   });
 }
 
+function normalizeUiText() {
+  const replacements = new Map([
+    ["â€¹", "<"],
+    ["ï¼‹", "+"],
+    ["âž¤", ">"],
+    ["Ã—", "x"],
+    ["â—‰", "●"],
+    ["â–£", "▣"],
+    ["â˜º", ":)"],
+    ["Â·", "·"],
+    ["âœ“", "✓"],
+    ["âœ“âœ“", "✓✓"],
+    ["â†”", "↔"]
+  ]);
+  document.querySelectorAll("button, small, span").forEach((node) => {
+    if (!node.childElementCount) {
+      let text = node.textContent;
+      replacements.forEach((value, key) => {
+        text = text.split(key).join(value);
+      });
+      node.textContent = text;
+    }
+  });
+}
+
 function setAuthMode(mode) {
   $("loginTab").classList.toggle("active", mode === "login");
   $("signupTab").classList.toggle("active", mode === "signup");
@@ -203,6 +234,7 @@ function showChat() {
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   syncPrivacySettings();
   clearPrivacyAwayLock();
+  requestNotificationPermission();
 }
 
 function showAuth() {
@@ -249,10 +281,21 @@ function connectSocket() {
     loadConversations();
     notifyNewMessage(message);
   });
-  state.socket.on("message:status", ({ messageId, readBy }) => {
+  state.socket.on("message:status", ({ messageId, readBy, readDetails, deliveredTo, deliveredDetails }) => {
     const message = state.messages.find((item) => item.id === messageId);
-    if (message) message.readBy = readBy;
+    if (message) {
+      message.readBy = readBy || message.readBy;
+      message.readDetails = readDetails || message.readDetails;
+      message.deliveredTo = deliveredTo || message.deliveredTo;
+      message.deliveredDetails = deliveredDetails || message.deliveredDetails;
+    }
     renderMessages();
+  });
+  state.socket.on("message:edited", ({ message }) => {
+    const index = state.messages.findIndex((item) => item.id === message?.id);
+    if (index >= 0) state.messages[index] = message;
+    renderMessages({ preserveScroll: true });
+    loadConversations();
   });
   state.socket.on("message:reaction", ({ messageId, reactions }) => {
     const message = state.messages.find((item) => item.id === messageId);
@@ -277,6 +320,26 @@ function connectSocket() {
       updateBulkActions();
     }
     loadConversations();
+  });
+  state.socket.on("group:updated", ({ group }) => {
+    if (state.activeConversation?.groupId === group?.id) {
+      state.activeConversation.group = group;
+      renderHeader();
+    }
+    loadConversations();
+  });
+  state.socket.on("group:removed", ({ conversationId }) => {
+    if (state.activeConversation?.id === conversationId) state.activeConversation = null;
+    loadConversations();
+    renderHeader();
+    renderMessages();
+  });
+  state.socket.on("status:new", () => {
+    if (state.conversationView === "status") loadStatuses();
+  });
+  state.socket.on("app:restore", () => {
+    alert("Backup restore hua hai. App sync ke liye refresh hoga.");
+    location.reload();
   });
   state.socket.on("typing", ({ conversationId, userId, typing }) => {
     if (conversationId !== state.activeConversation?.id || userId === state.user.id) return;
@@ -704,13 +767,26 @@ async function handleCalculatorEquals() {
 
 async function loadConversations() {
   try {
-    const { conversations } = await api("/api/conversations");
+    const archived = state.conversationView === "archived" ? "?archived=1" : "";
+    const { conversations } = await api(`/api/conversations${archived}`);
     state.conversations = conversations;
     cacheConversations();
   } catch (error) {
     if (!error.offline && error.status !== 503) throw error;
     state.conversations = loadCachedConversations();
   }
+  renderConversations();
+}
+
+async function loadStarredMessages() {
+  const { messages } = await api("/api/messages/starred");
+  state.starredMessages = messages;
+  renderConversations();
+}
+
+async function loadStatuses() {
+  const { statuses } = await api("/api/statuses");
+  state.statuses = statuses;
   renderConversations();
 }
 
@@ -805,6 +881,39 @@ function formatLastSeen(value) {
 }
 
 function renderConversations() {
+  $("activeChatsBtn")?.classList.toggle("active", state.conversationView === "active");
+  $("archivedChatsBtn")?.classList.toggle("active", state.conversationView === "archived");
+  $("statusViewBtn")?.classList.toggle("active", state.conversationView === "status");
+  $("starredViewBtn")?.classList.toggle("active", state.conversationView === "starred");
+  $("statusComposer")?.classList.toggle("hidden", state.conversationView !== "status");
+  if (state.conversationView === "starred") {
+    $("conversationList").innerHTML = state.starredMessages.map((message) => {
+      const conversation = state.conversations.find((item) => item.id === message.conversationId);
+      const title = conversation?.group?.name || getOtherMember(conversation || {})?.displayName || "Chat";
+      return `
+        <button class="conversation" data-starred-message="${message.id}" data-conversation="${message.conversationId}" type="button">
+          <span class="avatar">*</span>
+          <span class="conversation-main">
+            <strong>${escapeHtml(title)}</strong>
+            <small>${escapeHtml(messageSnippet(message))}</small>
+          </span>
+        </button>`;
+    }).join("") || `<div class="empty-list">No starred messages.</div>`;
+    return;
+  }
+  if (state.conversationView === "status") {
+    $("conversationList").innerHTML = state.statuses.map((status) => `
+      <button class="conversation status-item ${status.viewedByMe ? "" : "unread-status"}" data-status="${status.id}" type="button">
+        <span class="avatar">${avatarMarkup(status.user, "S")}</span>
+        <span class="conversation-main">
+          <strong>${escapeHtml(status.user?.displayName || "Status")}</strong>
+          <small>${escapeHtml(status.text || status.media?.originalName || "Image status")} · ${status.viewerCount || 0} views</small>
+        </span>
+      </button>
+    `).join("") || `<div class="empty-list">No recent statuses.</div>`;
+    normalizeUiText();
+    return;
+  }
   $("conversationList").innerHTML = state.conversations.map((conversation) => {
     const title = conversation.group?.name || getOtherMember(conversation)?.displayName || "Chat";
     const other = getOtherMember(conversation);
@@ -815,18 +924,24 @@ function renderConversations() {
       <button class="conversation ${state.activeConversation?.id === conversation.id ? "active" : ""}" data-id="${conversation.id}" type="button">
         <span class="avatar">${avatarMarkup(other, title)}</span>
         <span class="conversation-main">
-          <strong>${escapeHtml(title)}</strong>
+          <strong>${conversation.pinned ? "Pinned " : ""}${escapeHtml(title)}</strong>
           <small>${escapeHtml(profileStatus || last)}</small>
         </span>
+        ${conversation.unreadCount ? `<span class="unread-badge">${conversation.unreadCount}</span>` : ""}
         <span class="status-dot ${status === "Online" ? "online" : ""}" title="${status}"></span>
       </button>`;
   }).join("");
+  normalizeUiText();
 }
 
 function renderHeader() {
   const conversation = state.activeConversation;
   $("selectMessagesBtn").disabled = !conversation;
   $("clearChatBtn").disabled = !conversation;
+  $("messageSearchBtn").disabled = !conversation;
+  $("pinChatBtn").disabled = !conversation;
+  $("archiveChatBtn").disabled = !conversation;
+  $("groupInfoBtn").classList.add("hidden");
   closeUserActionMenu();
   $("callBtn").classList.add("hidden");
   $("videoCallBtn").classList.add("hidden");
@@ -839,6 +954,9 @@ function renderHeader() {
   $("chatTitle").textContent = title;
   renderAvatarInto($("chatAvatar"), other, title);
   $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
+  $("pinChatBtn").textContent = conversation.pinned ? "Unpin" : "Pin";
+  $("archiveChatBtn").textContent = conversation.archived ? "Unarchive" : "Archive";
+  $("groupInfoBtn").classList.toggle("hidden", !conversation.groupId);
   if (!conversation.groupId && other?.statusText) {
     $("chatStatus").textContent = `${other.statusText} · ${formatPresenceStatus(other.id)}`;
   }
@@ -902,22 +1020,32 @@ function renderMessages({ preserveScroll = false } = {}) {
     return;
   }
   $("messages").className = "messages";
+  updateMessageSearchMatches();
   $("messages").innerHTML = state.messages.map((message) => {
     const own = message.senderId === state.user.id;
     const ticks = own ? tickLabel(message) : "";
     const selected = state.selectedMessageIds.has(message.id);
+    const searchHit = state.messageSearch.matches.includes(message.id);
+    const currentHit = searchHit && state.messageSearch.matches[state.messageSearch.index] === message.id;
     const canDeleteEveryone = own && Date.now() - new Date(message.createdAt).getTime() <= 5 * 60 * 1000;
+    const canEdit = own && !message.media && Date.now() - new Date(message.createdAt).getTime() <= 15 * 60 * 1000;
+    const starred = (state.user.starredMessageIds || []).includes(message.id);
     return `
-      <article class="message ${own ? "own" : ""} ${selected ? "selected" : ""}" data-message="${message.id}">
+      <article class="message ${own ? "own" : ""} ${selected ? "selected" : ""} ${searchHit ? "search-hit" : ""} ${currentHit ? "current-hit" : ""}" data-message="${message.id}">
         ${state.selectionMode ? `<label class="message-select"><input type="checkbox" data-select-message="${message.id}" ${selected ? "checked" : ""}> Select</label>` : ""}
         ${renderReplyPreview(message.replyTo)}
         ${renderMedia(message.media)}
-        ${message.text ? `<p>${renderMessageText(message.text)}</p>` : ""}
+        ${message.text ? `<p>${renderMessageText(message.text, state.messageSearch.query)}</p>` : ""}
         ${renderReactions(message)}
         <footer>
           <time>${new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
-          ${own ? `<span class="ticks ${ticks === "blue" ? "blue" : ""}">${ticks === "single" ? "✓" : "✓✓"}</span>` : ""}
+          ${message.editedAt ? `<span class="edited-label">edited</span>` : ""}
+          ${starred ? `<span class="star-label">saved</span>` : ""}
+          ${own ? `<span class="ticks ${ticks === "blue" ? "blue" : ""}">${ticks === "single" ? "&check;" : "&check;&check;"}</span>` : ""}
           <button data-reply="${message.id}" type="button" title="Reply">Reply</button>
+          ${canEdit ? `<button data-edit="${message.id}" type="button" title="Edit">Edit</button>` : ""}
+          ${own ? `<button data-details="${message.id}" type="button" title="Details">Details</button>` : ""}
+          <button data-star="${message.id}" type="button" title="Save">${starred ? "Unsave" : "Save"}</button>
           <button data-delete="${message.id}" type="button" title="Delete for me">Delete</button>
           ${canDeleteEveryone ? `<button data-delete-everyone="${message.id}" type="button" title="Delete for everyone">Everyone</button>` : ""}
         </footer>
@@ -925,7 +1053,9 @@ function renderMessages({ preserveScroll = false } = {}) {
       </article>`;
   }).join("");
   if (!preserveScroll) $("messages").scrollTop = $("messages").scrollHeight;
+  scrollToCurrentSearchHit();
   renderReplyComposer();
+  renderEditComposer();
   updateBulkActions();
 }
 
@@ -981,6 +1111,9 @@ function renderReactionPicker(message) {
       <button class="reaction-add" data-add-reaction="${message.id}" type="button" title="Add emoji">+</button>
       <span class="message-action-divider"></span>
       <button class="message-action-button" data-action-reply="${message.id}" type="button">Reply</button>
+      <button class="message-action-button" data-star="${message.id}" type="button">${(state.user.starredMessageIds || []).includes(message.id) ? "Unsave" : "Save"}</button>
+      ${message.senderId === state.user.id && !message.media ? `<button class="message-action-button" data-edit="${message.id}" type="button">Edit</button>` : ""}
+      ${message.senderId === state.user.id ? `<button class="message-action-button" data-details="${message.id}" type="button">Details</button>` : ""}
       <button class="message-action-button" data-share-message="${message.id}" type="button">Forward</button>
       <button class="message-action-button" data-share-outside="${message.id}" type="button">Share outside</button>
       <button class="message-action-button danger" data-delete="${message.id}" type="button">Delete</button>
@@ -1013,6 +1146,95 @@ function renderReplyComposer() {
 function clearReplyComposer() {
   state.replyToMessageId = null;
   renderReplyComposer();
+}
+
+function renderEditComposer() {
+  const message = state.messages.find((item) => item.id === state.editingMessageId);
+  $("editComposer")?.classList.toggle("hidden", !message);
+}
+
+function cancelEditComposer() {
+  state.editingMessageId = null;
+  $("messageInput").value = "";
+  renderEditComposer();
+}
+
+function searchableMessageText(message) {
+  return [message.text, message.media?.originalName, message.media?.kind, message.media?.caption]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function updateMessageSearchMatches() {
+  const query = state.messageSearch.query.trim().toLowerCase();
+  const date = state.messageSearch.date;
+  state.messageSearch.matches = state.messages
+    .filter((message) => !query || searchableMessageText(message).includes(query))
+    .filter((message) => !date || message.createdAt?.slice(0, 10) === date)
+    .map((message) => message.id);
+  if (state.messageSearch.index >= state.messageSearch.matches.length) state.messageSearch.index = 0;
+  $("messageSearchCount").textContent = state.messageSearch.matches.length
+    ? `${state.messageSearch.index + 1}/${state.messageSearch.matches.length}`
+    : "0/0";
+}
+
+function scrollToCurrentSearchHit() {
+  const id = state.messageSearch.matches[state.messageSearch.index];
+  if (!id) return;
+  const element = $ ("messages").querySelector(`[data-message="${CSS.escape(id)}"]`);
+  element?.scrollIntoView({ block: "center" });
+}
+
+function setMessageSearchOpen(open) {
+  state.messageSearch.open = open;
+  if (!open) {
+    state.messageSearch.query = "";
+    state.messageSearch.date = "";
+    $("messageSearchInput").value = "";
+    $("messageSearchDate").value = "";
+  }
+  $("messageSearchBar").classList.toggle("hidden", !open);
+  if (open) $("messageSearchInput").focus();
+  renderMessages({ preserveScroll: true });
+}
+
+function memberLabel(userId) {
+  const user = state.activeConversation?.members?.find((item) => item.id === userId);
+  return user?.displayName || user?.userId || "User";
+}
+
+function detailRows(items = []) {
+  if (!items.length) return "<p>No users yet.</p>";
+  return items.map((item) => `<p><strong>${escapeHtml(memberLabel(item.userId || item))}</strong><small>${escapeHtml(item.at ? new Date(item.at).toLocaleString() : "")}</small></p>`).join("");
+}
+
+function showMessageDetails(messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) return;
+  $("detailsBody").innerHTML = `
+    <h3>Delivered to</h3>
+    ${detailRows(message.deliveredDetails || (message.deliveredTo || []).map((userId) => ({ userId })))}
+    <h3>Read by</h3>
+    ${detailRows((message.readDetails || []).filter((item) => item.userId !== state.user.id))}
+  `;
+  $("detailsModal").classList.remove("hidden");
+}
+
+function currentUserCanManageGroup() {
+  const group = state.activeConversation?.group;
+  return Boolean(group && (group.ownerId === state.user.id || (group.adminIds || []).includes(state.user.id)));
+}
+
+function renderGroupMembersList() {
+  const canManage = currentUserCanManageGroup();
+  const group = state.activeConversation?.group;
+  $("groupMembersList").innerHTML = (state.activeConversation?.members || []).map((member) => `
+    <div class="group-member-row">
+      <span>${escapeHtml(member.displayName || member.userId || "User")}${group?.ownerId === member.id ? " · owner" : (group?.adminIds || []).includes(member.id) ? " · admin" : ""}</span>
+      ${canManage && group?.ownerId !== member.id ? `<button data-remove-group-member="${member.id}" type="button">Remove</button>` : ""}
+    </div>
+  `).join("");
 }
 
 function openReactionPicker(messageId, { toggle = true } = {}) {
@@ -1281,8 +1503,63 @@ async function flushOfflineOutbox() {
 }
 
 function notifyNewMessage(message) {
-  if (document.visibilityState === "visible" || message.senderId === state.user.id || Notification.permission !== "granted") return;
-  new Notification("New business chat message", { body: message.text || message.media?.originalName || "New media" });
+  if (message.senderId === state.user.id) return;
+  try {
+    navigator.vibrate?.(80);
+    const context = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    gain.gain.value = 0.04;
+    oscillator.frequency.value = 680;
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.08);
+  } catch {}
+  if (document.visibilityState === "visible" || !("Notification" in window) || Notification.permission !== "granted") return;
+  const notification = new Notification("New business chat message", {
+    body: message.text || message.media?.originalName || "New media",
+    tag: message.conversationId
+  });
+  notification.onclick = () => {
+    window.focus();
+    openConversationById(message.conversationId);
+    notification.close();
+  };
+}
+
+function requestNotificationPermission() {
+  if (!("Notification" in window) || Notification.permission !== "default") return;
+  Notification.requestPermission().catch(() => {});
+}
+
+async function openConversationById(conversationId, messageId = null) {
+  let conversation = state.conversations.find((item) => item.id === conversationId);
+  if (!conversation) {
+    state.conversationView = "active";
+    await loadConversations();
+    conversation = state.conversations.find((item) => item.id === conversationId);
+  }
+  if (!conversation) {
+    state.conversationView = "archived";
+    await loadConversations();
+    conversation = state.conversations.find((item) => item.id === conversationId);
+  }
+  if (!conversation) return;
+  state.activeConversation = conversation;
+  state.selectionMode = false;
+  state.selectedMessageIds.clear();
+  clearReplyComposer();
+  if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId });
+  renderHeader();
+  renderConversations();
+  await loadMessages(conversationId);
+  $("chatView").classList.add("conversation-open");
+  if (messageId) {
+    const element = $("messages").querySelector(`[data-message="${CSS.escape(messageId)}"]`);
+    element?.scrollIntoView({ block: "center" });
+    element?.classList.add("current-hit");
+  }
 }
 
 async function searchUsers() {
@@ -1787,7 +2064,7 @@ function escapeHtml(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
 
-function renderMessageText(value = "") {
+function renderMessageText(value = "", highlight = "") {
   const text = String(value);
   const urlPattern = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
   let html = "";
@@ -1802,13 +2079,21 @@ function renderMessageText(value = "") {
     html += escapeHtml(text.slice(lastIndex, match.index));
     if (trimmedUrl) {
       const href = trimmedUrl.startsWith("www.") ? `https://${trimmedUrl}` : trimmedUrl;
-      html += `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(trimmedUrl)}</a>`;
+      html += `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${highlightSearchText(trimmedUrl, highlight)}</a>`;
     }
-    html += escapeHtml(trailingText);
+    html += highlightSearchText(trailingText, highlight);
     lastIndex = match.index + rawUrl.length;
   }
 
-  return html + escapeHtml(text.slice(lastIndex));
+  return html + highlightSearchText(text.slice(lastIndex), highlight);
+}
+
+function highlightSearchText(value = "", query = "") {
+  const text = String(value);
+  if (!query) return escapeHtml(text);
+  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!escapedQuery) return escapeHtml(text);
+  return escapeHtml(text).replace(new RegExp(`(${escapedQuery})`, "ig"), "<mark>$1</mark>");
 }
 
 function formatFileSize(bytes = 0) {
@@ -1970,6 +2255,76 @@ document.addEventListener("click", (event) => {
   closeTopbarMenu();
 });
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
+$("activeChatsBtn").addEventListener("click", async () => {
+  state.conversationView = "active";
+  await loadConversations();
+});
+$("archivedChatsBtn").addEventListener("click", async () => {
+  state.conversationView = "archived";
+  await loadConversations();
+});
+$("statusViewBtn").addEventListener("click", async () => {
+  state.conversationView = "status";
+  await loadStatuses();
+});
+$("starredViewBtn").addEventListener("click", async () => {
+  state.conversationView = "starred";
+  await loadStarredMessages();
+});
+$("messageSearchBtn").addEventListener("click", () => setMessageSearchOpen(!state.messageSearch.open));
+$("messageSearchInput").addEventListener("input", () => {
+  state.messageSearch.query = $("messageSearchInput").value;
+  state.messageSearch.index = 0;
+  renderMessages({ preserveScroll: true });
+});
+$("messageSearchDate").addEventListener("change", () => {
+  state.messageSearch.date = $("messageSearchDate").value;
+  state.messageSearch.index = 0;
+  renderMessages({ preserveScroll: true });
+});
+$("messageSearchPrev").addEventListener("click", () => {
+  if (!state.messageSearch.matches.length) return;
+  state.messageSearch.index = (state.messageSearch.index - 1 + state.messageSearch.matches.length) % state.messageSearch.matches.length;
+  renderMessages({ preserveScroll: true });
+});
+$("messageSearchNext").addEventListener("click", () => {
+  if (!state.messageSearch.matches.length) return;
+  state.messageSearch.index = (state.messageSearch.index + 1) % state.messageSearch.matches.length;
+  renderMessages({ preserveScroll: true });
+});
+$("messageSearchClose").addEventListener("click", () => setMessageSearchOpen(false));
+$("closeDetailsBtn").addEventListener("click", () => $("detailsModal").classList.add("hidden"));
+$("groupInfoBtn").addEventListener("click", () => {
+  const group = state.activeConversation?.group;
+  if (!group) return;
+  $("groupNameInput").value = group.name || "";
+  $("groupDescriptionInput").value = group.description || "";
+  $("groupMessage").textContent = "";
+  renderGroupMembersList();
+  $("groupModal").classList.remove("hidden");
+});
+$("closeGroupBtn").addEventListener("click", () => $("groupModal").classList.add("hidden"));
+$("pinChatBtn").addEventListener("click", async () => {
+  if (!state.activeConversation) return;
+  const { conversation } = await api(`/api/conversations/${state.activeConversation.id}/preferences`, {
+    method: "PATCH",
+    body: JSON.stringify({ pinned: !state.activeConversation.pinned })
+  });
+  state.activeConversation = conversation;
+  await loadConversations();
+  renderHeader();
+});
+$("archiveChatBtn").addEventListener("click", async () => {
+  if (!state.activeConversation) return;
+  const archived = !state.activeConversation.archived;
+  await api(`/api/conversations/${state.activeConversation.id}/preferences`, {
+    method: "PATCH",
+    body: JSON.stringify({ archived })
+  });
+  state.activeConversation.archived = archived;
+  await loadConversations();
+  renderHeader();
+});
 $("selectMessagesBtn").addEventListener("click", () => {
   if (!state.activeConversation) return;
   state.selectionMode = !state.selectionMode;
@@ -2053,6 +2408,41 @@ $("deleteUserBtn").addEventListener("click", async () => {
   $("chatView").classList.remove("conversation-open");
 });
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
+$("statusImageBtn").addEventListener("click", () => $("statusImageInput").click());
+$("postStatusBtn").addEventListener("click", async () => {
+  const button = $("postStatusBtn");
+  button.disabled = true;
+  try {
+    let media = null;
+    const file = $("statusImageInput").files?.[0];
+    if (file) {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        headers: {
+          ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+          ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {})
+        },
+        body: formData
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Upload failed.");
+      media = data.media;
+    }
+    await api("/api/statuses", {
+      method: "POST",
+      body: JSON.stringify({ text: $("statusTextInput").value, media })
+    });
+    $("statusTextInput").value = "";
+    $("statusImageInput").value = "";
+    await loadStatuses();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
 $("attachBtn").addEventListener("click", () => $("fileInput").click());
 $("fileInput").addEventListener("change", async (event) => {
   if (!state.activeConversation || !event.target.files.length) return;
@@ -2268,17 +2658,23 @@ $("profileForm").addEventListener("submit", async (event) => {
 });
 
 $("conversationList").addEventListener("click", async (event) => {
+  const starred = event.target.closest("[data-starred-message]");
+  if (starred) {
+    await openConversationById(starred.dataset.conversation, starred.dataset.starredMessage);
+    return;
+  }
+  const statusButton = event.target.closest("[data-status]");
+  if (statusButton) {
+    const status = state.statuses.find((item) => item.id === statusButton.dataset.status);
+    if (!status) return;
+    await api(`/api/statuses/${status.id}/view`, { method: "POST" });
+    alert(`${status.user?.displayName || "Status"}\n\n${status.text || status.media?.originalName || "Image status"}\nViews: ${status.viewerCount || 0}`);
+    await loadStatuses();
+    return;
+  }
   const button = event.target.closest("[data-id]");
   if (!button) return;
-  state.activeConversation = state.conversations.find((item) => item.id === button.dataset.id);
-  state.selectionMode = false;
-  state.selectedMessageIds.clear();
-  clearReplyComposer();
-  if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
-  renderHeader();
-  renderConversations();
-  await loadMessages(state.activeConversation.id);
-  $("chatView").classList.add("conversation-open");
+  await openConversationById(button.dataset.id);
 });
 
 $("searchResults").addEventListener("click", async (event) => {
@@ -2359,6 +2755,33 @@ $("messages").addEventListener("click", async (event) => {
     state.replyToMessageId = replyButton.dataset.reply;
     renderReplyComposer();
     $("messageInput").focus();
+    return;
+  }
+  const editButton = event.target.closest("[data-edit]");
+  if (editButton) {
+    const message = state.messages.find((item) => item.id === editButton.dataset.edit);
+    if (!message) return;
+    state.editingMessageId = message.id;
+    $("messageInput").value = message.text || "";
+    $("messageInput").focus();
+    renderEditComposer();
+    return;
+  }
+  const detailsButton = event.target.closest("[data-details]");
+  if (detailsButton) {
+    showMessageDetails(detailsButton.dataset.details);
+    return;
+  }
+  const starButton = event.target.closest("[data-star]");
+  if (starButton) {
+    const id = starButton.dataset.star;
+    const starred = !(state.user.starredMessageIds || []).includes(id);
+    await api(`/api/messages/${id}/star`, { method: "POST", body: JSON.stringify({ starred }) });
+    state.user.starredMessageIds = starred
+      ? [...new Set([...(state.user.starredMessageIds || []), id])]
+      : (state.user.starredMessageIds || []).filter((item) => item !== id);
+    cacheCurrentUser();
+    renderMessages({ preserveScroll: true });
     return;
   }
   const actionReplyButton = event.target.closest("[data-action-reply]");
@@ -2466,12 +2889,81 @@ $("messageForm").addEventListener("submit", (event) => {
   }
   const text = $("messageInput").value;
   if (!text.trim()) return;
+  if (state.editingMessageId) {
+    api(`/api/messages/${state.editingMessageId}`, { method: "PATCH", body: JSON.stringify({ text }) })
+      .then(({ message }) => {
+        const index = state.messages.findIndex((item) => item.id === message.id);
+        if (index >= 0) state.messages[index] = message;
+        cancelEditComposer();
+        renderMessages({ preserveScroll: true });
+        loadConversations();
+      })
+      .catch((error) => alert(error.message));
+    return;
+  }
   sendTextMessage(state.activeConversation.id, text, state.replyToMessageId);
   $("messageInput").value = "";
   clearReplyComposer();
 });
 
 $("cancelReplyBtn").addEventListener("click", clearReplyComposer);
+$("cancelEditBtn").addEventListener("click", cancelEditComposer);
+
+$("groupMembersList").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-remove-group-member]");
+  if (!button || !state.activeConversation?.groupId) return;
+  await api(`/api/groups/${state.activeConversation.groupId}/members/${button.dataset.removeGroupMember}`, { method: "DELETE" });
+  await loadConversations();
+  state.activeConversation = state.conversations.find((item) => item.id === state.activeConversation.id);
+  renderGroupMembersList();
+  renderHeader();
+});
+
+$("groupMemberInput").addEventListener("change", async () => {
+  const query = $("groupMemberInput").value.trim();
+  if (!query || !state.activeConversation?.groupId) return;
+  const { users } = await api(`/api/users/search?q=${encodeURIComponent(query)}`);
+  const user = users[0];
+  if (!user) {
+    $("groupMessage").textContent = "User not found.";
+    return;
+  }
+  await api(`/api/groups/${state.activeConversation.groupId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ memberId: user.id })
+  });
+  $("groupMemberInput").value = "";
+  await loadConversations();
+  state.activeConversation = state.conversations.find((item) => item.id === state.activeConversation.id);
+  renderGroupMembersList();
+  renderHeader();
+});
+
+$("groupFormUser").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.activeConversation?.groupId) return;
+  const { group } = await api(`/api/groups/${state.activeConversation.groupId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: $("groupNameInput").value,
+      description: $("groupDescriptionInput").value
+    })
+  });
+  state.activeConversation.group = group;
+  $("groupMessage").textContent = "Group saved.";
+  await loadConversations();
+  renderHeader();
+});
+
+$("leaveGroupBtn").addEventListener("click", async () => {
+  if (!state.activeConversation?.groupId || !confirm("Leave this group?")) return;
+  await api(`/api/groups/${state.activeConversation.groupId}/leave`, { method: "POST" });
+  $("groupModal").classList.add("hidden");
+  state.activeConversation = null;
+  await loadConversations();
+  renderHeader();
+  renderMessages();
+});
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();

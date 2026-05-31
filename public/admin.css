@@ -198,6 +198,41 @@ button.admin-item:hover,
   color: #087443;
 }
 
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.admin-stats div,
+.admin-stats section,
+.restore-box {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfb;
+}
+
+.admin-stats section {
+  grid-column: 1 / -1;
+}
+
+.admin-stats strong {
+  color: var(--green);
+  font-size: 18px;
+}
+
+.admin-stats small {
+  color: var(--muted);
+}
+
+.restore-box {
+  margin: 12px 0;
+}
+
 .hidden-audit {
   display: grid;
   gap: 2px;

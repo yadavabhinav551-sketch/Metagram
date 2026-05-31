@@ -489,6 +489,46 @@ select:focus {
   width: 100%;
 }
 
+.sidebar-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.sidebar-tabs button,
+.message-search-bar button,
+.status-composer button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sidebar-tabs button.active {
+  border-color: var(--green);
+  background: #e8f8f1;
+}
+
+.status-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.status-composer input:first-child {
+  grid-column: 1 / -1;
+  padding: 9px 10px;
+}
+
 .search-results {
   min-width: 0;
   max-height: 220px;
@@ -570,6 +610,28 @@ select:focus {
   box-shadow: inset 3px 0 0 var(--green-2);
 }
 
+.unread-badge {
+  min-width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--green);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.empty-list {
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.unread-status .avatar {
+  outline: 3px solid #25b76d;
+}
+
 .conversation-main {
   min-width: 0;
   flex: 1;
@@ -632,10 +694,24 @@ select:focus {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr auto auto auto;
+  grid-template-rows: auto auto 1fr auto auto auto;
   background:
     linear-gradient(rgba(250, 252, 252, 0.88), rgba(250, 252, 252, 0.88)),
     #e7eeee;
+}
+
+.message-search-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.message-search-bar input {
+  padding: 9px 10px;
 }
 
 .chat-header {
@@ -673,6 +749,21 @@ select:focus {
 
 .message.selected {
   outline: 2px solid var(--green-2);
+}
+
+.message.search-hit {
+  outline: 2px solid rgba(47, 111, 189, 0.28);
+}
+
+.message.current-hit {
+  outline-color: var(--accent);
+}
+
+.message mark {
+  border-radius: 4px;
+  background: #fff2a8;
+  color: inherit;
+  padding: 0 2px;
 }
 
 .message-select {
@@ -765,6 +856,46 @@ select:focus {
   background: transparent;
   color: var(--muted);
   font-size: 11px;
+}
+
+.edited-label,
+.star-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.details-body,
+.group-members-list {
+  display: grid;
+  gap: 8px;
+}
+
+.details-body h3 {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+
+.details-body p,
+.group-member-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbfb;
+}
+
+.details-body small {
+  color: var(--muted);
+}
+
+.group-member-row button {
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-weight: 800;
 }
 
 .reaction-actions {
@@ -1374,6 +1505,18 @@ audio,
     height: 100dvh;
     grid-template-columns: 1fr;
     overflow: hidden;
+  }
+
+  .sidebar-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .message-search-bar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .message-search-bar span {
+    justify-self: start;
   }
 
   .sidebar,

@@ -13,10 +13,10 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png">
     <link rel="apple-touch-icon" href="/icons/calculator-192.png">
-    <link rel="preload" href="/styles.css?v=stable-message-menu-34" as="style">
-    <link rel="stylesheet" href="/styles.css?v=stable-message-menu-34">
+    <link rel="preload" href="/styles.css?v=pro-features-42" as="style">
+    <link rel="stylesheet" href="/styles.css?v=pro-features-42">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=stable-message-menu-34" defer></script>
+    <script src="/app.js?v=pro-features-42" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -108,6 +108,18 @@
           <div class="search-row">
             <input id="searchInput" placeholder="Search User ID or Mobile">
           </div>
+          <div class="sidebar-tabs">
+            <button id="activeChatsBtn" class="active" type="button">Chats</button>
+            <button id="archivedChatsBtn" type="button">Archived</button>
+            <button id="statusViewBtn" type="button">Status</button>
+            <button id="starredViewBtn" type="button">Starred</button>
+          </div>
+          <div id="statusComposer" class="status-composer hidden">
+            <input id="statusTextInput" maxlength="500" placeholder="Post a 24h text status">
+            <input id="statusImageInput" class="hidden" type="file" accept="image/*">
+            <button id="statusImageBtn" type="button">Image</button>
+            <button id="postStatusBtn" class="primary" type="button">Post</button>
+          </div>
           <div id="searchResults" class="search-results"></div>
           <div id="conversationList" class="conversation-list"></div>
         </aside>
@@ -126,6 +138,10 @@
               <button id="hideChatBtn" class="text-button user-management-action hidden" type="button">Hide</button>
               <button id="blockUserBtn" class="text-button user-management-action hidden" type="button">Block</button>
               <button id="deleteUserBtn" class="text-button danger user-management-action hidden" type="button">Delete user</button>
+              <button id="messageSearchBtn" class="text-button" type="button">Search</button>
+              <button id="pinChatBtn" class="text-button" type="button">Pin</button>
+              <button id="archiveChatBtn" class="text-button" type="button">Archive</button>
+              <button id="groupInfoBtn" class="text-button hidden" type="button">Group</button>
               <button id="selectMessagesBtn" class="text-button" type="button">Select</button>
               <button id="clearChatBtn" class="text-button danger" type="button">Clear</button>
             </div>
@@ -135,6 +151,14 @@
               <button id="menuDeleteUserBtn" class="danger" type="button" role="menuitem">Delete user</button>
             </div>
           </header>
+          <div id="messageSearchBar" class="message-search-bar hidden">
+            <input id="messageSearchInput" placeholder="Search in this chat">
+            <input id="messageSearchDate" type="date">
+            <span id="messageSearchCount">0/0</span>
+            <button id="messageSearchPrev" type="button">Prev</button>
+            <button id="messageSearchNext" type="button">Next</button>
+            <button id="messageSearchClose" type="button">Close</button>
+          </div>
           <div id="messages" class="messages empty-state">No conversation selected.</div>
           <div id="bulkActions" class="bulk-actions hidden">
             <span id="selectedCount">0 selected</span>
@@ -150,6 +174,10 @@
               <span id="replyComposerText"></span>
               <button id="cancelReplyBtn" class="icon-button" type="button" title="Cancel reply">x</button>
             </div>
+            <div id="editComposer" class="reply-composer hidden">
+              <span>Editing message</span>
+              <button id="cancelEditBtn" class="icon-button" type="button" title="Cancel edit">x</button>
+            </div>
             <input id="fileInput" type="file" class="hidden" multiple accept="image/*,audio/*,video/*,.mp3,.m4a,.aac,.wav,.ogg,.mp4,.m4v,.mov,.webm,.mkv,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.7z">
             <button id="attachBtn" class="icon-button" type="button" title="Attach file">＋</button>
             <button id="voiceBtn" class="icon-button" type="button" title="Record voice">◉</button>
@@ -163,6 +191,32 @@
             <button class="send-button" type="submit" title="Send">➤</button>
           </form>
         </section>
+      </section>
+
+      <section id="detailsModal" class="modal-layer hidden">
+        <div class="modal-card">
+          <header>
+            <strong id="detailsTitle">Message details</strong>
+            <button id="closeDetailsBtn" class="icon-button" type="button" title="Close">x</button>
+          </header>
+          <div id="detailsBody" class="details-body"></div>
+        </div>
+      </section>
+
+      <section id="groupModal" class="modal-layer hidden">
+        <form id="groupFormUser" class="modal-card">
+          <header>
+            <strong>Group details</strong>
+            <button id="closeGroupBtn" class="icon-button" type="button" title="Close">x</button>
+          </header>
+          <input name="name" id="groupNameInput" placeholder="Group name">
+          <input name="description" id="groupDescriptionInput" placeholder="Description">
+          <input id="groupMemberInput" placeholder="Add member by User ID or mobile">
+          <div id="groupMembersList" class="group-members-list"></div>
+          <button class="primary" type="submit">Save group</button>
+          <button id="leaveGroupBtn" class="text-button danger" type="button">Leave group</button>
+          <p id="groupMessage" class="error-text"></p>
+        </form>
       </section>
 
       <section id="profileModal" class="modal-layer hidden">

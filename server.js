@@ -26,6 +26,8 @@ let activeDataDir = DATA_DIR;
 let activeUploadDir = UPLOAD_DIR;
 let dbFile = path.join(activeDataDir, "db.json");
 const DELETE_EVERYONE_WINDOW_MS = 5 * 60 * 1000;
+const EDIT_MESSAGE_WINDOW_MS = 15 * 60 * 1000;
+const STATUS_EXPIRE_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_FILE_SIZE_LIMIT = Number(process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024);
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB = process.env.MONGODB_DB || "metagram";
@@ -70,6 +72,7 @@ const defaultDb = {
   messages: [],
   conversations: [],
   groups: [],
+  statuses: [],
   sharedItems: [],
   admin: {
     loginId: "6388391842",
@@ -99,6 +102,7 @@ function normalizeDb(raw = {}) {
     messages: raw.messages || [],
     conversations: raw.conversations || [],
     groups: raw.groups || [],
+    statuses: raw.statuses || [],
     sharedItems: raw.sharedItems || [],
     admin
   };
@@ -320,12 +324,45 @@ function makeConversation(participants, groupId = null) {
       id: crypto.randomUUID(),
       participants: normalized,
       groupId,
+      pinnedBy: [],
+      archivedBy: [],
       createdAt: new Date().toISOString()
     };
     db.conversations.push(conversation);
     saveDb();
   }
   return conversation;
+}
+
+function ensureUserCollections(user) {
+  user.hiddenUserIds ||= [];
+  user.deletedUserIds ||= [];
+  user.blockedUserIds ||= [];
+  user.pinnedConversationIds ||= [];
+  user.archivedConversationIds ||= [];
+  user.starredMessageIds ||= [];
+  user.reactionEmojis ||= [];
+  return user;
+}
+
+function ensureConversationCollections(conversation) {
+  conversation.pinnedBy ||= [];
+  conversation.archivedBy ||= [];
+  return conversation;
+}
+
+function ensureGroupCollections(group, ownerId = null) {
+  if (!group) return group;
+  group.memberIds ||= [];
+  group.adminIds ||= [];
+  if (ownerId && !group.ownerId) group.ownerId = ownerId;
+  if (group.ownerId) group.adminIds = [...new Set([group.ownerId, ...group.adminIds])];
+  return group;
+}
+
+function groupCanManage(group, userId) {
+  ensureGroupCollections(group);
+  return Boolean(group?.ownerId === userId || (group?.adminIds || []).includes(userId));
 }
 
 function visibleMessages(conversationId, userId) {
@@ -357,12 +394,15 @@ function blockedBetween(userAId, userBId) {
 }
 
 function hydrateConversation(conversation, user) {
+  ensureUserCollections(user);
+  ensureConversationCollections(conversation);
   const messages = visibleMessages(conversation.id, user.id);
   const members = conversation.participants.map((id) => {
     const member = db.users.find((item) => item.id === id);
     return { ...publicUser(member), online: onlineUsers.has(id) };
   });
-  const group = conversation.groupId ? db.groups.find((item) => item.id === conversation.groupId) : null;
+  const group = conversation.groupId ? ensureGroupCollections(db.groups.find((item) => item.id === conversation.groupId), conversation.participants[0]) : null;
+  const unreadCount = messages.filter((message) => message.senderId !== user.id && !(message.readBy || []).includes(user.id)).length;
   return {
     ...conversation,
     members,
@@ -371,6 +411,9 @@ function hydrateConversation(conversation, user) {
     deletedByMe: isDeletedConversation(conversation, user),
     blockedByMe: !conversation.groupId && (user.blockedUserIds || []).includes(otherParticipant(conversation, user.id)),
     blockedMe: !conversation.groupId && (db.users.find((item) => item.id === otherParticipant(conversation, user.id))?.blockedUserIds || []).includes(user.id),
+    pinned: (user.pinnedConversationIds || conversation.pinnedBy || []).includes(conversation.id) || (conversation.pinnedBy || []).includes(user.id),
+    archived: (user.archivedConversationIds || conversation.archivedBy || []).includes(conversation.id) || (conversation.archivedBy || []).includes(user.id),
+    unreadCount,
     lastMessage: messages.at(-1) || null
   };
 }
@@ -561,7 +604,7 @@ function handleMulterUpload(uploadHandler, { redirectOnError = false } = {}) {
 }
 
 app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use("/uploads", express.static(activeUploadDir));
 app.get("/uploads/:filename", (req, res) => {
   const label = (req.params.filename || "U").slice(0, 1).toUpperCase();
@@ -611,6 +654,9 @@ app.post("/api/signup", async (req, res) => {
     hiddenUserIds: [],
     blockedUserIds: [],
     deletedUserIds: [],
+    pinnedConversationIds: [],
+    archivedConversationIds: [],
+    starredMessageIds: [],
     reactionEmojis: [],
     statusText: "",
     statusUpdatedAt: null,
@@ -770,12 +816,15 @@ app.get("/api/users/search", authUser, requirePrivacyUnlocked, (req, res) => {
 });
 
 app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
+  ensureUserCollections(req.user);
+  const includeArchived = req.query.archived === "1" || req.query.archived === "true";
   const conversations = db.conversations
     .filter((item) => item.participants.includes(req.user.id))
     .filter((conversation) => !isHiddenConversation(conversation, req.user))
     .filter((conversation) => !isDeletedConversation(conversation, req.user))
     .map((conversation) => hydrateConversation(conversation, req.user))
-    .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
+    .filter((conversation) => includeArchived ? conversation.archived : !conversation.archived)
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
   res.json({ conversations });
 });
 
@@ -810,6 +859,67 @@ app.get("/api/conversations/:id/messages", authUser, requirePrivacyUnlocked, (re
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
   const messages = visibleMessages(conversation.id, req.user.id);
   markMessagesRead(conversation.id, req.user.id);
+  res.json({ messages });
+});
+
+app.patch("/api/conversations/:id/preferences", authUser, requirePrivacyUnlocked, (req, res) => {
+  ensureUserCollections(req.user);
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  if (typeof req.body.pinned === "boolean") {
+    req.user.pinnedConversationIds = req.body.pinned
+      ? [...new Set([...(req.user.pinnedConversationIds || []), conversation.id])]
+      : (req.user.pinnedConversationIds || []).filter((id) => id !== conversation.id);
+  }
+  if (typeof req.body.archived === "boolean") {
+    req.user.archivedConversationIds = req.body.archived
+      ? [...new Set([...(req.user.archivedConversationIds || []), conversation.id])]
+      : (req.user.archivedConversationIds || []).filter((id) => id !== conversation.id);
+  }
+  saveDb();
+  res.json({ conversation: hydrateConversation(conversation, req.user) });
+});
+
+app.patch("/api/messages/:id", authUser, requirePrivacyUnlocked, (req, res) => {
+  const message = db.messages.find((item) => item.id === req.params.id);
+  const conversation = db.conversations.find((item) => item.id === message?.conversationId && item.participants.includes(req.user.id));
+  if (!message || !conversation) return res.status(404).json({ error: "Message not found." });
+  if (message.senderId !== req.user.id) return res.status(403).json({ error: "Only the sender can edit this message." });
+  if (message.media) return res.status(400).json({ error: "Media messages cannot be edited." });
+  if (Date.now() - new Date(message.createdAt).getTime() > EDIT_MESSAGE_WINDOW_MS) {
+    return res.status(403).json({ error: "Message edit is available for 15 minutes only." });
+  }
+  const text = String(req.body.text || "").trim().slice(0, 4000);
+  if (!text) return res.status(400).json({ error: "Message text is required." });
+  message.text = text;
+  message.editedAt = new Date().toISOString();
+  saveDb();
+  io.to([conversation.id, ...conversation.participants]).emit("message:edited", { message });
+  io.to("admins").emit("admin:message", message);
+  res.json({ message });
+});
+
+app.post("/api/messages/:id/star", authUser, requirePrivacyUnlocked, (req, res) => {
+  ensureUserCollections(req.user);
+  const message = db.messages.find((item) => item.id === req.params.id);
+  const conversation = db.conversations.find((item) => item.id === message?.conversationId && item.participants.includes(req.user.id));
+  if (!message || !conversation) return res.status(404).json({ error: "Message not found." });
+  const starred = req.body.starred !== false;
+  req.user.starredMessageIds = starred
+    ? [...new Set([...(req.user.starredMessageIds || []), message.id])]
+    : (req.user.starredMessageIds || []).filter((id) => id !== message.id);
+  saveDb();
+  res.json({ ok: true, starred });
+});
+
+app.get("/api/messages/starred", authUser, requirePrivacyUnlocked, (req, res) => {
+  ensureUserCollections(req.user);
+  const ids = new Set(req.user.starredMessageIds || []);
+  const messages = db.messages
+    .filter((message) => ids.has(message.id))
+    .filter((message) => db.conversations.some((conversation) => conversation.id === message.conversationId && conversation.participants.includes(req.user.id)))
+    .filter((message) => !(message.deletedFor || []).includes(req.user.id))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json({ messages });
 });
 
@@ -957,6 +1067,118 @@ app.post("/api/upload", authUser, requirePrivacyUnlocked, handleMulterUpload(upl
   });
 });
 
+app.get("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
+  const cutoff = Date.now() - STATUS_EXPIRE_MS;
+  db.statuses = (db.statuses || []).filter((status) => new Date(status.createdAt).getTime() >= cutoff);
+  const visibleUserIds = new Set([req.user.id]);
+  for (const conversation of db.conversations.filter((item) => item.participants.includes(req.user.id))) {
+    conversation.participants.forEach((id) => visibleUserIds.add(id));
+  }
+  const statuses = db.statuses
+    .filter((status) => visibleUserIds.has(status.userId))
+    .map((status) => ({
+      ...status,
+      user: publicUser(db.users.find((user) => user.id === status.userId)),
+      viewedByMe: (status.viewedBy || []).some((view) => view.userId === req.user.id),
+      viewerCount: (status.viewedBy || []).length
+    }))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  saveDb();
+  res.json({ statuses });
+});
+
+app.post("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
+  const text = String(req.body.text || "").trim().slice(0, 500);
+  const media = req.body.media || null;
+  if (!text && !media) return res.status(400).json({ error: "Status text or image is required." });
+  if (media && media.kind !== "image") return res.status(400).json({ error: "Only image status is supported." });
+  const status = {
+    id: crypto.randomUUID(),
+    userId: req.user.id,
+    text,
+    media,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + STATUS_EXPIRE_MS).toISOString(),
+    viewedBy: [{ userId: req.user.id, at: new Date().toISOString() }]
+  };
+  db.statuses ||= [];
+  db.statuses.push(status);
+  saveDb();
+  io.emit("status:new", { status: { ...status, user: publicUser(req.user), viewerCount: 1, viewedByMe: true } });
+  res.json({ status });
+});
+
+app.post("/api/statuses/:id/view", authUser, requirePrivacyUnlocked, (req, res) => {
+  const status = (db.statuses || []).find((item) => item.id === req.params.id);
+  if (!status) return res.status(404).json({ error: "Status not found." });
+  status.viewedBy ||= [];
+  if (!status.viewedBy.some((view) => view.userId === req.user.id)) {
+    status.viewedBy.push({ userId: req.user.id, at: new Date().toISOString() });
+    saveDb();
+  }
+  res.json({ ok: true, viewerCount: status.viewedBy.length });
+});
+
+app.patch("/api/groups/:id", authUser, requirePrivacyUnlocked, (req, res) => {
+  const group = ensureGroupCollections(db.groups.find((item) => item.id === req.params.id));
+  const conversation = db.conversations.find((item) => item.groupId === group?.id && item.participants.includes(req.user.id));
+  if (!group || !conversation) return res.status(404).json({ error: "Group not found." });
+  if (!groupCanManage(group, req.user.id)) return res.status(403).json({ error: "Only group admin can edit group details." });
+  if (req.body.name !== undefined) group.name = String(req.body.name || group.name).trim().slice(0, 80) || group.name;
+  if (req.body.description !== undefined) group.description = String(req.body.description || "").trim().slice(0, 280);
+  if (req.body.imageUrl !== undefined) group.imageUrl = String(req.body.imageUrl || "").trim();
+  group.updatedAt = new Date().toISOString();
+  saveDb();
+  io.to(conversation.id).emit("group:updated", { group });
+  res.json({ group, conversation: hydrateConversation(conversation, req.user) });
+});
+
+app.post("/api/groups/:id/members", authUser, requirePrivacyUnlocked, (req, res) => {
+  const group = ensureGroupCollections(db.groups.find((item) => item.id === req.params.id));
+  const conversation = db.conversations.find((item) => item.groupId === group?.id && item.participants.includes(req.user.id));
+  if (!group || !conversation) return res.status(404).json({ error: "Group not found." });
+  if (!groupCanManage(group, req.user.id)) return res.status(403).json({ error: "Only group admin can add members." });
+  const memberIds = (Array.isArray(req.body.memberIds) ? req.body.memberIds : [req.body.memberId]).filter((id) => db.users.some((user) => user.id === id && !user.deleted));
+  group.memberIds = [...new Set([...(group.memberIds || []), ...memberIds])];
+  conversation.participants = [...new Set([...(conversation.participants || []), ...memberIds])].sort();
+  saveDb();
+  for (const id of memberIds) {
+    io.in(id).socketsJoin(conversation.id);
+    io.to(id).emit("group:updated", { group });
+  }
+  io.to(conversation.id).emit("group:updated", { group });
+  res.json({ group, conversation: hydrateConversation(conversation, req.user) });
+});
+
+app.delete("/api/groups/:id/members/:memberId", authUser, requirePrivacyUnlocked, (req, res) => {
+  const group = ensureGroupCollections(db.groups.find((item) => item.id === req.params.id));
+  const conversation = db.conversations.find((item) => item.groupId === group?.id && item.participants.includes(req.user.id));
+  if (!group || !conversation) return res.status(404).json({ error: "Group not found." });
+  if (!groupCanManage(group, req.user.id)) return res.status(403).json({ error: "Only group admin can remove members." });
+  if (req.params.memberId === group.ownerId) return res.status(400).json({ error: "Group owner cannot be removed." });
+  group.memberIds = (group.memberIds || []).filter((id) => id !== req.params.memberId);
+  group.adminIds = (group.adminIds || []).filter((id) => id !== req.params.memberId);
+  conversation.participants = (conversation.participants || []).filter((id) => id !== req.params.memberId);
+  saveDb();
+  io.in(req.params.memberId).socketsLeave(conversation.id);
+  io.to(conversation.id).emit("group:updated", { group });
+  io.to(req.params.memberId).emit("group:removed", { groupId: group.id, conversationId: conversation.id });
+  res.json({ group, conversation: hydrateConversation(conversation, req.user) });
+});
+
+app.post("/api/groups/:id/leave", authUser, requirePrivacyUnlocked, (req, res) => {
+  const group = ensureGroupCollections(db.groups.find((item) => item.id === req.params.id));
+  const conversation = db.conversations.find((item) => item.groupId === group?.id && item.participants.includes(req.user.id));
+  if (!group || !conversation) return res.status(404).json({ error: "Group not found." });
+  if (group.ownerId === req.user.id && conversation.participants.length > 1) return res.status(400).json({ error: "Transfer ownership before leaving this group." });
+  group.memberIds = (group.memberIds || []).filter((id) => id !== req.user.id);
+  group.adminIds = (group.adminIds || []).filter((id) => id !== req.user.id);
+  conversation.participants = (conversation.participants || []).filter((id) => id !== req.user.id);
+  saveDb();
+  io.to(conversation.id).emit("group:updated", { group });
+  res.json({ ok: true });
+});
+
 app.post("/api/call-recordings", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("file")), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Recording file is required." });
   const conversation = db.conversations.find((item) => item.id === req.body.conversationId && item.participants.includes(req.user.id));
@@ -1023,6 +1245,30 @@ app.post("/api/admin/login", async (req, res) => {
 
 app.get("/api/admin/overview", authAdmin, (_req, res) => {
   const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
+  const uploadsUsage = fs.readdirSync(activeUploadDir, { withFileTypes: true })
+    .filter((item) => item.isFile())
+    .reduce((total, item) => {
+      try {
+        return total + fs.statSync(path.join(activeUploadDir, item.name)).size;
+      } catch {
+        return total;
+      }
+    }, 0);
+  const messageCountByUser = db.messages.reduce((items, message) => {
+    items.set(message.senderId, (items.get(message.senderId) || 0) + 1);
+    return items;
+  }, new Map());
+  const recentActivity = db.messages
+    .slice()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 10)
+    .map((message) => ({
+      id: message.id,
+      text: message.text || message.media?.originalName || message.media?.kind || "Message",
+      createdAt: message.createdAt,
+      sender: publicUser(db.users.find((user) => user.id === message.senderId)),
+      conversationId: message.conversationId
+    }));
   res.json({
     settings: {
       secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled),
@@ -1032,6 +1278,19 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
         message: updateNotify.message || defaultDb.admin.updateNotify.message,
         updatedAt: updateNotify.updatedAt || null
       }
+    },
+    stats: {
+      totalUsers: db.users.length,
+      activeUsers: db.users.filter((user) => !user.deleted && !user.blocked && !user.suspended).length,
+      onlineUsers: onlineUsers.size,
+      totalConversations: db.conversations.length,
+      totalMessages: db.messages.length,
+      uploadsUsage,
+      topActiveUsers: db.users
+        .map((user) => ({ user: adminUser(user), messageCount: messageCountByUser.get(user.id) || 0 }))
+        .sort((a, b) => b.messageCount - a.messageCount)
+        .slice(0, 5),
+      recentActivity
     },
     users: db.users.map(adminUser),
     conversations: db.conversations.map((conversation) => ({
@@ -1183,7 +1442,8 @@ app.post("/api/admin/groups", authAdmin, (req, res) => {
   const { name, memberIds = [] } = req.body;
   if (!name) return res.status(400).json({ error: "Group name is required." });
   const validMembers = memberIds.filter((id) => db.users.some((user) => user.id === id && !user.deleted));
-  const group = { id: crypto.randomUUID(), name, memberIds: validMembers, createdAt: new Date().toISOString() };
+  const ownerId = validMembers[0] || null;
+  const group = { id: crypto.randomUUID(), name, memberIds: validMembers, ownerId, adminIds: ownerId ? [ownerId] : [], description: "", imageUrl: "", createdAt: new Date().toISOString() };
   db.groups.push(group);
   const conversation = makeConversation(validMembers, group.id);
   saveDb();
@@ -1196,13 +1456,47 @@ app.get("/api/admin/export", authAdmin, (_req, res) => {
   res.send(buildExportHtml());
 });
 
+app.get("/api/admin/backup", authAdmin, (_req, res) => {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="metagram-backup-${Date.now()}.json"`);
+  res.json(db);
+});
+
+function validateRestoreState(candidate) {
+  if (!candidate || typeof candidate !== "object") return "Backup must be a JSON object.";
+  for (const key of ["users", "messages", "conversations", "groups"]) {
+    if (!Array.isArray(candidate[key])) return `Backup is missing ${key} array.`;
+  }
+  if (candidate.admin && typeof candidate.admin !== "object") return "Admin data is invalid.";
+  return null;
+}
+
+app.post("/api/admin/restore", authAdmin, (req, res) => {
+  const error = validateRestoreState(req.body);
+  if (error) return res.status(400).json({ error });
+  db = normalizeDb(req.body);
+  saveDb();
+  io.emit("app:restore", { restoredAt: new Date().toISOString() });
+  io.to("admins").emit("admin:restore");
+  res.json({ ok: true });
+});
+
 function markMessagesRead(conversationId, readerId) {
   let changed = false;
   for (const message of db.messages) {
+    message.readBy ||= [];
+    message.readDetails ||= [];
     if (message.conversationId === conversationId && message.senderId !== readerId && !message.readBy.includes(readerId)) {
       message.readBy.push(readerId);
+      message.readDetails.push({ userId: readerId, at: new Date().toISOString() });
       changed = true;
-      io.to(message.senderId).emit("message:status", { messageId: message.id, readBy: message.readBy });
+      io.to(message.senderId).emit("message:status", {
+        messageId: message.id,
+        readBy: message.readBy,
+        readDetails: message.readDetails,
+        deliveredTo: message.deliveredTo || [],
+        deliveredDetails: message.deliveredDetails || []
+      });
     }
   }
   if (changed) saveDb();
@@ -1267,6 +1561,7 @@ io.on("connection", (socket) => {
       : null;
     const now = new Date().toISOString();
     const deliveredTo = conversation.participants.filter((id) => id !== socket.user.id && onlineUsers.has(id));
+    const deliveredDetails = deliveredTo.map((userId) => ({ userId, at: now }));
     const message = {
       id: crypto.randomUUID(),
       conversationId,
@@ -1275,7 +1570,9 @@ io.on("connection", (socket) => {
       media,
       createdAt: now,
       deliveredTo,
+      deliveredDetails,
       readBy: [socket.user.id],
+      readDetails: [{ userId: socket.user.id, at: now }],
       replyTo: messageReplySnapshot(repliedMessage),
       reactions: {},
       deletedFor: [],

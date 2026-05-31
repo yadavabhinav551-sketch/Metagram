@@ -12,11 +12,11 @@
     <link rel="manifest" href="/admin-manifest.json">
     <link rel="icon" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
-    <link rel="preload" href="/styles.css?v=update-notify-31" as="style">
-    <link rel="stylesheet" href="/styles.css?v=update-notify-31">
-    <link rel="stylesheet" href="/admin.css?v=update-notify-31">
+    <link rel="preload" href="/styles.css?v=pro-features-42" as="style">
+    <link rel="stylesheet" href="/styles.css?v=pro-features-42">
+    <link rel="stylesheet" href="/admin.css?v=pro-features-42">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/admin.js?v=update-notify-31" defer></script>
+    <script src="/admin.js?v=pro-features-42" defer></script>
   </head>
   <body class="admin-page">
     <main class="admin-shell">
@@ -45,12 +45,14 @@
           <div class="admin-header-actions">
             <button class="export-link install-control" type="button">Install App</button>
             <a class="export-link" href="/api/admin/export" id="exportLink">Export data</a>
+            <a class="export-link" href="/api/admin/backup" id="backupLink">JSON backup</a>
             <button class="export-link danger" id="adminLogoutBtn" type="button">Logout</button>
           </div>
         </header>
         <section class="admin-grid">
           <aside class="admin-panel users-panel">
             <h2>Users</h2>
+            <div id="adminStats" class="admin-stats"></div>
             <div id="adminUsers"></div>
           </aside>
           <section class="admin-panel transcript">
@@ -89,6 +91,11 @@
               <small id="updateNotifyStatus" class="settings-note"></small>
             </div>
             <p id="settingsMessage" class="settings-message"></p>
+            <div class="restore-box">
+              <h2>Restore</h2>
+              <input id="restoreInput" type="file" accept="application/json,.json">
+              <button id="restoreBtn" class="danger-action" type="button">Restore backup</button>
+            </div>
             <form id="credentialsForm" class="stack">
               <input name="loginId" placeholder="New Admin Login ID" required>
               <input name="password" placeholder="New Admin Password" type="password" required>
