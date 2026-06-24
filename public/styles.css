@@ -19,6 +19,12 @@
   box-sizing: border-box;
 }
 
+/* Ensure the root fills the viewport and uses dynamic viewport units */
+html, body {
+  height: 100dvh;
+  min-height: 100dvh;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -1404,15 +1410,16 @@ audio,
   position: fixed;
   inset: 0;
   z-index: 50;
-  width: 100%;
+  width: 100vw;
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 0 12px;
+  align-items: stretch;
+  justify-content: stretch;
+  /* respect safe-area insets (notch/home indicator) while remaining edge-to-edge */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   background: #000000;
-  overflow-x: hidden;
+  overflow: hidden;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
@@ -1422,17 +1429,21 @@ audio,
 }
 
 .calculator-shell {
-  width: 100%;
-  max-width: 420px;
-  max-height: calc(100dvh - 36px);
+  /* make the shell fill the viewport so the calculator is truly edge-to-edge */
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: 100dvh;
   display: flex;
   flex-direction: column;
   gap: 20px;
   border-radius: 0;
-  padding: 22px 18px 18px;
-  margin: 0 auto;
+  /* preserve visual internal spacing while accounting for safe-area insets */
+  padding: calc(22px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));
+  margin: 0; /* remove centering wrapper */
   background: #000000;
   box-shadow: none;
+  align-self: stretch;
 }
 
 .calculator-toolbar {
