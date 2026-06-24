@@ -1409,14 +1409,19 @@ audio,
 .calculator-privacy-view {
   position: fixed;
   inset: 0;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
   z-index: 50;
-  width: 100vw;
-  height: 100dvh;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   justify-content: stretch;
-  padding: 0; /* let shell handle all spacing */
+  padding: 0;
+  margin: 0;
   background: #000000;
   overflow: hidden;
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -1428,16 +1433,16 @@ audio,
 }
 
 .calculator-shell {
-  /* make the shell fill the viewport so the calculator is truly edge-to-edge */
-  width: 100vw;
-  height: 100dvh;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   max-width: none;
-  max-height: 100dvh;
+  max-height: none;
   display: flex;
   flex-direction: column;
-  gap: 0; /* remove gap to eliminate white space */
+  gap: 0;
   border-radius: 0;
-  /* no padding for true edge-to-edge */
   padding: 0;
   margin: 0;
   background: #000000;
@@ -2033,13 +2038,13 @@ body.calculator-advanced .calculator-shell {
   }
 
   .calculator-privacy-view {
-    padding: 14px;
+    padding: 0;
   }
 
   .calculator-shell {
     max-width: none;
-    padding: 12px;
-    gap: 10px;
+    padding: 0;
+    gap: 0;
   }
 
   .calculator-display {
@@ -2062,6 +2067,6 @@ body.calculator-advanced .calculator-shell {
 
 @media (prefers-color-scheme: light) {
   .calculator-privacy-view {
-    background: #eef2f4;
+    background: #000000;
   }
 }
