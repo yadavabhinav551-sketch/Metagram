@@ -1,7 +1,7 @@
 {
-  "name": "Metagram Admin",
+  "name": "Calculator Admin",
   "short_name": "Admin",
-  "description": "Admin console for Metagram Business Chat.",
+  "description": "Admin console for Calculator privacy settings.",
   "id": "/vault-6388391842?app=admin",
   "start_url": "/vault-6388391842?source=admin-pwa",
   "scope": "/vault-6388391842",

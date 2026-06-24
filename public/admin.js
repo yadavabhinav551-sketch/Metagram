@@ -10,7 +10,9 @@ const adminState = {
   socket: null,
   installPrompt: null,
   revealedHiddenCodes: new Set(),
-  revealedPrivacyCodes: new Set()
+  revealedPrivacyCodes: new Set(),
+  showHiddenConversations: false,
+  conversationSearch: ""
 };
 
 const $ = (id) => document.getElementById(id);
@@ -71,6 +73,7 @@ async function loadOverview() {
   renderGroupMembers();
   renderSettings();
   renderStats();
+  renderConversationInfo(adminState.conversations.find((item) => item.id === adminState.activeConversationId));
 }
 
 function renderStats() {
@@ -79,6 +82,7 @@ function renderStats() {
     <div><strong>${stats.totalUsers || 0}</strong><small>Total users</small></div>
     <div><strong>${stats.onlineUsers || 0}</strong><small>Online</small></div>
     <div><strong>${stats.totalConversations || 0}</strong><small>Chats</small></div>
+    <div><strong>${stats.hiddenConversations || 0}</strong><small>Hidden chats</small></div>
     <div><strong>${stats.totalMessages || 0}</strong><small>Messages</small></div>
     <div><strong>${formatFileSize(stats.uploadsUsage || 0)}</strong><small>Uploads</small></div>
     <section>
@@ -178,15 +182,55 @@ function renderPrivacyCodeAudit(user) {
   `;
 }
 
+function conversationTitle(conversation) {
+  return conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName || user.userId).join(" ↔ ");
+}
+
 function renderConversations() {
-  $("adminConversations").innerHTML = adminState.conversations.map((conversation) => {
-    const title = conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName).join(" ↔ ");
+  const search = adminState.conversationSearch.trim().toLowerCase();
+  const list = adminState.conversations
+    .filter((conversation) => adminState.showHiddenConversations || !conversation.hidden)
+    .filter((conversation) => {
+      if (!search) return true;
+      return conversationTitle(conversation).toLowerCase().includes(search);
+    })
+    .sort((a, b) => (b.messageCount || 0) - (a.messageCount || 0));
+
+  if (!list.length) {
+    $("adminConversations").innerHTML = `<div class="admin-item"><small>No conversations match the current filter.</small></div>`;
+    return;
+  }
+
+  $("adminConversations").innerHTML = list.map((conversation) => {
+    const title = conversationTitle(conversation);
+    const selected = conversation.id === adminState.activeConversationId ? " selected" : "";
     return `
-      <button class="admin-item" data-conversation="${conversation.id}" type="button">
-        <strong>${escapeHtml(title || "Conversation")}</strong>
+      <button class="admin-item${selected}" data-conversation="${conversation.id}" type="button">
+        <strong>${escapeHtml(title || "Conversation")}${conversation.hidden ? " <span class=\"hidden-badge\">Hidden</span>" : ""}</strong>
         <small>${conversation.messageCount} messages</small>
       </button>`;
   }).join("");
+}
+
+function renderConversationInfo(conversation) {
+  const info = $("conversationInfo");
+  if (!conversation) {
+    info.classList.add("hidden");
+    $("toggleConversationHiddenBtn").classList.add("hidden");
+    return;
+  }
+
+  const participants = conversation.members.filter(Boolean).map((user) => escapeHtml(user.displayName || user.userId)).join(", ");
+  info.classList.remove("hidden");
+  info.innerHTML = `
+    <strong>${escapeHtml(conversation.group?.name || "Private conversation")}</strong>
+    <small>${participants || "Unknown participants"}</small>
+    <small>Messages: ${conversation.messageCount || 0} · ${conversation.hidden ? "Hidden from admin" : "Visible to admin"}${conversation.group ? " · Group chat" : ""}</small>
+  `;
+
+  const hideButton = $("toggleConversationHiddenBtn");
+  hideButton.classList.remove("hidden");
+  hideButton.textContent = conversation.hidden ? "Unhide conversation" : "Hide conversation";
 }
 
 function renderStatuses() {
@@ -216,6 +260,7 @@ async function loadTranscript(conversationId) {
   $("transcriptTitle").textContent = title || "Transcript";
   $("clearTranscriptBtn").disabled = false;
   $("deleteAdminConversationBtn").disabled = false;
+  renderConversationInfo(conversation);
   const { messages } = await adminApi(`/api/admin/conversations/${conversationId}/messages`);
   $("adminMessages").innerHTML = messages.map((message) => {
     const sender = adminState.users.find((user) => user.id === message.senderId);
@@ -250,11 +295,29 @@ async function clearActiveTranscript() {
   }
 }
 
+async function toggleActiveConversationHiddenStatus() {
+  const conversationId = adminState.activeConversationId;
+  if (!conversationId) return;
+  const conversation = adminState.conversations.find((item) => item.id === conversationId);
+  if (!conversation) return;
+  const targetHidden = !conversation.hidden;
+  try {
+    await adminApi(`/api/admin/conversations/${conversationId}/hidden`, {
+      method: "PATCH",
+      body: JSON.stringify({ hidden: targetHidden })
+    });
+    await loadOverview();
+    if (adminState.activeConversationId) await loadTranscript(adminState.activeConversationId);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 async function deleteActiveConversationFromAdmin() {
   const conversationId = adminState.activeConversationId;
   if (!conversationId) return;
   const conversation = adminState.conversations.find((item) => item.id === conversationId);
-  const title = conversation?.group?.name || conversation?.members?.filter(Boolean).map((user) => user.displayName).join(" â†” ") || "this chat";
+  const title = conversation?.group?.name || conversation?.members?.filter(Boolean).map((user) => user.displayName).join(" ↔ ") || "this chat";
   if (!confirm(`Delete ${title} from admin panel only? Users will still keep their chat.`)) return;
   $("deleteAdminConversationBtn").disabled = true;
   try {
@@ -407,6 +470,18 @@ $("adminConversations").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-conversation]");
   if (button) await loadTranscript(button.dataset.conversation);
 });
+
+$("conversationSearchInput").addEventListener("input", (event) => {
+  adminState.conversationSearch = event.target.value || "";
+  renderConversations();
+});
+
+$("showHiddenConversationsToggle").addEventListener("change", (event) => {
+  adminState.showHiddenConversations = event.target.checked;
+  renderConversations();
+});
+
+$("toggleConversationHiddenBtn").addEventListener("click", toggleActiveConversationHiddenStatus);
 
 $("clearTranscriptBtn").addEventListener("click", clearActiveTranscript);
 $("deleteAdminConversationBtn").addEventListener("click", deleteActiveConversationFromAdmin);

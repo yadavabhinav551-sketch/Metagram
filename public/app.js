@@ -27,10 +27,13 @@ const state = {
   shareRecipients: new Map(),
   hiddenConversations: [],
   unlockedHiddenCode: "",
+  lockedConversations: [],
+  lockedChatCode: "",
   calculatorExpression: "",
   calculatorJustEvaluated: false,
   privacyAutoLockTimer: null,
   privacyAwayStartedAt: Number(localStorage.getItem("privacyAwayStartedAt") || 0),
+  calculatorAdvancedMode: false,
   offlineOutbox: (() => {
     try {
       return JSON.parse(localStorage.getItem("offlineOutbox") || "[]");
@@ -65,7 +68,7 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
-const APP_VERSION_STORAGE_KEY = "metagramInstalledVersion";
+const APP_VERSION_STORAGE_KEY = "calculatorInstalledVersion";
 const EMOJI_OPTIONS = [
   "\u{1F600}", "\u{1F602}", "\u{1F60A}", "\u{1F60D}", "\u{1F618}", "\u{1F60E}",
   "\u{1F973}", "\u{1F622}", "\u{1F621}", "\u{1F64F}", "\u{1F44D}", "\u{1F44E}",
@@ -277,9 +280,7 @@ function connectSocket() {
   });
   state.socket.on("message:new", (message) => {
     if (message.conversationId === state.activeConversation?.id) {
-      state.messages.push(message);
-      renderMessages();
-      loadMessages(state.activeConversation.id);
+      loadMessages(state.activeConversation.id, true);
     }
     loadConversations();
     notifyNewMessage(message);
@@ -395,6 +396,14 @@ async function bootstrap() {
   const canContinue = await checkRequiredUpdate();
   if (!canContinue) return;
   if (!state.token) {
+    const cachedUser = loadCachedUser();
+    // Only force calculator lock for users who have enabled privacy mode.
+    if (cachedUser && cachedUser.privacyMode?.enabled && cachedUser.privacyMode.hasCode) {
+      state.user = cachedUser;
+      state.conversations = loadCachedConversations();
+      showCalculatorPrivacy();
+      return;
+    }
     showPendingShareLoginHint();
     setAppReady();
     return;
@@ -626,8 +635,8 @@ function showCalculatorPrivacy() {
   state.socket?.disconnect();
   state.calculatorExpression = "";
   state.calculatorJustEvaluated = false;
-  $("calculatorHistory").textContent = "";
-  $("calculatorDisplay").textContent = "0";
+  updateCalculatorHistory("");
+  updateCalculatorDisplay("0");
   $("profileModal").classList.add("hidden");
   $("shareModal").classList.add("hidden");
   $("callModal").classList.add("hidden");
@@ -642,9 +651,9 @@ async function openUnlockedChat() {
   $("calculatorPrivacyView").classList.add("unlocking");
   await new Promise((resolve) => setTimeout(resolve, 160));
   showChat();
-  connectSocket();
-  await loadConversations();
-  await loadPendingShare();
+  if (navigator.onLine) connectSocket();
+  await loadConversations().catch(() => {});
+  await loadPendingShare().catch(() => {});
 }
 
 function lockToCalculator() {
@@ -698,14 +707,25 @@ function handlePrivacyVisibilityChange() {
   else handlePrivacyReturn();
 }
 
+function updateCalculatorDisplay(value = state.calculatorExpression || "0") {
+  $("calculatorDisplay").textContent = value;
+}
+
+function updateCalculatorHistory(text = "") {
+  $("calculatorHistory").textContent = text;
+}
+
 function formatCalculatorValue(value) {
   if (!Number.isFinite(value)) return "Error";
-  return String(Number(value.toPrecision(12))).slice(0, 16);
+  const normalized = Number(value.toPrecision(12));
+  return normalized === 0 ? "0" : String(normalized).slice(0, 16);
 }
 
 function evaluateCalculator(expression) {
-  if (!/^[\d+\-*/. ]+$/.test(expression)) return "Error";
-  const rawTokens = expression.match(/\d*\.?\d+|[+\-*/]/g);
+  const trimmed = String(expression || "").trim().replace(/\s+/g, "");
+  if (!trimmed) return "0";
+  if (!/^[\d+\-*/.]+$/.test(trimmed)) return "Error";
+  const rawTokens = trimmed.match(/\d*\.?\d+|[+\-*/]/g);
   if (!rawTokens?.length) return "0";
   try {
     const tokens = [];
@@ -734,21 +754,25 @@ function evaluateCalculator(expression) {
       if (operator === "/") values.push(left / right);
     };
 
-    tokens.forEach((token) => {
+    for (const token of tokens) {
       if (/^-?\d*\.?\d+$/.test(token)) {
         values.push(Number(token));
-        return;
+        continue;
       }
       while (operators.length && precedence[operators.at(-1)] >= precedence[token]) applyOperator();
       operators.push(token);
-    });
+    }
     while (operators.length) applyOperator();
     if (values.length !== 1) throw new Error("Invalid expression");
-    const value = values[0];
-    return formatCalculatorValue(value);
+    return formatCalculatorValue(values[0]);
   } catch {
     return "Error";
   }
+}
+
+function updateCalculatorOutput(displayValue, historyValue = "") {
+  updateCalculatorDisplay(displayValue);
+  updateCalculatorHistory(historyValue);
 }
 
 async function tryPrivacyUnlock(code) {
@@ -772,7 +796,8 @@ async function tryPrivacyUnlock(code) {
 }
 
 function appendCalculatorValue(value) {
-  if (state.calculatorJustEvaluated && /\d|\./.test(value)) {
+  if (!/^[\d.+\-*/]$/.test(value)) return;
+  if (state.calculatorJustEvaluated && /[\d.]/.test(value)) {
     state.calculatorExpression = "";
   }
   state.calculatorJustEvaluated = false;
@@ -785,7 +810,7 @@ function appendCalculatorValue(value) {
     if (part.includes(".")) return;
   }
   state.calculatorExpression = (state.calculatorExpression + value).slice(0, 32);
-  $("calculatorDisplay").textContent = state.calculatorExpression || "0";
+  requestAnimationFrame(() => updateCalculatorDisplay());
 }
 
 async function handleCalculatorEquals() {
@@ -793,23 +818,101 @@ async function handleCalculatorEquals() {
   const unlockMatch = expression.match(/^(\d{6})$/);
   if (unlockMatch && await tryPrivacyUnlock(unlockMatch[1])) return;
   const result = evaluateCalculator(expression || "0");
-  $("calculatorHistory").textContent = expression ? `${expression} =` : "";
-  $("calculatorDisplay").textContent = result;
+  updateCalculatorOutput(result, expression ? `${expression} =` : "");
   state.calculatorExpression = result === "Error" ? "" : result;
   state.calculatorJustEvaluated = true;
 }
 
+async function promptForLockPin(action) {
+  if (!state.user) return null;
+  if (!state.user.hasLockedChatPin) {
+    const newPin = prompt("Set a lock PIN for locked chats (at least 4 characters):");
+    if (!newPin?.trim() || newPin.trim().length < 4) {
+      alert("Lock PIN must be at least 4 characters.");
+      return null;
+    }
+    try {
+      await api("/api/lock-pin", {
+        method: "POST",
+        body: JSON.stringify({ currentPin: "", newPin: newPin.trim() })
+      });
+      state.user.hasLockedChatPin = true;
+      cacheCurrentUser();
+      return newPin.trim();
+    } catch (error) {
+      alert(error.message);
+      return null;
+    }
+  }
+  const promptText = action === "view"
+    ? "Enter your lock PIN to view locked chats:"
+    : `Enter your lock PIN to ${action} this chat:`;
+  const code = prompt(promptText);
+  if (!code?.trim() || code.trim().length < 4) {
+    alert("Lock PIN must be at least 4 characters.");
+    return null;
+  }
+  return code.trim();
+}
+
+async function loadLockedConversations() {
+  let code = state.lockedChatCode;
+  if (!code) {
+    code = await promptForLockPin("view");
+    if (!code) {
+      state.conversationView = "active";
+      await loadConversations();
+      return;
+    }
+  }
+  try {
+    const { conversations } = await api(`/api/conversations/locked?code=${encodeURIComponent(code)}`);
+    state.conversations = conversations;
+    state.lockedChatCode = code;
+    renderConversations();
+  } catch (error) {
+    if (error.status === 403) alert("Invalid lock PIN.");
+    else throw error;
+    state.conversationView = "active";
+    await loadConversations();
+  }
+}
+
 async function loadConversations() {
   try {
+    if (state.conversationView === "locked") {
+      await loadLockedConversations();
+      return;
+    }
     const archived = state.conversationView === "archived" ? "?archived=1" : "";
     const { conversations } = await api(`/api/conversations${archived}`);
     state.conversations = conversations;
     cacheConversations();
+    renderConversations();
   } catch (error) {
     if (!error.offline && error.status !== 503) throw error;
     state.conversations = loadCachedConversations();
+    renderConversations();
   }
-  renderConversations();
+}
+
+async function toggleConversationLock() {
+  if (!state.activeConversation) return;
+  const action = state.activeConversation.locked ? "unlock" : "lock";
+  const code = await promptForLockPin(action);
+  if (!code) return;
+  const url = `/api/conversations/${encodeURIComponent(state.activeConversation.id)}/${action}`;
+  const result = await api(url, { method: "POST", body: JSON.stringify({ code }) });
+  state.activeConversation = result.conversation;
+  if (state.conversationView === "locked") {
+    await loadLockedConversations();
+  } else {
+    await loadConversations();
+  }
+  renderHeader();
+  if (state.activeConversation) {
+    await loadMessages(state.activeConversation.id);
+  }
 }
 
 async function loadStarredMessages() {
@@ -855,7 +958,7 @@ async function loadPendingShare() {
   }
 }
 
-async function loadMessages(conversationId) {
+async function loadMessages(conversationId, preserveScroll = false) {
   try {
     const { messages } = await api(`/api/conversations/${conversationId}/messages`);
     state.messages = messages;
@@ -864,7 +967,7 @@ async function loadMessages(conversationId) {
     if (!error.offline && error.status !== 503) throw error;
     state.messages = loadCachedMessages(conversationId);
   }
-  renderMessages();
+  renderMessages({ preserveScroll });
 }
 
 function getOtherMember(conversation) {
@@ -916,6 +1019,7 @@ function formatLastSeen(value) {
 
 function renderConversations() {
   $("activeChatsBtn")?.classList.toggle("active", state.conversationView === "active");
+  $("lockedChatsBtn")?.classList.toggle("active", state.conversationView === "locked");
   $("archivedChatsBtn")?.classList.toggle("active", state.conversationView === "archived");
   $("statusViewBtn")?.classList.toggle("active", state.conversationView === "status");
   $("starredViewBtn")?.classList.toggle("active", state.conversationView === "starred");
@@ -953,18 +1057,18 @@ function renderConversations() {
     const other = getOtherMember(conversation);
     const status = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
     const profileStatus = !conversation.group ? statusLine(other) : "";
-    const last = conversation.lastMessage?.media ? `[${conversation.lastMessage.media.kind}]` : conversation.lastMessage?.text || "No messages yet";
+    const last = conversation.locked ? "Locked chat" : (conversation.lastMessage?.media ? `[${conversation.lastMessage.media.kind}]` : conversation.lastMessage?.text || "No messages yet");
     return `
       <button class="conversation ${state.activeConversation?.id === conversation.id ? "active" : ""}" data-id="${conversation.id}" type="button">
         <span class="avatar">${avatarMarkup(other, title)}</span>
         <span class="conversation-main">
           <strong>${conversation.pinned ? "Pinned " : ""}${escapeHtml(title)}</strong>
-          <small>${escapeHtml(profileStatus || last)}</small>
+          <small>${escapeHtml(conversation.locked ? `${profileStatus ? `${profileStatus} · ` : ""}Locked chat` : profileStatus || last)}</small>
         </span>
         ${conversation.unreadCount ? `<span class="unread-badge">${conversation.unreadCount}</span>` : ""}
         <span class="status-dot ${status === "Online" ? "online" : ""}" title="${status}"></span>
       </button>`;
-  }).join("");
+  }).join("") || `<div class="empty-list">No conversations found.</div>`;
   normalizeUiText();
 }
 
@@ -976,6 +1080,7 @@ function renderHeader() {
   $("pinChatBtn").disabled = !conversation;
   $("archiveChatBtn").disabled = !conversation;
   $("groupInfoBtn").classList.add("hidden");
+  $("lockChatBtn")?.classList.toggle("hidden", !conversation || conversation.groupId);
   closeUserActionMenu();
   $("callBtn").classList.add("hidden");
   $("videoCallBtn").classList.add("hidden");
@@ -1004,6 +1109,8 @@ function renderHeader() {
     $("blockUserBtn").classList.remove("hidden");
     $("deleteUserBtn").classList.remove("hidden");
     $("blockUserBtn").textContent = conversation.blockedByMe ? "Unblock" : "Block";
+    $("lockChatBtn").classList.remove("hidden");
+    $("lockChatBtn").textContent = conversation.locked ? "Unlock" : "Lock";
     syncUserActionMenuLabels();
   }
 }
@@ -1054,6 +1161,10 @@ function renderMessages({ preserveScroll = false } = {}) {
     return;
   }
   $("messages").className = "messages";
+  const messagesEl = $("messages");
+  const previousScrollHeight = messagesEl.scrollHeight;
+  const previousScrollTop = messagesEl.scrollTop;
+  const wasScrolledToBottom = previousScrollHeight - previousScrollTop - messagesEl.clientHeight <= 80;
   updateMessageSearchMatches();
   $("messages").innerHTML = state.messages.map((message) => {
     const own = message.senderId === state.user.id;
@@ -1078,7 +1189,11 @@ function renderMessages({ preserveScroll = false } = {}) {
         ${state.reactionPickerMessageId === message.id ? renderReactionPicker(message) : ""}
       </article>`;
   }).join("");
-  if (!preserveScroll) $("messages").scrollTop = $("messages").scrollHeight;
+  if (!preserveScroll || wasScrolledToBottom) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  } else {
+    messagesEl.scrollTop = Math.max(0, previousScrollTop + messagesEl.scrollHeight - previousScrollHeight);
+  }
   scrollToCurrentSearchHit();
   renderReplyComposer();
   renderEditComposer();
@@ -1613,8 +1728,8 @@ function notifyNewMessage(message) {
     oscillator.stop(context.currentTime + 0.08);
   } catch {}
   if (document.visibilityState === "visible" || !("Notification" in window) || Notification.permission !== "granted") return;
-  const notification = new Notification("New business chat message", {
-    body: message.text || message.media?.originalName || "New media",
+  const notification = new Notification("New Calculator alert", {
+    body: message.text || message.media?.originalName || "New message",
     tag: message.conversationId
   });
   notification.onclick = () => {
@@ -2241,14 +2356,56 @@ $("calculatorPrivacyView").addEventListener("click", (event) => {
   if (action === "clear") {
     state.calculatorExpression = "";
     state.calculatorJustEvaluated = false;
-    $("calculatorHistory").textContent = "";
-    $("calculatorDisplay").textContent = "0";
+    updateCalculatorHistory("");
+    updateCalculatorDisplay("0");
   }
   if (action === "delete") {
     state.calculatorExpression = state.calculatorExpression.slice(0, -1);
-    $("calculatorDisplay").textContent = state.calculatorExpression || "0";
+    updateCalculatorDisplay();
+  }
+  if (action === "toggle-sign") {
+    const value = state.calculatorExpression.trim();
+    if (!value || value === "0") return;
+    if (value.startsWith("-")) {
+      state.calculatorExpression = value.slice(1);
+    } else {
+      state.calculatorExpression = `-${value}`;
+    }
+    updateCalculatorDisplay();
+  }
+  if (action === "percent") {
+    const value = Number(state.calculatorExpression) || 0;
+    state.calculatorExpression = String(value / 100);
+    updateCalculatorDisplay();
   }
   if (action === "equals") handleCalculatorEquals();
+});
+$("calculatorModeToggle").addEventListener("click", () => {
+  state.calculatorAdvancedMode = !state.calculatorAdvancedMode;
+  $("calculatorModeToggle").setAttribute("aria-pressed", String(state.calculatorAdvancedMode));
+  $("calculatorModeToggle").textContent = state.calculatorAdvancedMode ? "Basic" : "Advanced";
+  $("calculatorAdvancedRow").classList.toggle("hidden", !state.calculatorAdvancedMode);
+  document.body.classList.toggle("calculator-advanced", state.calculatorAdvancedMode);
+});
+$("calculatorPrivacyView").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-calc-fn]");
+  if (!button) return;
+  const fn = button.dataset.calcFn;
+  const value = Number(state.calculatorExpression) || 0;
+  let result = value;
+  switch (fn) {
+    case "sin": result = Math.sin(value); break;
+    case "cos": result = Math.cos(value); break;
+    case "tan": result = Math.tan(value); break;
+    case "log": result = value > 0 ? Math.log10(value) : NaN; break;
+    case "sqrt": result = value >= 0 ? Math.sqrt(value) : NaN; break;
+    case "square": result = value * value; break;
+    case "exp": result = Math.exp(value); break;
+    case "pi": result = Math.PI; break;
+    default: return;
+  }
+  state.calculatorExpression = Number.isFinite(result) ? String(Number(result.toPrecision(12))) : "Error";
+  updateCalculatorDisplay();
 });
 $("panicHideBtn").addEventListener("click", lockToCalculator);
 document.addEventListener("visibilitychange", handlePrivacyVisibilityChange);
@@ -2261,17 +2418,26 @@ document.addEventListener("dblclick", () => {
 document.addEventListener("keydown", (event) => {
   if ($("calculatorPrivacyView").classList.contains("hidden")) return;
   if (/^\d$/.test(event.key) || ["+", "-", "*", "/", "."].includes(event.key)) {
+    event.preventDefault();
     appendCalculatorValue(event.key);
+    return;
   }
-  if (event.key === "Enter" || event.key === "=") handleCalculatorEquals();
+  if (event.key === "Enter" || event.key === "=") {
+    event.preventDefault();
+    handleCalculatorEquals();
+    return;
+  }
   if (event.key === "Backspace") {
+    event.preventDefault();
     state.calculatorExpression = state.calculatorExpression.slice(0, -1);
-    $("calculatorDisplay").textContent = state.calculatorExpression || "0";
+    updateCalculatorDisplay();
+    return;
   }
   if (event.key === "Escape") {
+    event.preventDefault();
     state.calculatorExpression = "";
-    $("calculatorHistory").textContent = "";
-    $("calculatorDisplay").textContent = "0";
+    updateCalculatorHistory("");
+    updateCalculatorDisplay();
   }
 });
 $("profileBtn").addEventListener("click", () => {
@@ -2289,6 +2455,13 @@ $("profileBtn").addEventListener("click", () => {
   $("profileModal").classList.remove("hidden");
 });
 $("closeProfileBtn").addEventListener("click", () => $("profileModal").classList.add("hidden"));
+$("lockChatBtn").addEventListener("click", async () => {
+  try {
+    await toggleConversationLock();
+  } catch (error) {
+    alert(error.message);
+  }
+});
 $("messageAutoDeleteToggle").addEventListener("change", () => {
   $("messageAutoDeleteTtl").disabled = !$("messageAutoDeleteToggle").checked;
 });
@@ -2357,6 +2530,10 @@ document.addEventListener("click", (event) => {
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
 $("activeChatsBtn").addEventListener("click", async () => {
   state.conversationView = "active";
+  await loadConversations();
+});
+$("lockedChatsBtn").addEventListener("click", async () => {
+  state.conversationView = "locked";
   await loadConversations();
 });
 $("archivedChatsBtn").addEventListener("click", async () => {

@@ -11,8 +11,8 @@
     <meta name="apple-mobile-web-app-title" content="Calculator">
     <title>Calculator</title>
     <link rel="manifest" href="/manifest.json">
-    <link rel="icon" href="/icons/calculator-192.png">
-    <link rel="apple-touch-icon" href="/icons/calculator-192.png">
+    <link rel="icon" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
     <link rel="preload" href="/styles.css?v=pro-features-47" as="style">
     <link rel="stylesheet" href="/styles.css?v=pro-features-47">
     <script src="/socket.io/socket.io.js" defer></script>
@@ -22,7 +22,7 @@
     <main class="app-shell">
       <section id="updateRequiredView" class="update-required-view hidden" aria-label="App update required">
         <div class="update-required-card">
-          <img src="/icons/calculator-192.png" alt="" class="update-required-icon">
+          <img src="/icons/icon-192.png" alt="" class="update-required-icon">
           <strong>App update required</strong>
           <p id="updateRequiredMessage">Please update the app to continue.</p>
           <button id="updateNowBtn" class="primary" type="button">Update app</button>
@@ -32,24 +32,38 @@
       </section>
 
       <section id="calculatorPrivacyView" class="calculator-privacy-view hidden" aria-label="Calculator">
-        <div class="calculator-shell">
+        <div class="calculator-shell" id="calculatorShell">
+          <div class="calculator-toolbar">
+            <div class="calculator-title">Calculator</div>
+            <button id="calculatorModeToggle" class="calculator-mode-toggle" type="button" aria-pressed="false">Advanced</button>
+          </div>
           <div class="calculator-display">
             <span id="calculatorHistory"></span>
             <strong id="calculatorDisplay">0</strong>
           </div>
+          <div class="calculator-keys calculator-advanced-row hidden" id="calculatorAdvancedRow">
+            <button data-calc-fn="sin" type="button">sin</button>
+            <button data-calc-fn="cos" type="button">cos</button>
+            <button data-calc-fn="tan" type="button">tan</button>
+            <button data-calc-fn="log" type="button">log</button>
+            <button data-calc-fn="sqrt" type="button">√</button>
+            <button data-calc-fn="square" type="button">x²</button>
+            <button data-calc-fn="exp" type="button">exp</button>
+            <button data-calc-fn="pi" type="button">π</button>
+          </div>
           <div class="calculator-keys">
             <button data-calc-action="clear" type="button">AC</button>
-            <button data-calc-action="delete" type="button">DEL</button>
-            <button data-calc-value="/" type="button">/</button>
-            <button data-calc-value="*" type="button">x</button>
+            <button data-calc-action="toggle-sign" type="button">+/-</button>
+            <button data-calc-action="percent" type="button">%</button>
+            <button data-calc-value="/" type="button">÷</button>
             <button data-calc-value="7" type="button">7</button>
             <button data-calc-value="8" type="button">8</button>
             <button data-calc-value="9" type="button">9</button>
-            <button data-calc-value="-" type="button">-</button>
+            <button data-calc-value="*" type="button">×</button>
             <button data-calc-value="4" type="button">4</button>
             <button data-calc-value="5" type="button">5</button>
             <button data-calc-value="6" type="button">6</button>
-            <button data-calc-value="+" type="button">+</button>
+            <button data-calc-value="-" type="button">−</button>
             <button data-calc-value="1" type="button">1</button>
             <button data-calc-value="2" type="button">2</button>
             <button data-calc-value="3" type="button">3</button>
@@ -63,8 +77,8 @@
       <section id="authView" class="auth-view">
         <div class="brand-block">
           <img src="/icon.svg" alt="" class="brand-icon">
-          <h1>Business Chat</h1>
-          <p>Secure internal messaging for teams.</p>
+          <h1>Calculator</h1>
+          <p>Secure privacy lock disguised as a calculator.</p>
         </div>
         <div class="auth-card">
           <div class="segmented">
@@ -94,10 +108,10 @@
             <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
             <button id="topbarMenuBtn" class="icon-button" type="button" title="More options">&#8942;</button>
             <div id="topbarActionMenu" class="topbar-action-menu hidden" role="menu" aria-label="More options">
-              <button id="profileBtn" type="button" role="menuitem"><span>&#9881;</span> Profile</button>
-              <button id="sidebarInstallBtn" type="button" role="menuitem"><span>&#8595;</span> Install app</button>
-              <button id="shareAppBtn" type="button" role="menuitem"><span>&#8593;</span> Share app</button>
-              <button id="logoutBtn" type="button" role="menuitem"><span>&#8856;</span> Logout</button>
+              <button id="profileBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm6.9-2.4l1.48-1.03a.75.75 0 0 0 .2-1.02l-1.4-2.42a.75.75 0 0 0-.92-.34l-1.74.7a7.05 7.05 0 0 0-1.36-.8l-.26-1.86A.75.75 0 0 0 13.2 7h-2.4a.75.75 0 0 0-.74.63l-.26 1.86c-.48.2-.94.45-1.36.8l-1.74-.7a.75.75 0 0 0-.92.34l-1.4 2.42a.75.75 0 0 0 .2 1.02L5.1 13.1a7.07 7.07 0 0 0 0 1.8l-1.48 1.03a.75.75 0 0 0-.2 1.02l1.4 2.42c.2.35.62.5.98.34l1.74-.7c.42.35.88.63 1.36.8l.26 1.86c.07.43.44.75.88.75h2.4c.44 0 .81-.32.88-.75l.26-1.86c.48-.2.94-.45 1.36-.8l1.74.7c.36.16.78.01.98-.34l1.4-2.42a.75.75 0 0 0-.2-1.02l-1.48-1.03c.15-.57.15-1.17 0-1.74Z"/></svg></span> Profile</button>
+              <button id="sidebarInstallBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3V15m0 0l-4-4m4 4l4-4M6 17h12v4H6v-4Z"/></svg></span> Install app</button>
+              <button id="shareAppBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 5l-4-4-4 4m4-4v12M4 17.5a2.5 2.5 0 0 0 2.5 2.5H8v-2H6.5a.5.5 0 0 1-.5-.5V15h2l3-4-3-4H6v-2h.5A2.5 2.5 0 0 0 9 3.5V5h6V3.5A2.5 2.5 0 0 0 17.5 1H18v2h-1.5a.5.5 0 0 1-.5.5H16v2h-2l3 4-3 4h2v2h-1.5a.5.5 0 0 1-.5-.5V17h-.5a2.5 2.5 0 0 0-2.5 2.5V21H6v-2h1.5a.5.5 0 0 1 .5-.5H8v-1.5Z"/></svg></span> Share app</button>
+              <button id="logoutBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 17l5-5-5-5M21 12H9M13 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h7"/></svg></span> Logout</button>
             </div>
           </div>
           <header class="topbar">
@@ -111,6 +125,7 @@
           </div>
           <div class="sidebar-tabs">
             <button id="activeChatsBtn" class="active" type="button">Chats</button>
+            <button id="lockedChatsBtn" type="button">Locked</button>
             <button id="archivedChatsBtn" type="button">Archived</button>
             <button id="statusViewBtn" type="button">Status</button>
             <button id="starredViewBtn" type="button">Starred</button>
@@ -144,6 +159,7 @@
               <button id="hideChatBtn" class="text-button user-management-action hidden" type="button">Hide</button>
               <button id="blockUserBtn" class="text-button user-management-action hidden" type="button">Block</button>
               <button id="deleteUserBtn" class="text-button danger user-management-action hidden" type="button">Delete user</button>
+              <button id="lockChatBtn" class="text-button hidden" type="button">Lock</button>
               <button id="messageSearchBtn" class="text-button" type="button">Search</button>
               <button id="pinChatBtn" class="text-button" type="button">Pin</button>
               <button id="archiveChatBtn" class="text-button" type="button">Archive</button>
@@ -237,39 +253,54 @@
       </section>
 
       <section id="profileModal" class="modal-layer hidden">
-        <form id="profileForm" class="modal-card">
+        <form id="profileForm" class="modal-card profile-card">
           <header>
-            <strong>Profile Settings</strong>
+            <div>
+              <strong>Profile Settings</strong>
+              <p class="modal-description">Update your account, calculator privacy lock, and message retention settings from one place.</p>
+            </div>
             <button id="closeProfileBtn" class="icon-button" type="button" title="Close">×</button>
           </header>
-          <label>
-            Name
-            <input name="displayName" id="profileName" autocomplete="name" required>
-          </label>
-          <label>
-            User ID
-            <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
-          </label>
-          <label>
-            Profile photo
-            <input name="avatar" id="profileAvatarInput" type="file" accept="image/*">
-          </label>
-          <label>
-            Status
-            <input name="statusText" id="profileStatusInput" maxlength="140" placeholder="What are you up to?">
-          </label>
-          <div class="profile-preview">
-            <span class="avatar" id="profileAvatarPreview">U</span>
+          <div class="profile-header">
+            <div class="profile-grid">
+              <label>
+                Name
+                <input name="displayName" id="profileName" autocomplete="name" required>
+              </label>
+              <label>
+                User ID
+                <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
+              </label>
+              <label>
+                Status
+                <input name="statusText" id="profileStatusInput" maxlength="140" placeholder="What are you up to?">
+              </label>
+            </div>
+            <div class="profile-avatar-block">
+              <div class="profile-preview">
+                <span class="avatar profile-avatar" id="profileAvatarPreview">U</span>
+              </div>
+              <label class="file-input-label">
+                Profile photo
+                <input name="avatar" id="profileAvatarInput" type="file" accept="image/*">
+              </label>
+            </div>
           </div>
-          <label>
-            Old password
-            <input name="oldPassword" type="password" autocomplete="current-password" placeholder="Required to change password">
-          </label>
-          <label>
-            New password
-            <input name="newPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep same">
-          </label>
-          <div class="privacy-settings">
+
+          <fieldset class="profile-section">
+            <legend>Security</legend>
+            <label>
+              Old password
+              <input name="oldPassword" type="password" autocomplete="current-password" placeholder="Required to change password">
+            </label>
+            <label>
+              New password
+              <input name="newPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep same">
+            </label>
+          </fieldset>
+
+          <fieldset class="profile-section">
+            <legend>Calculator privacy</legend>
             <label class="setting-toggle">
               <input id="privacyModeToggle" type="checkbox">
               <span>
@@ -277,34 +308,38 @@
                 <small>Show calculator before opening chat</small>
               </span>
             </label>
-            <label>
-              6-digit unlock code
-              <input id="privacyCodeInput" name="privacyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" placeholder="Leave blank to keep current">
-            </label>
-            <label>
-              Auto-lock
-              <select id="privacyAutoLock" name="privacyAutoLock">
-                <option value="0">Off</option>
-                <option value="1">After 1 minute</option>
-                <option value="5">After 5 minutes</option>
-                <option value="15">After 15 minutes</option>
-                <option value="30">After 30 minutes</option>
-              </select>
-            </label>
-            <label>
-              Panic shortcut
-              <select id="privacyPanicShortcut" name="privacyPanicShortcut">
-                <option value="button">Hide button</option>
-                <option value="double-tap">Hide button + double tap</option>
-              </select>
-            </label>
-          </div>
-          <div class="privacy-settings">
+            <div class="privacy-grid">
+              <label>
+                6-digit unlock code
+                <input id="privacyCodeInput" name="privacyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" placeholder="Leave blank to keep current">
+              </label>
+              <label>
+                Auto-lock
+                <select id="privacyAutoLock" name="privacyAutoLock">
+                  <option value="0">Off</option>
+                  <option value="1">After 1 minute</option>
+                  <option value="5">After 5 minutes</option>
+                  <option value="15">After 15 minutes</option>
+                  <option value="30">After 30 minutes</option>
+                </select>
+              </label>
+              <label>
+                Panic shortcut
+                <select id="privacyPanicShortcut" name="privacyPanicShortcut">
+                  <option value="button">Hide button</option>
+                  <option value="double-tap">Hide button + double tap</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="profile-section">
+            <legend>Message retention</legend>
             <label class="setting-toggle">
               <input id="messageAutoDeleteToggle" type="checkbox">
               <span>
                 <strong>Auto delete all messages</strong>
-                <small>Only hide messages from your account; admin panel keeps them.</small>
+                <small>All messages will be automatically deleted after the time you set.</small>
               </span>
             </label>
             <label>
@@ -320,7 +355,8 @@
                 <option value="720">30 days</option>
               </select>
             </label>
-          </div>
+          </fieldset>
+
           <button class="primary" type="submit">Save changes</button>
           <p id="profileMessage" class="error-text"></p>
         </form>

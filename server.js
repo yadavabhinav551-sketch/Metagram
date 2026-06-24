@@ -101,9 +101,15 @@ function normalizeDb(raw = {}) {
     }
   };
   return {
-    users: raw.users || [],
+    users: (raw.users || []).map((user) => ({
+      ...user,
+      lockedChatPin: user.lockedChatPin || null
+    })),
     messages: raw.messages || [],
-    conversations: raw.conversations || [],
+    conversations: (raw.conversations || []).map((conversation) => ({
+      ...conversation,
+      lockedBy: Array.isArray(conversation.lockedBy) ? conversation.lockedBy : []
+    })),
     groups: raw.groups || [],
     statuses: raw.statuses || [],
     sharedItems: raw.sharedItems || [],
@@ -187,7 +193,8 @@ function startSelfPing() {
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, hiddenChatSecret, privacyCodeHash, privacyCodeAdminValue, ...safe } = user;
+  const { passwordHash, hiddenChatSecret, privacyCodeHash, privacyCodeAdminValue, lockedChatPin, ...safe } = user;
+  safe.hasLockedChatPin = Boolean(lockedChatPin);
   safe.privacyMode = {
     enabled: Boolean(user.privacyMode?.enabled),
     hasCode: Boolean(user.privacyCodeHash),
@@ -251,6 +258,29 @@ function signPrivacy(user) {
 
 function validPrivacyCode(code) {
   return /^\d{6}$/.test(String(code || "").trim());
+}
+
+function validLockPin(code) {
+  return String(code || "").trim().length >= 4;
+}
+
+async function verifyLockPin(user, code) {
+  if (!user?.lockedChatPin || !validLockPin(code)) return false;
+  return bcrypt.compare(String(code).trim(), user.lockedChatPin);
+}
+
+function lockConversationForUser(conversation, userId) {
+  if (!conversation.lockedBy) conversation.lockedBy = [];
+  conversation.lockedBy = [...new Set([...conversation.lockedBy, userId])];
+}
+
+function unlockConversationForUser(conversation, userId) {
+  if (!conversation.lockedBy) return;
+  conversation.lockedBy = (conversation.lockedBy || []).filter((id) => id !== userId);
+}
+
+function conversationLockedForUser(conversation, user) {
+  return Boolean((conversation.lockedBy || []).includes(user.id));
 }
 
 function checkPrivacyRateLimit(req, user) {
@@ -356,6 +386,7 @@ function ensureUserCollections(user) {
 function ensureConversationCollections(conversation) {
   conversation.pinnedBy ||= [];
   conversation.archivedBy ||= [];
+  conversation.lockedBy ||= [];
   return conversation;
 }
 
@@ -422,6 +453,7 @@ function hydrateConversation(conversation, user) {
   });
   const group = conversation.groupId ? ensureGroupCollections(db.groups.find((item) => item.id === conversation.groupId), conversation.participants[0]) : null;
   const unreadCount = messages.filter((message) => message.senderId !== user.id && !(message.readBy || []).includes(user.id)).length;
+  const lockedByMe = (conversation.lockedBy || []).includes(user.id);
   return {
     ...conversation,
     members,
@@ -432,6 +464,8 @@ function hydrateConversation(conversation, user) {
     blockedMe: !conversation.groupId && (db.users.find((item) => item.id === otherParticipant(conversation, user.id))?.blockedUserIds || []).includes(user.id),
     pinned: (user.pinnedConversationIds || conversation.pinnedBy || []).includes(conversation.id) || (conversation.pinnedBy || []).includes(user.id),
     archived: (user.archivedConversationIds || conversation.archivedBy || []).includes(conversation.id) || (conversation.archivedBy || []).includes(user.id),
+    locked: lockedByMe,
+    lockedByMe,
     unreadCount,
     lastMessage: messages.at(-1) || null
   };
@@ -722,6 +756,7 @@ app.post("/api/signup", async (req, res) => {
       panicShortcut: "button"
     },
     privacyCodeHash: null,
+    lockedChatPin: null,
     createdAt: new Date().toISOString(),
     lastSeenAt: null
   };
@@ -859,6 +894,65 @@ app.get("/api/privacy/session", authUser, (req, res) => {
   res.status(401).json({ error: "Privacy session required." });
 });
 
+app.post("/api/lock-pin", authUser, async (req, res) => {
+  const currentPin = String(req.body.currentPin || "").trim();
+  const newPin = String(req.body.newPin || "").trim();
+  if (!validLockPin(newPin)) return res.status(400).json({ error: "Lock PIN must be at least 4 characters." });
+  if (req.user.lockedChatPin) {
+    if (!currentPin) return res.status(400).json({ error: "Current PIN is required to change the lock PIN." });
+    if (!(await bcrypt.compare(currentPin, req.user.lockedChatPin))) {
+      return res.status(403).json({ error: "Current PIN is incorrect." });
+    }
+  }
+  req.user.lockedChatPin = await bcrypt.hash(newPin, 10);
+  saveDb();
+  res.json({ ok: true, hasLockedChatPin: true });
+});
+
+app.post("/api/lock-pin/verify", authUser, async (req, res) => {
+  const code = String(req.body.code || "").trim();
+  if (await verifyLockPin(req.user, code)) return res.json({ ok: true });
+  res.status(403).json({ error: "Invalid lock PIN." });
+});
+
+app.get("/api/conversations/locked", authUser, async (req, res) => {
+  const code = String(req.query.code || "").trim();
+  if (!await verifyLockPin(req.user, code)) {
+    return res.status(403).json({ error: "Invalid lock PIN." });
+  }
+  const conversations = db.conversations
+    .filter((item) => item.participants.includes(req.user.id))
+    .filter((conversation) => conversationLockedForUser(conversation, req.user))
+    .map((conversation) => {
+      const hydrated = hydrateConversation(conversation, req.user);
+      return { ...hydrated, lastMessage: null };
+    })
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json({ conversations });
+});
+
+app.post("/api/conversations/:id/lock", authUser, async (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  if (!req.user.lockedChatPin) return res.status(400).json({ error: "Set a lock PIN before locking chats." });
+  const code = String(req.body.code || "").trim();
+  if (!await verifyLockPin(req.user, code)) return res.status(403).json({ error: "Invalid lock PIN." });
+  lockConversationForUser(conversation, req.user.id);
+  saveDb();
+  res.json({ ok: true, conversation: hydrateConversation(conversation, req.user) });
+});
+
+app.post("/api/conversations/:id/unlock", authUser, async (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  if (!req.user.lockedChatPin) return res.status(400).json({ error: "Set a lock PIN before unlocking chats." });
+  const code = String(req.body.code || "").trim();
+  if (!await verifyLockPin(req.user, code)) return res.status(403).json({ error: "Invalid lock PIN." });
+  unlockConversationForUser(conversation, req.user.id);
+  saveDb();
+  res.json({ ok: true, conversation: hydrateConversation(conversation, req.user) });
+});
+
 app.patch("/api/me/hidden-secret", authUser, requirePrivacyUnlocked, (req, res) => {
   const currentSecret = String(req.body.currentSecret || "").trim();
   const newSecret = String(req.body.newSecret || "").trim();
@@ -891,6 +985,7 @@ app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
     .filter((item) => item.participants.includes(req.user.id))
     .filter((conversation) => !isHiddenConversation(conversation, req.user))
     .filter((conversation) => !isDeletedConversation(conversation, req.user))
+    .filter((conversation) => !conversationLockedForUser(conversation, req.user))
     .map((conversation) => hydrateConversation(conversation, req.user))
     .filter((conversation) => includeArchived ? conversation.archived : !conversation.archived)
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
@@ -1369,6 +1464,7 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       activeUsers: db.users.filter((user) => !user.deleted && !user.blocked && !user.suspended).length,
       onlineUsers: onlineUsers.size,
       totalConversations: db.conversations.length,
+      hiddenConversations: hiddenAdminConversationIds.size,
       totalMessages: db.messages.length,
       uploadsUsage,
       topActiveUsers: db.users
@@ -1378,14 +1474,13 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       recentActivity
     },
     users: db.users.map(adminUser),
-    conversations: db.conversations
-      .filter((conversation) => !hiddenAdminConversationIds.has(conversation.id))
-      .map((conversation) => ({
-        ...conversation,
-        members: conversation.participants.map((id) => publicUser(db.users.find((user) => user.id === id))),
-        group: db.groups.find((group) => group.id === conversation.groupId) || null,
-        messageCount: db.messages.filter((message) => message.conversationId === conversation.id).length
-      })),
+    conversations: db.conversations.map((conversation) => ({
+      ...conversation,
+      hidden: hiddenAdminConversationIds.has(conversation.id),
+      members: conversation.participants.map((id) => publicUser(db.users.find((user) => user.id === id))),
+      group: db.groups.find((group) => group.id === conversation.groupId) || null,
+      messageCount: db.messages.filter((message) => message.conversationId === conversation.id).length
+    })),
     statuses: db.statuses
       .map((status) => ({
         ...status,
@@ -1427,6 +1522,20 @@ app.delete("/api/admin/conversations/:id", authAdmin, (req, res) => {
   saveDb();
   io.to("admins").emit("admin:conversation-hidden", { conversationId: conversation.id });
   res.json({ ok: true });
+});
+
+app.patch("/api/admin/conversations/:id/hidden", authAdmin, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id);
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  const hidden = Boolean(req.body.hidden);
+  const hiddenIds = new Set(db.admin.hiddenAdminConversationIds || []);
+  if (hidden) hiddenIds.add(conversation.id);
+  else hiddenIds.delete(conversation.id);
+  db.admin.hiddenAdminConversationIds = [...hiddenIds];
+  db.admin.updatedAt = new Date().toISOString();
+  saveDb();
+  io.to("admins").emit("admin:conversation-hidden", { conversationId: conversation.id, hidden });
+  res.json({ ok: true, hidden });
 });
 
 app.post("/api/admin/credentials", authAdmin, async (req, res) => {

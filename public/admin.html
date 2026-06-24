@@ -7,8 +7,8 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Metagram Admin">
-    <title>Secure Admin</title>
+    <meta name="apple-mobile-web-app-title" content="Calculator Admin">
+    <title>Calculator Admin</title>
     <link rel="manifest" href="/admin-manifest.json">
     <link rel="icon" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -23,7 +23,7 @@
       <section id="adminLogin" class="auth-view">
         <div class="auth-card">
           <div class="brand-block compact">
-            <h1>Admin Access</h1>
+            <h1>Calculator Admin</h1>
             <p>Restricted monitoring console.</p>
           </div>
           <form id="adminLoginForm" class="stack">
@@ -39,7 +39,7 @@
       <section id="adminApp" class="admin-app hidden">
         <header class="admin-header">
           <div>
-            <strong>Business Chat Admin</strong>
+            <strong>Calculator Admin</strong>
             <span>Total visibility console</span>
           </div>
           <div class="admin-header-actions">
@@ -58,12 +58,18 @@
           <section class="admin-panel transcript">
             <div class="transcript-head">
               <h2 id="transcriptTitle">Transcript</h2>
+              <button id="toggleConversationHiddenBtn" class="danger-action hidden" type="button">Hide conversation</button>
               <button id="deleteAdminConversationBtn" class="danger-action" type="button" disabled>Delete from admin</button>
               <button id="clearTranscriptBtn" class="danger-action" type="button" disabled>Clear chat</button>
             </div>
+            <div id="conversationInfo" class="conversation-info hidden"></div>
             <div id="adminMessages" class="admin-messages">Select a chat.</div>
           </section>
           <aside class="admin-panel chats-panel">
+            <div class="chat-panel-controls">
+              <input id="conversationSearchInput" placeholder="Search conversations">
+              <label><input id="showHiddenConversationsToggle" type="checkbox"> Show hidden</label>
+            </div>
             <h2>Chats</h2>
             <div id="adminConversations"></div>
             <h2>User Statuses</h2>

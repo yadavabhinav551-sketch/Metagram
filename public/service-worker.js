@@ -1,4 +1,4 @@
-const CACHE_VERSION = "metagram-pwa-v47";
+const CACHE_VERSION = "calculator-pwa-v47";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -15,12 +15,7 @@ const APP_SHELL = [
   "/icons/icon-512.png",
   "/icons/maskable-192.png",
   "/icons/maskable-512.png",
-  "/icons/splash-512.png",
-  "/icons/calculator-192.png",
-  "/icons/calculator-512.png",
-  "/icons/calculator-maskable-192.png",
-  "/icons/calculator-maskable-512.png",
-  "/icons/calculator-splash-512.png"
+  "/icons/splash-512.png"
 ];
 
 self.addEventListener("install", (event) => {
