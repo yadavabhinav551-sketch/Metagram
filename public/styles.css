@@ -1438,8 +1438,8 @@ audio,
   flex-direction: column;
   gap: 20px;
   border-radius: 0;
-  /* preserve visual internal spacing while accounting for safe-area insets */
-  padding: calc(22px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));
+  /* respect safe-area insets but remove 22px top padding for flush top edge */
+  padding: env(safe-area-inset-top) calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));
   margin: 0; /* remove centering wrapper */
   background: #000000;
   box-shadow: none;
