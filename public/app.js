@@ -280,7 +280,7 @@ function connectSocket() {
   });
   state.socket.on("message:new", (message) => {
     if (message.conversationId === state.activeConversation?.id) {
-      loadMessages(state.activeConversation.id, true);
+      loadMessages(state.activeConversation.id, false);
     }
     loadConversations();
     notifyNewMessage(message);
@@ -1190,12 +1190,9 @@ function renderMessages({ preserveScroll = false } = {}) {
       </article>`;
   }).join("");
   if (!preserveScroll || wasScrolledToBottom) {
-    const lastMessage = messagesEl.lastElementChild;
-    if (lastMessage) {
-      lastMessage.scrollIntoView({ block: "end" });
-    } else {
+    requestAnimationFrame(() => {
       messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
+    });
   } else {
     messagesEl.scrollTop = Math.max(0, previousScrollTop + messagesEl.scrollHeight - previousScrollHeight);
   }
