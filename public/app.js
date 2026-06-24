@@ -1190,7 +1190,12 @@ function renderMessages({ preserveScroll = false } = {}) {
       </article>`;
   }).join("");
   if (!preserveScroll || wasScrolledToBottom) {
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const lastMessage = messagesEl.lastElementChild;
+    if (lastMessage) {
+      lastMessage.scrollIntoView({ block: "end" });
+    } else {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
   } else {
     messagesEl.scrollTop = Math.max(0, previousScrollTop + messagesEl.scrollHeight - previousScrollHeight);
   }
