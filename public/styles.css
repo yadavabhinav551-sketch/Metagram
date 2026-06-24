@@ -1416,8 +1416,7 @@ audio,
   flex-direction: column;
   align-items: stretch;
   justify-content: stretch;
-  /* respect safe-area insets (notch/home indicator) while remaining edge-to-edge */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding: 0; /* let shell handle all spacing */
   background: #000000;
   overflow: hidden;
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -1438,8 +1437,8 @@ audio,
   flex-direction: column;
   gap: 20px;
   border-radius: 0;
-  /* respect safe-area insets but remove 22px top padding for flush top edge */
-  padding: env(safe-area-inset-top) calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));
+  /* no top/left padding for flush edge-to-edge; only right/bottom spacing + safe-area */
+  padding: 0 calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) 0;
   margin: 0; /* remove centering wrapper */
   background: #000000;
   box-shadow: none;
