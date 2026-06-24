@@ -813,6 +813,11 @@ select:focus {
   gap: 10px;
 }
 
+/* Hide lock button only in user (chat) actions area — keep sidebar tab visible */
+.chat-actions #lockChatBtn {
+  display: none !important;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
