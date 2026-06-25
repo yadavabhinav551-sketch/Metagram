@@ -810,7 +810,7 @@ function appendCalculatorValue(value) {
     if (part.includes(".")) return;
   }
   state.calculatorExpression = (state.calculatorExpression + value).slice(0, 32);
-  requestAnimationFrame(() => updateCalculatorDisplay());
+  updateCalculatorDisplay();
 }
 
 async function handleCalculatorEquals() {
