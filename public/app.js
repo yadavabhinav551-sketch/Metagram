@@ -2349,21 +2349,27 @@ $("logoutBtn").addEventListener("click", () => {
   closeTopbarMenu();
   showAuth();
 });
-$("calculatorPrivacyView").addEventListener("click", (event) => {
+$("calculatorPrivacyView").addEventListener("pointerdown", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
   const value = button.dataset.calcValue;
   const action = button.dataset.calcAction;
+  const fn = button.dataset.calcFn;
+  if (!value && !action && !fn) return;
+  event.preventDefault();
+
   if (value) appendCalculatorValue(value);
   if (action === "clear") {
     state.calculatorExpression = "";
     state.calculatorJustEvaluated = false;
     updateCalculatorHistory("");
     updateCalculatorDisplay("0");
+    return;
   }
   if (action === "delete") {
     state.calculatorExpression = state.calculatorExpression.slice(0, -1);
     updateCalculatorDisplay();
+    return;
   }
   if (action === "toggle-sign") {
     const value = state.calculatorExpression.trim();
@@ -2374,13 +2380,35 @@ $("calculatorPrivacyView").addEventListener("click", (event) => {
       state.calculatorExpression = `-${value}`;
     }
     updateCalculatorDisplay();
+    return;
   }
   if (action === "percent") {
     const value = Number(state.calculatorExpression) || 0;
     state.calculatorExpression = String(value / 100);
     updateCalculatorDisplay();
+    return;
   }
-  if (action === "equals") handleCalculatorEquals();
+  if (action === "equals") {
+    await handleCalculatorEquals();
+    return;
+  }
+  if (fn) {
+    const value = Number(state.calculatorExpression) || 0;
+    let result = value;
+    switch (fn) {
+      case "sin": result = Math.sin(value); break;
+      case "cos": result = Math.cos(value); break;
+      case "tan": result = Math.tan(value); break;
+      case "log": result = value > 0 ? Math.log10(value) : NaN; break;
+      case "sqrt": result = value >= 0 ? Math.sqrt(value) : NaN; break;
+      case "square": result = value * value; break;
+      case "exp": result = Math.exp(value); break;
+      case "pi": result = Math.PI; break;
+      default: return;
+    }
+    state.calculatorExpression = Number.isFinite(result) ? String(Number(result.toPrecision(12))) : "Error";
+    updateCalculatorDisplay();
+  }
 });
 $("calculatorModeToggle").addEventListener("click", () => {
   state.calculatorAdvancedMode = !state.calculatorAdvancedMode;
@@ -2388,26 +2416,6 @@ $("calculatorModeToggle").addEventListener("click", () => {
   $("calculatorModeToggle").textContent = state.calculatorAdvancedMode ? "Basic" : "Advanced";
   $("calculatorAdvancedRow").classList.toggle("hidden", !state.calculatorAdvancedMode);
   document.body.classList.toggle("calculator-advanced", state.calculatorAdvancedMode);
-});
-$("calculatorPrivacyView").addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-calc-fn]");
-  if (!button) return;
-  const fn = button.dataset.calcFn;
-  const value = Number(state.calculatorExpression) || 0;
-  let result = value;
-  switch (fn) {
-    case "sin": result = Math.sin(value); break;
-    case "cos": result = Math.cos(value); break;
-    case "tan": result = Math.tan(value); break;
-    case "log": result = value > 0 ? Math.log10(value) : NaN; break;
-    case "sqrt": result = value >= 0 ? Math.sqrt(value) : NaN; break;
-    case "square": result = value * value; break;
-    case "exp": result = Math.exp(value); break;
-    case "pi": result = Math.PI; break;
-    default: return;
-  }
-  state.calculatorExpression = Number.isFinite(result) ? String(Number(result.toPrecision(12))) : "Error";
-  updateCalculatorDisplay();
 });
 $("panicHideBtn").addEventListener("click", lockToCalculator);
 document.addEventListener("visibilitychange", handlePrivacyVisibilityChange);
