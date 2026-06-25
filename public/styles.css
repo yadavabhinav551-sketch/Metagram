@@ -1553,6 +1553,16 @@ audio,
   color: #ffffff;
 }
 
+.calculator-keys button[data-calc-value="+"] {
+  grid-row: 4;
+  grid-column: 4;
+}
+
+.calculator-equals {
+  grid-row: 5;
+  grid-column: 4;
+}
+
 .calculator-keys button[data-calc-fn] {
   background: #d9d9d9;
   color: #111111;
