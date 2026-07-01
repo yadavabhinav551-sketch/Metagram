@@ -31,6 +31,7 @@ const state = {
   lockedChatCode: "",
   calculatorExpression: "",
   calculatorJustEvaluated: false,
+  calculatorResetTimer: null,
   privacyAutoLockTimer: null,
   privacyAwayStartedAt: Number(localStorage.getItem("privacyAwayStartedAt") || 0),
   calculatorAdvancedMode: false,
@@ -635,6 +636,7 @@ function showCalculatorPrivacy() {
   state.socket?.disconnect();
   state.calculatorExpression = "";
   state.calculatorJustEvaluated = false;
+  clearCalculatorResetTimer();
   updateCalculatorHistory("");
   updateCalculatorDisplay("0");
   $("profileModal").classList.add("hidden");
@@ -713,6 +715,23 @@ function updateCalculatorDisplay(value = state.calculatorExpression || "0") {
 
 function updateCalculatorHistory(text = "") {
   $("calculatorHistory").textContent = text;
+}
+
+function clearCalculatorResetTimer() {
+  if (state.calculatorResetTimer) {
+    clearTimeout(state.calculatorResetTimer);
+    state.calculatorResetTimer = null;
+  }
+}
+
+function scheduleCalculatorResetTimer() {
+  clearCalculatorResetTimer();
+  state.calculatorResetTimer = setTimeout(() => {
+    state.calculatorExpression = "";
+    state.calculatorJustEvaluated = false;
+    updateCalculatorHistory("");
+    updateCalculatorDisplay("0");
+  }, 60 * 1000);
 }
 
 function formatCalculatorValue(value) {
@@ -810,6 +829,8 @@ function appendCalculatorValue(value) {
     if (part.includes(".")) return;
   }
   state.calculatorExpression = (state.calculatorExpression + value).slice(0, 32);
+  clearCalculatorResetTimer();
+  scheduleCalculatorResetTimer();
   updateCalculatorDisplay();
 }
 
@@ -821,6 +842,7 @@ async function handleCalculatorEquals() {
   updateCalculatorOutput(result, expression ? `${expression} =` : "");
   state.calculatorExpression = result === "Error" ? "" : result;
   state.calculatorJustEvaluated = true;
+  clearCalculatorResetTimer();
 }
 
 async function promptForLockPin(action) {
