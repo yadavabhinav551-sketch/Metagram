@@ -2390,6 +2390,8 @@ $("calculatorPrivacyView").addEventListener("pointerdown", async (event) => {
   }
   if (action === "delete") {
     state.calculatorExpression = state.calculatorExpression.slice(0, -1);
+    clearCalculatorResetTimer();
+    scheduleCalculatorResetTimer();
     updateCalculatorDisplay();
     return;
   }
@@ -2462,12 +2464,15 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Backspace") {
     event.preventDefault();
     state.calculatorExpression = state.calculatorExpression.slice(0, -1);
+    clearCalculatorResetTimer();
+    scheduleCalculatorResetTimer();
     updateCalculatorDisplay();
     return;
   }
   if (event.key === "Escape") {
     event.preventDefault();
     state.calculatorExpression = "";
+    clearCalculatorResetTimer();
     updateCalculatorHistory("");
     updateCalculatorDisplay();
   }
