@@ -2448,7 +2448,9 @@ document.addEventListener("visibilitychange", handlePrivacyVisibilityChange);
 window.addEventListener("blur", startPrivacyAwayLock);
 window.addEventListener("focus", handlePrivacyReturn);
 window.addEventListener("pagehide", startPrivacyAwayLock);
-document.addEventListener("dblclick", () => {
+document.addEventListener("dblclick", (event) => {
+  // Don't trigger panic lock if double-tapping calculator buttons
+  if ($("calculatorPrivacyView").contains(event.target)) return;
   if (state.user?.privacyMode?.panicShortcut === "double-tap") lockToCalculator();
 });
 document.addEventListener("keydown", (event) => {

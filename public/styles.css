@@ -1529,6 +1529,8 @@ audio,
   transition: transform 0.08s ease, background 0.08s ease;
   touch-action: manipulation;
   will-change: transform;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .calculator-keys button:hover {
