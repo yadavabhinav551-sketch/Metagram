@@ -726,7 +726,9 @@ function clearCalculatorResetTimer() {
 
 function scheduleCalculatorResetTimer() {
   clearCalculatorResetTimer();
+  // Only reset if calculator is still visible and not actively in use
   state.calculatorResetTimer = setTimeout(() => {
+    if ($("calculatorPrivacyView").classList.contains("hidden")) return;
     state.calculatorExpression = "";
     state.calculatorJustEvaluated = false;
     updateCalculatorHistory("");
