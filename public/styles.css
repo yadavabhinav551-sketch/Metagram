@@ -1531,6 +1531,7 @@ audio,
   will-change: transform;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .calculator-keys button:hover {
