@@ -737,30 +737,123 @@ function scheduleCalculatorResetTimer() {
 }
 
 function formatCalculatorValue(value) {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
   if (!Number.isFinite(value)) return "Error";
+  if (Number.isInteger(value)) {
+    return value.toString();
+  }
   const normalized = Number(value.toPrecision(12));
-  return normalized === 0 ? "0" : String(normalized).slice(0, 16);
+  if (!Number.isFinite(normalized)) return "Error";
+  let text = String(normalized);
+  if (/e/i.test(text)) {
+    const [mantissa, exponentText] = text.split(/e/i);
+    const exponent = Number(exponentText || "0");
+    const sign = mantissa.startsWith("-") ? "-" : "";
+    const unsignedMantissa = sign ? mantissa.slice(1) : mantissa;
+    const [integerPart, fractionPart = ""] = unsignedMantissa.split(".");
+    const digits = integerPart + fractionPart;
+    if (exponent >= 0) {
+      const zerosNeeded = exponent - fractionPart.length;
+      if (zerosNeeded >= 0) {
+        text = sign + digits + "0".repeat(zerosNeeded);
+      } else {
+        const splitIndex = integerPart.length + exponent;
+        text = sign + digits.slice(0, splitIndex) + "." + digits.slice(splitIndex);
+      }
+    } else {
+      const zerosNeeded = Math.abs(exponent) - integerPart.length;
+      if (zerosNeeded >= 0) {
+        text = sign + "0." + "0".repeat(zerosNeeded) + digits;
+      } else {
+        const splitIndex = integerPart.length + exponent;
+        text = sign + digits.slice(0, splitIndex) + "." + digits.slice(splitIndex);
+      }
+    }
+  }
+  if (text.includes(".")) {
+    text = text.replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
+  }
+  if (text === "-0") text = "0";
+  return text;
+}
+
+function getCalculatorPreview(expression) {
+  const trimmed = String(expression || "").trim();
+  const normalized = trimmed.replace(/\s+/g, "").replace(/[×÷]/g, (match) => match === "×" ? "*" : "/");
+  const cleanedExpression = normalized.replace(/[+\-*/]+$/, "");
+  if (!cleanedExpression || !/[+\-*/]/.test(cleanedExpression)) return "";
+  if (!/^[\d+\-*/.]+$/.test(cleanedExpression)) return "";
+  const result = evaluateCalculator(cleanedExpression);
+  return result === "Error" ? "" : result;
+}
+
+function tokenizeCalculatorExpression(expression) {
+  const rawTokens = expression.match(/\d*\.?\d+|[+\-*/]/g) || [];
+  const tokens = [];
+  for (let index = 0; index < rawTokens.length; index += 1) {
+    const token = rawTokens[index];
+    if (token === "-" && (index === 0 || /[+\-*/]/.test(rawTokens[index - 1]))) {
+      const next = rawTokens[index + 1];
+      if (!/^\d*\.?\d+$/.test(next || "")) throw new Error("Invalid expression");
+      tokens.push(`-${next}`);
+      index += 1;
+    } else {
+      tokens.push(token);
+    }
+  }
+  return tokens;
 }
 
 function evaluateCalculator(expression) {
   const trimmed = String(expression || "").trim().replace(/\s+/g, "");
-  if (!trimmed) return "0";
-  if (!/^[\d+\-*/.]+$/.test(trimmed)) return "Error";
-  const rawTokens = trimmed.match(/\d*\.?\d+|[+\-*/]/g);
-  if (!rawTokens?.length) return "0";
+  const normalizedExpression = trimmed.replace(/[×÷]/g, (match) => match === "×" ? "*" : "/");
+  const cleanedExpression = normalizedExpression.replace(/[+\-*/]+$/, "");
+  if (!cleanedExpression) return "0";
+  if (!/^[\d+\-*/.]+$/.test(cleanedExpression)) return "Error";
+
+  let tokens;
   try {
-    const tokens = [];
-    for (let index = 0; index < rawTokens.length; index += 1) {
-      const token = rawTokens[index];
-      if (token === "-" && (index === 0 || /[+\-*/]/.test(rawTokens[index - 1]))) {
-        const next = rawTokens[index + 1];
-        if (!/^\d*\.?\d+$/.test(next || "")) throw new Error("Invalid expression");
-        tokens.push(String(-Number(next)));
-        index += 1;
-      } else {
-        tokens.push(token);
+    tokens = tokenizeCalculatorExpression(cleanedExpression);
+  } catch {
+    return "Error";
+  }
+  if (!tokens.length) return "0";
+
+  const canUseBigInt = !cleanedExpression.includes(".") && !cleanedExpression.includes("/");
+  if (canUseBigInt) {
+    try {
+      const values = [];
+      const operators = [];
+      const precedence = { "+": 1, "-": 1, "*": 2 };
+      const applyOperator = () => {
+        const operator = operators.pop();
+        const right = values.pop();
+        const left = values.pop();
+        if (!operator || left === undefined || right === undefined) throw new Error("Invalid expression");
+        if (operator === "+") values.push(left + right);
+        if (operator === "-") values.push(left - right);
+        if (operator === "*") values.push(left * right);
+      };
+
+      for (const token of tokens) {
+        if (/^-?\d+$/.test(token)) {
+          values.push(BigInt(token));
+          continue;
+        }
+        while (operators.length && precedence[operators.at(-1)] >= precedence[token]) applyOperator();
+        operators.push(token);
       }
+      while (operators.length) applyOperator();
+      if (values.length !== 1) throw new Error("Invalid expression");
+      return formatCalculatorValue(values[0]);
+    } catch {
+      return "Error";
     }
+  }
+
+  try {
     const values = [];
     const operators = [];
     const precedence = { "+": 1, "-": 1, "*": 2, "/": 2 };
@@ -834,6 +927,7 @@ function appendCalculatorValue(value) {
   clearCalculatorResetTimer();
   scheduleCalculatorResetTimer();
   updateCalculatorDisplay();
+  updateCalculatorHistory(getCalculatorPreview(state.calculatorExpression));
 }
 
 async function handleCalculatorEquals() {
@@ -2395,6 +2489,7 @@ $("calculatorPrivacyView").addEventListener("pointerdown", async (event) => {
     clearCalculatorResetTimer();
     scheduleCalculatorResetTimer();
     updateCalculatorDisplay();
+    updateCalculatorHistory(getCalculatorPreview(state.calculatorExpression));
     return;
   }
   if (action === "toggle-sign") {
@@ -2406,12 +2501,14 @@ $("calculatorPrivacyView").addEventListener("pointerdown", async (event) => {
       state.calculatorExpression = `-${value}`;
     }
     updateCalculatorDisplay();
+    updateCalculatorHistory(getCalculatorPreview(state.calculatorExpression));
     return;
   }
   if (action === "percent") {
     const value = Number(state.calculatorExpression) || 0;
     state.calculatorExpression = String(value / 100);
     updateCalculatorDisplay();
+    updateCalculatorHistory(getCalculatorPreview(state.calculatorExpression));
     return;
   }
   if (action === "equals") {
@@ -2471,6 +2568,7 @@ document.addEventListener("keydown", (event) => {
     clearCalculatorResetTimer();
     scheduleCalculatorResetTimer();
     updateCalculatorDisplay();
+    updateCalculatorHistory(getCalculatorPreview(state.calculatorExpression));
     return;
   }
   if (event.key === "Escape") {

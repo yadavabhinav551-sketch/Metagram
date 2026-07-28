@@ -1499,12 +1499,25 @@ audio,
 }
 
 .calculator-display strong {
+  display: block;
   font-size: 56px;
   font-weight: 700;
   line-height: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-overflow: clip;
   white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.calculator-display strong::-webkit-scrollbar {
+  height: 6px;
+}
+
+.calculator-display strong::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
 }
 
 .calculator-keys {
