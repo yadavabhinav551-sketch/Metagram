@@ -78,9 +78,13 @@ async function loadOverview() {
 
 function renderStats() {
   const stats = adminState.stats || {};
+  const appCluster = stats.appCluster || {};
+  const adminCluster = stats.adminCluster || {};
   $("adminStats").innerHTML = `
     <div><strong>${stats.totalUsers || 0}</strong><small>Total users</small></div>
     <div><strong>${stats.onlineUsers || 0}</strong><small>Online</small></div>
+    <div><strong>${appCluster.connected ? "Connected" : appCluster.enabled ? "Disconnected" : "Local"}</strong><small>App DB</small></div>
+    <div><strong>${adminCluster.enabled ? (adminCluster.connected ? "Connected" : "Disconnected") : "Not configured"}</strong><small>Admin DB</small></div>
     <div><strong>${stats.totalConversations || 0}</strong><small>Chats</small></div>
     <div><strong>${stats.hiddenConversations || 0}</strong><small>Hidden chats</small></div>
     <div><strong>${stats.totalMessages || 0}</strong><small>Messages</small></div>

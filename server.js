@@ -33,6 +33,11 @@ const UPLOAD_FILE_SIZE_LIMIT = Number(process.env.UPLOAD_FILE_SIZE_LIMIT || 500 
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB = process.env.MONGODB_DB || "metagram";
 const MONGODB_COLLECTION = process.env.MONGODB_COLLECTION || "app_state";
+const MONGODB_ADMIN_URI = process.env.MONGODB_ADMIN_URI;
+const MONGODB_ADMIN_DB = process.env.MONGODB_ADMIN_DB || "metagram_admin";
+const MONGODB_ADMIN_COLLECTION = process.env.MONGODB_ADMIN_COLLECTION || "admin_state";
+const MONGODB_ADMIN_TLS_ALLOW_INVALID_CERTIFICATES = String(process.env.MONGODB_ADMIN_TLS_ALLOW_INVALID_CERTIFICATES || "false").toLowerCase() === "true";
+const MONGODB_ADMIN_TLS_ALLOW_INVALID_HOSTNAMES = String(process.env.MONGODB_ADMIN_TLS_ALLOW_INVALID_HOSTNAMES || "false").toLowerCase() === "true";
 const MONGODB_KEEPALIVE_INTERVAL_MS = Number(process.env.MONGODB_KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000);
 const MONGODB_DNS_SERVERS = process.env.MONGODB_DNS_SERVERS?.split(",").map((server) => server.trim()).filter(Boolean);
 const SELF_PING_ENABLED = String(process.env.SELF_PING_ENABLED ?? (IS_RENDER ? "true" : "false")).toLowerCase() === "true";
@@ -66,6 +71,9 @@ activeUploadDir = ensureWritableDir(UPLOAD_DIR, path.join("/tmp", "metagram", "u
 let mongoClient = null;
 let stateCollection = null;
 let mongoKeepaliveTimer = null;
+let adminMongoClient = null;
+let adminStateCollection = null;
+let adminMongoKeepaliveTimer = null;
 let selfPingTimer = null;
 
 const defaultDb = {
@@ -77,7 +85,8 @@ const defaultDb = {
   sharedItems: [],
   admin: {
     loginId: "6388391842",
-    passwordHash: bcrypt.hashSync("123456", 10),
+    email: "yadavabhinav551@gmail.com",
+    passwordHash: bcrypt.hashSync("1234546", 10),
     updatedAt: new Date().toISOString(),
     secretCodeLoginEnabled: false,
     hiddenAdminConversationIds: [],
@@ -94,6 +103,7 @@ function normalizeDb(raw = {}) {
   const admin = {
     ...defaultDb.admin,
     ...(raw.admin || {}),
+    email: raw.admin?.email || defaultDb.admin.email,
     hiddenAdminConversationIds: Array.isArray(raw.admin?.hiddenAdminConversationIds) ? raw.admin.hiddenAdminConversationIds : [],
     updateNotify: {
       ...defaultDb.admin.updateNotify,
@@ -123,6 +133,8 @@ function loadLocalDb() {
 }
 
 async function loadDb() {
+  let initialDb;
+
   if (MONGODB_URI) {
     try {
       mongoClient = new MongoClient(MONGODB_URI);
@@ -131,49 +143,113 @@ async function loadDb() {
       const existing = await stateCollection.findOne({ key: "main" });
       if (existing) {
         const { _id, key, ...state } = existing;
-        console.log(`Using MongoDB Atlas database "${MONGODB_DB}".`);
-        return normalizeDb(state);
+        console.log(`Using MongoDB Atlas app database "${MONGODB_DB}".`);
+        initialDb = normalizeDb(state);
+      } else {
+        initialDb = loadLocalDb();
+        await stateCollection.insertOne({ key: "main", ...initialDb });
+        console.log(`Initialized MongoDB Atlas app database "${MONGODB_DB}" from local data.`);
       }
-      const initialDb = loadLocalDb();
-      await stateCollection.insertOne({ key: "main", ...initialDb });
-      console.log(`Initialized MongoDB Atlas database "${MONGODB_DB}" from local data.`);
-      return initialDb;
     } catch (error) {
-      console.error("MongoDB connection failed. Check MONGODB_URI, database user password, and Atlas network access.");
+      console.error("App MongoDB connection failed. Check MONGODB_URI, database user password, and Atlas network access.");
       throw error;
+    }
+  } else {
+    if (!fs.existsSync(dbFile)) {
+      fs.writeFileSync(dbFile, JSON.stringify(defaultDb, null, 2));
+    }
+    console.log("Using local JSON database. Set MONGODB_URI in production.");
+    initialDb = normalizeDb(JSON.parse(fs.readFileSync(dbFile, "utf8")));
+  }
+
+  if (MONGODB_ADMIN_URI) {
+    try {
+      const adminClientOptions = {};
+      if (MONGODB_ADMIN_TLS_ALLOW_INVALID_CERTIFICATES) {
+        adminClientOptions.tlsAllowInvalidCertificates = true;
+      }
+      if (MONGODB_ADMIN_TLS_ALLOW_INVALID_HOSTNAMES) {
+        adminClientOptions.tlsAllowInvalidHostnames = true;
+      }
+      adminMongoClient = new MongoClient(MONGODB_ADMIN_URI, adminClientOptions);
+      await adminMongoClient.connect();
+      adminStateCollection = adminMongoClient.db(MONGODB_ADMIN_DB).collection(MONGODB_ADMIN_COLLECTION);
+      const existingAdmin = await adminStateCollection.findOne({ key: "main" });
+      if (existingAdmin) {
+        const { _id, key, ...adminState } = existingAdmin;
+        console.log(`Using MongoDB Atlas admin database "${MONGODB_ADMIN_DB}".`);
+        return normalizeDb({ ...initialDb, admin: { ...initialDb.admin, ...(adminState.admin || {}) } });
+      }
+      await adminStateCollection.insertOne({ key: "main", admin: initialDb.admin });
+      console.log(`Initialized MongoDB Atlas admin database "${MONGODB_ADMIN_DB}" from app admin data.`);
+      return normalizeDb({ ...initialDb, admin: initialDb.admin });
+    } catch (error) {
+      console.warn("Admin MongoDB connection failed. Continuing without admin cluster. Check MONGODB_ADMIN_URI, database user password, and Atlas network access.");
+      console.warn(error.message || error);
+      adminMongoClient = null;
+      adminStateCollection = null;
+      return normalizeDb(initialDb);
     }
   }
 
-  if (!fs.existsSync(dbFile)) {
-    fs.writeFileSync(dbFile, JSON.stringify(defaultDb, null, 2));
-  }
-  console.log("Using local JSON database. Set MONGODB_URI in production.");
-  return normalizeDb(JSON.parse(fs.readFileSync(dbFile, "utf8")));
+  return normalizeDb(initialDb);
 }
 
 let db = await loadDb();
+
+async function migrateDefaultAdminCredentials() {
+  const defaultOldAdminLogin = "6388391842";
+  const defaultOldAdminPassword = "123456";
+  if (db.admin.loginId === defaultOldAdminLogin && await bcrypt.compare(defaultOldAdminPassword, db.admin.passwordHash)) {
+    db.admin.email = "yadavabhinav551@gmail.com";
+    db.admin.passwordHash = await bcrypt.hash("1234546", 10);
+    db.admin.updatedAt = new Date().toISOString();
+    saveDb();
+    console.log("Migrated default admin credentials to mobile/email/password.");
+  }
+}
+
+await migrateDefaultAdminCredentials();
 const privacyUnlockAttempts = new Map();
 
 function saveDb() {
   if (stateCollection) {
     stateCollection
       .replaceOne({ key: "main" }, { key: "main", ...db }, { upsert: true })
-      .catch((error) => console.error("MongoDB save failed:", error));
-    return;
+      .catch((error) => console.error("App MongoDB save failed:", error));
+  } else {
+    fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
   }
-  fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+
+  if (adminStateCollection) {
+    adminStateCollection
+      .replaceOne({ key: "main" }, { key: "main", admin: db.admin }, { upsert: true })
+      .catch((error) => console.error("Admin MongoDB save failed:", error));
+  }
 }
 
 function startMongoKeepalive() {
-  if (!mongoClient || mongoKeepaliveTimer || MONGODB_KEEPALIVE_INTERVAL_MS <= 0) return;
-  mongoKeepaliveTimer = setInterval(async () => {
-    try {
-      await mongoClient.db(MONGODB_DB).command({ ping: 1 });
-      console.log("MongoDB keepalive ping sent.");
-    } catch (error) {
-      console.error("MongoDB keepalive ping failed:", error);
-    }
-  }, MONGODB_KEEPALIVE_INTERVAL_MS);
+  if (mongoClient && !mongoKeepaliveTimer && MONGODB_KEEPALIVE_INTERVAL_MS > 0) {
+    mongoKeepaliveTimer = setInterval(async () => {
+      try {
+        await mongoClient.db(MONGODB_DB).command({ ping: 1 });
+        console.log("App MongoDB keepalive ping sent.");
+      } catch (error) {
+        console.error("App MongoDB keepalive ping failed:", error);
+      }
+    }, MONGODB_KEEPALIVE_INTERVAL_MS);
+  }
+
+  if (adminMongoClient && !adminMongoKeepaliveTimer && MONGODB_KEEPALIVE_INTERVAL_MS > 0) {
+    adminMongoKeepaliveTimer = setInterval(async () => {
+      try {
+        await adminMongoClient.db(MONGODB_ADMIN_DB).command({ ping: 1 });
+        console.log("Admin MongoDB keepalive ping sent.");
+      } catch (error) {
+        console.error("Admin MongoDB keepalive ping failed:", error);
+      }
+    }, MONGODB_KEEPALIVE_INTERVAL_MS);
+  }
 }
 
 startMongoKeepalive();
@@ -1415,10 +1491,12 @@ app.delete("/api/shared/:id", authUser, requirePrivacyUnlocked, (req, res) => {
 
 app.post("/api/admin/login", async (req, res) => {
   const { loginId, password } = req.body;
-  if (loginId !== db.admin.loginId || !(await bcrypt.compare(password, db.admin.passwordHash))) {
+  const loginValue = String(loginId || "").trim();
+  const isAdminLogin = loginValue === String(db.admin.loginId) || loginValue.toLowerCase() === String(db.admin.email || "").toLowerCase();
+  if (!isAdminLogin || !(await bcrypt.compare(password, db.admin.passwordHash))) {
     return res.status(401).json({ error: "Invalid admin credentials." });
   }
-  res.json({ token: signAdmin(), admin: { loginId: db.admin.loginId } });
+  res.json({ token: signAdmin(), admin: { loginId: db.admin.loginId, email: db.admin.email } });
 });
 
 app.get("/api/admin/overview", authAdmin, (_req, res) => {
@@ -1460,6 +1538,18 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       }
     },
     stats: {
+      appCluster: {
+        enabled: Boolean(MONGODB_URI),
+        connected: Boolean(stateCollection),
+        database: MONGODB_DB,
+        collection: MONGODB_COLLECTION
+      },
+      adminCluster: {
+        enabled: Boolean(MONGODB_ADMIN_URI),
+        connected: Boolean(adminStateCollection),
+        database: MONGODB_ADMIN_DB,
+        collection: MONGODB_ADMIN_COLLECTION
+      },
       totalUsers: db.users.length,
       activeUsers: db.users.filter((user) => !user.deleted && !user.blocked && !user.suspended).length,
       onlineUsers: onlineUsers.size,

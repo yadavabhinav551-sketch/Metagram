@@ -12,6 +12,14 @@ services:
         sync: false
       - key: MONGODB_DB
         value: metagram
+      - key: MONGODB_COLLECTION
+        value: app_state
+      - key: MONGODB_ADMIN_URI
+        sync: false
+      - key: MONGODB_ADMIN_DB
+        value: metagram_admin
+      - key: MONGODB_ADMIN_COLLECTION
+        value: admin_state
       - key: MONGODB_KEEPALIVE_INTERVAL_MS
         value: 600000
       - key: SELF_PING_ENABLED

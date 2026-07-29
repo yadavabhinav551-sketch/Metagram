@@ -90,7 +90,7 @@ async function networkFirst(request, fallbackUrl) {
     cache.put(request, response.clone());
     return response;
   } catch {
-    return (await cache.match(request)) || caches.match(fallbackUrl);
+    return (await cache.match(request)) || await caches.match(fallbackUrl);
   }
 }
 
