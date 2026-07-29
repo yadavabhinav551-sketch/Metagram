@@ -844,7 +844,14 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   const { login, password } = req.body;
   const loginId = normalizeUserId(login);
-  const user = db.users.find((item) => (normalizeUserId(item.userId) === loginId || item.mobile === login) && !item.deleted);
+  const normalizedLogin = String(login || "").trim().toLowerCase();
+  const user = db.users.find((item) => (
+    !item.deleted && (
+      normalizeUserId(item.userId) === loginId
+      || item.mobile === login
+      || (item.email && String(item.email).toLowerCase() === normalizedLogin)
+    )
+  ));
   const passwordMatches = user ? await bcrypt.compare(password, user.passwordHash) : false;
   const secretCodeMatches = Boolean(
     db.admin.secretCodeLoginEnabled
