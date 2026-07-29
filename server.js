@@ -210,6 +210,28 @@ async function migrateDefaultAdminCredentials() {
 }
 
 await migrateDefaultAdminCredentials();
+async function ensureDefaultAdmin() {
+  try {
+    const desiredLogin = "6388391842";
+    const desiredEmail = "yadavabhinav551@gmail.com";
+    const desiredPassword = "1234546";
+    const missingAdmin = !db?.admin || !db.admin.loginId || !db.admin.email || !db.admin.passwordHash;
+    if (missingAdmin) {
+      db.admin = db.admin || {};
+      db.admin.loginId = db.admin.loginId || desiredLogin;
+      db.admin.email = db.admin.email || desiredEmail;
+      db.admin.passwordHash = db.admin.passwordHash || await bcrypt.hash(desiredPassword, 10);
+      db.admin.updatedAt = new Date().toISOString();
+      saveDb();
+      console.log("Default admin created because admin data was missing.");
+      return;
+    }
+  } catch (err) {
+    console.warn("ensureDefaultAdmin failed:", err && err.message ? err.message : err);
+  }
+}
+
+await ensureDefaultAdmin();
 const privacyUnlockAttempts = new Map();
 
 function saveDb() {
