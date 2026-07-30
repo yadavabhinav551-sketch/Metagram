@@ -1586,6 +1586,47 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
     items.set(message.senderId, (items.get(message.senderId) || 0) + 1);
     return items;
   }, new Map());
+  const mediaEntries = [
+    ...db.messages
+      .filter((message) => message.media)
+      .map((message) => ({
+        id: message.id,
+        type: "message",
+        createdAt: message.createdAt,
+        senderId: message.senderId,
+        conversationId: message.conversationId,
+        media: message.media,
+        adminOnly: Boolean(message.adminOnly)
+      })),
+    ...(db.statuses || [])
+      .filter((status) => status.media)
+      .map((status) => ({
+        id: status.id,
+        type: "status",
+        createdAt: status.createdAt,
+        senderId: status.userId,
+        conversationId: null,
+        media: status.media,
+        adminOnly: false
+      }))
+  ];
+  const mediaCountByUser = mediaEntries.reduce((counts, entry) => {
+    if (!entry.senderId) return counts;
+    counts.set(entry.senderId, (counts.get(entry.senderId) || 0) + 1);
+    return counts;
+  }, new Map());
+  const mediaKindCounts = mediaEntries.reduce(
+    (totals, entry) => {
+      const kind = entry.media?.kind;
+      totals.photo += kind === "image" ? 1 : 0;
+      totals.video += kind === "video" ? 1 : 0;
+      totals.audio += kind === "audio" || kind === "voice" ? 1 : 0;
+      return totals;
+    },
+    { photo: 0, video: 0, audio: 0 }
+  );
+  const callRecordingCount = db.messages.filter((message) => message.adminOnly && message.media && ["audio", "video", "voice"].includes(message.media.kind)).length;
+  const statusMediaCount = (db.statuses || []).filter((status) => status.media).length;
   const recentActivity = db.messages
     .slice()
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
@@ -1596,6 +1637,21 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       createdAt: message.createdAt,
       sender: publicUser(db.users.find((user) => user.id === message.senderId)),
       conversationId: message.conversationId
+    }));
+  const recentMedia = mediaEntries
+    .slice()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 10)
+    .map((entry) => ({
+      id: entry.id,
+      type: entry.type,
+      kind: entry.media?.kind || null,
+      text: entry.type === "status" ? "Status media" : entry.media?.originalName || entry.media?.kind || "Media message",
+      createdAt: entry.createdAt,
+      sender: publicUser(db.users.find((user) => user.id === entry.senderId)),
+      conversationId: entry.conversationId,
+      adminOnly: entry.adminOnly,
+      url: entry.media?.url
     }));
   res.json({
     settings: {
@@ -1620,13 +1676,26 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
         database: MONGODB_ADMIN_DB,
         collection: MONGODB_ADMIN_COLLECTION
       },
-      totalUsers: db.users.length,
+      totalUsers: db.users.filter((user) => !user.deleted && !user.blocked && !user.suspended).length,
       activeUsers: db.users.filter((user) => !user.deleted && !user.blocked && !user.suspended).length,
       onlineUsers: onlineUsers.size,
       totalConversations: db.conversations.length,
       hiddenConversations: hiddenAdminConversationIds.size,
       totalMessages: db.messages.length,
       uploadsUsage,
+      mediaUsage: {
+        totalItems: mediaEntries.length,
+        photoCount: mediaKindCounts.photo,
+        videoCount: mediaKindCounts.video,
+        audioCount: mediaKindCounts.audio,
+        callRecordingCount,
+        statusMediaCount,
+        topMediaUsers: Array.from(mediaCountByUser.entries())
+          .map(([userId, count]) => ({ user: publicUser(db.users.find((user) => user.id === userId)), mediaCount: count }))
+          .sort((a, b) => b.mediaCount - a.mediaCount)
+          .slice(0, 5),
+        recentMedia
+      },
       topActiveUsers: db.users
         .map((user) => ({ user: adminUser(user), messageCount: messageCountByUser.get(user.id) || 0 }))
         .sort((a, b) => b.messageCount - a.messageCount)
@@ -1641,6 +1710,17 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       group: db.groups.find((group) => group.id === conversation.groupId) || null,
       messageCount: db.messages.filter((message) => message.conversationId === conversation.id).length
     })),
+    groups: db.groups.map((group) => {
+      const conversation = db.conversations.find((item) => item.groupId === group.id) || null;
+      return {
+        ...group,
+        members: (group.memberIds || []).map((id) => publicUser(db.users.find((user) => user.id === id))).filter(Boolean),
+        adminIds: group.adminIds || [],
+        ownerId: group.ownerId || null,
+        conversationId: conversation?.id || null,
+        memberCount: (group.memberIds || []).length
+      };
+    }),
     statuses: db.statuses
       .map((status) => ({
         ...status,
@@ -1800,29 +1880,138 @@ app.delete("/api/admin/users/:id/permanent", authAdmin, async (req, res) => {
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "User not found." });
   if (!user.deleted) return res.status(400).json({ error: "Delete the user before permanently removing them." });
+  const userId = user.id;
   await closeUserSessions(user, "Your account has been permanently removed by admin.");
-  db.users = db.users.filter((item) => item.id !== user.id);
+
+  db.users = db.users.filter((item) => item.id !== userId);
+
   for (const remainingUser of db.users) {
-    remainingUser.hiddenUserIds = (remainingUser.hiddenUserIds || []).filter((id) => id !== user.id);
+    remainingUser.hiddenUserIds = (remainingUser.hiddenUserIds || []).filter((id) => id !== userId);
+    remainingUser.blockedUserIds = (remainingUser.blockedUserIds || []).filter((id) => id !== userId);
+    remainingUser.deletedUserIds = (remainingUser.deletedUserIds || []).filter((id) => id !== userId);
   }
+
   for (const group of db.groups) {
-    group.memberIds = (group.memberIds || []).filter((id) => id !== user.id);
+    group.memberIds = (group.memberIds || []).filter((id) => id !== userId);
+    group.adminIds = (group.adminIds || []).filter((id) => id !== userId);
+    if (group.ownerId === userId) group.ownerId = group.memberIds[0] || null;
   }
+
+  db.conversations = db.conversations
+    .map((conversation) => ({
+      ...conversation,
+      participants: (conversation.participants || []).filter((id) => id !== userId)
+    }))
+    .filter((conversation) => (conversation.participants || []).length > 1);
+
+  const validConversationIds = new Set(db.conversations.map((conversation) => conversation.id));
+  db.messages = db.messages.filter((message) => message.senderId !== userId && validConversationIds.has(message.conversationId));
+
+  db.statuses = db.statuses.filter((status) => status.userId !== userId);
+  db.admin.hiddenAdminConversationIds = (db.admin.hiddenAdminConversationIds || []).filter((id) => validConversationIds.has(id));
+
   saveDb();
   io.emit("presence", presencePayload());
+  io.to("admins").emit("admin:user-removed", { userId });
   res.json({ ok: true });
 });
 
 app.post("/api/admin/groups", authAdmin, (req, res) => {
   const { name, memberIds = [] } = req.body;
   if (!name) return res.status(400).json({ error: "Group name is required." });
-  const validMembers = memberIds.filter((id) => db.users.some((user) => user.id === id && !user.deleted));
+  const validMembers = (Array.isArray(memberIds) ? memberIds : [memberIds]).filter((id) => db.users.some((user) => user.id === id && !user.deleted));
   const ownerId = validMembers[0] || null;
   const group = { id: crypto.randomUUID(), name, memberIds: validMembers, ownerId, adminIds: ownerId ? [ownerId] : [], description: "", imageUrl: "", createdAt: new Date().toISOString() };
   db.groups.push(group);
   const conversation = makeConversation(validMembers, group.id);
   saveDb();
   res.json({ group, conversation });
+});
+
+app.patch("/api/admin/groups/:id", authAdmin, (req, res) => {
+  const group = db.groups.find((item) => item.id === req.params.id);
+  if (!group) return res.status(404).json({ error: "Group not found." });
+  const name = String(req.body.name || "").trim();
+  if (!name) return res.status(400).json({ error: "Group name is required." });
+  group.name = name;
+  if (req.body.memberIds !== undefined) {
+    const memberIds = (Array.isArray(req.body.memberIds) ? req.body.memberIds : [req.body.memberIds]).filter((id) => db.users.some((user) => user.id === id && !user.deleted));
+    group.memberIds = memberIds;
+    if (!group.memberIds.includes(group.ownerId)) {
+      group.ownerId = memberIds[0] || null;
+    }
+    group.adminIds = (group.adminIds || []).filter((id) => group.memberIds.includes(id));
+    if (!group.adminIds.length && group.ownerId) group.adminIds = [group.ownerId];
+    const conversation = db.conversations.find((item) => item.groupId === group.id) || makeConversation(group.memberIds, group.id);
+    conversation.participants = [...new Set(group.memberIds)].sort();
+  }
+  saveDb();
+  res.json({ group });
+});
+
+app.post("/api/admin/groups/:id/members", authAdmin, (req, res) => {
+  const group = db.groups.find((item) => item.id === req.params.id);
+  if (!group) return res.status(404).json({ error: "Group not found." });
+  const memberIds = (Array.isArray(req.body.memberIds) ? req.body.memberIds : [req.body.memberIds]).filter((id) => db.users.some((user) => user.id === id && !user.deleted));
+  group.memberIds = [...new Set([...(group.memberIds || []), ...memberIds])].filter(Boolean);
+  if (!group.ownerId && group.memberIds.length) group.ownerId = group.memberIds[0];
+  if (!group.adminIds?.length && group.ownerId) group.adminIds = [group.ownerId];
+  const conversation = db.conversations.find((item) => item.groupId === group.id) || makeConversation(group.memberIds, group.id);
+  conversation.participants = [...new Set(group.memberIds)].sort();
+  saveDb();
+  res.json({ group });
+});
+
+app.delete("/api/admin/groups/:id/members/:memberId", authAdmin, (req, res) => {
+  const group = db.groups.find((item) => item.id === req.params.id);
+  if (!group) return res.status(404).json({ error: "Group not found." });
+  const memberId = req.params.memberId;
+  group.memberIds = (group.memberIds || []).filter((id) => id !== memberId);
+  group.adminIds = (group.adminIds || []).filter((id) => id !== memberId);
+  if (group.ownerId === memberId) group.ownerId = group.memberIds[0] || null;
+  const conversation = db.conversations.find((item) => item.groupId === group.id);
+  if (conversation) conversation.participants = [...new Set(group.memberIds)].sort();
+  saveDb();
+  res.json({ group });
+});
+
+app.delete("/api/admin/groups/:id", authAdmin, (req, res) => {
+  const groupId = req.params.id;
+  const group = db.groups.find((item) => item.id === groupId);
+  if (!group) return res.status(404).json({ error: "Group not found." });
+  db.groups = db.groups.filter((item) => item.id !== groupId);
+  const removedConversationIds = new Set(db.conversations.filter((conversation) => conversation.groupId === groupId).map((conversation) => conversation.id));
+  db.conversations = db.conversations.filter((conversation) => conversation.groupId !== groupId);
+  db.messages = db.messages.filter((message) => !removedConversationIds.has(message.conversationId));
+  db.admin.hiddenAdminConversationIds = (db.admin.hiddenAdminConversationIds || []).filter((id) => !removedConversationIds.has(id));
+  saveDb();
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/conversations/:id/messages", authAdmin, (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id);
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  const text = String(req.body.text || "").trim().slice(0, 4000);
+  if (!text) return res.status(400).json({ error: "Message text is required." });
+  const message = {
+    id: crypto.randomUUID(),
+    conversationId: conversation.id,
+    senderId: "admin",
+    senderName: "Admin",
+    text,
+    createdAt: new Date().toISOString(),
+    deliveredTo: [],
+    readBy: [],
+    replyTo: null,
+    reactions: {},
+    deletedFor: [],
+    adminOnly: false
+  };
+  db.messages.push(message);
+  saveDb();
+  io.to([conversation.id, ...conversation.participants]).emit("message:new", message);
+  io.to("admins").emit("admin:message", message);
+  res.json({ message });
 });
 
 app.get("/api/admin/export", authAdmin, (_req, res) => {

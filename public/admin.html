@@ -74,6 +74,8 @@
             <div id="adminConversations"></div>
             <h2>User Statuses</h2>
             <div id="adminStatuses"></div>
+            <h2>Media Usage</h2>
+            <div id="adminMediaUsage"></div>
           </aside>
           <aside class="admin-panel settings-panel">
             <h2>Admin Settings</h2>
@@ -111,6 +113,20 @@
               <button class="primary" type="submit">Update credentials</button>
             </form>
             <h2>Groups</h2>
+            <div id="adminGroups"></div>
+            <section id="groupEditor" class="admin-panel-group-editor hidden">
+              <h3>Edit group</h3>
+              <form id="groupEditForm" class="stack">
+                <input id="groupEditName" name="name" placeholder="Group or department name" required>
+                <select id="groupEditMembers" name="members" multiple></select>
+                <div class="group-editor-actions">
+                  <button class="primary" type="submit">Save group</button>
+                  <button id="messageGroupBtn" type="button">Message group</button>
+                  <button id="deleteGroupBtn" class="danger" type="button">Delete group</button>
+                  <button id="cancelEditGroupBtn" type="button">Cancel</button>
+                </div>
+              </form>
+            </section>
             <form id="groupForm" class="stack">
               <input name="name" placeholder="Group or department name" required>
               <select name="members" id="groupMembers" multiple></select>

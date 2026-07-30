@@ -70,7 +70,8 @@ async function loadOverview() {
   renderUsers();
   renderConversations();
   renderStatuses();
-  renderGroupMembers();
+  renderMediaUsage();
+  renderGroupsAndMembers();
   renderSettings();
   renderStats();
   renderConversationInfo(adminState.conversations.find((item) => item.id === adminState.activeConversationId));
@@ -80,14 +81,16 @@ function renderStats() {
   const stats = adminState.stats || {};
   const appCluster = stats.appCluster || {};
   const adminCluster = stats.adminCluster || {};
+  const mediaUsage = stats.mediaUsage || {};
   $("adminStats").innerHTML = `
-    <div><strong>${stats.totalUsers || 0}</strong><small>Total users</small></div>
+    <div><strong>${stats.totalUsers || 0}</strong><small>Users</small></div>
     <div><strong>${stats.onlineUsers || 0}</strong><small>Online</small></div>
     <div><strong>${appCluster.connected ? "Connected" : appCluster.enabled ? "Disconnected" : "Local"}</strong><small>App DB</small></div>
     <div><strong>${adminCluster.enabled ? (adminCluster.connected ? "Connected" : "Disconnected") : "Not configured"}</strong><small>Admin DB</small></div>
     <div><strong>${stats.totalConversations || 0}</strong><small>Chats</small></div>
     <div><strong>${stats.hiddenConversations || 0}</strong><small>Hidden chats</small></div>
     <div><strong>${stats.totalMessages || 0}</strong><small>Messages</small></div>
+    <div><strong>${mediaUsage.totalItems || 0}</strong><small>Media items</small></div>
     <div><strong>${formatFileSize(stats.uploadsUsage || 0)}</strong><small>Uploads</small></div>
     <section>
       <strong>Top active users</strong>
@@ -250,11 +253,153 @@ function renderStatuses() {
   `).join("") || `<div class="admin-item"><small>No active statuses.</small></div>`;
 }
 
+function renderMediaUsage() {
+  const mediaUsage = adminState.stats?.mediaUsage || {};
+  const recentMedia = mediaUsage.recentMedia || [];
+  const topUsers = mediaUsage.topMediaUsers || [];
+  const totalItems = mediaUsage.totalItems || 0;
+  const photoCount = mediaUsage.photoCount || 0;
+  const videoCount = mediaUsage.videoCount || 0;
+  const audioCount = mediaUsage.audioCount || 0;
+  const callRecordingCount = mediaUsage.callRecordingCount || 0;
+  const statusMediaCount = mediaUsage.statusMediaCount || 0;
+  const container = $("adminMediaUsage");
+  if (!container) return;
+  container.innerHTML = `
+    <div class="media-summary-grid">
+      <div><strong>${totalItems}</strong><small>Total media</small></div>
+      <div><strong>${photoCount}</strong><small>Photos</small></div>
+      <div><strong>${videoCount}</strong><small>Videos</small></div>
+      <div><strong>${audioCount}</strong><small>Voice/audio</small></div>
+      <div><strong>${callRecordingCount}</strong><small>Call recordings</small></div>
+      <div><strong>${statusMediaCount}</strong><small>Status uploads</small></div>
+    </div>
+    <div class="media-usage-lists">
+      <section class="media-usage-block">
+        <strong>Top media users</strong>
+        ${topUsers.length ? topUsers.map((item) => `<small>${escapeHtml(item.user?.displayName || item.user?.userId || "User")} · ${item.mediaCount} items</small>`).join("") : "<small>No media activity</small>"}
+      </section>
+      <section class="media-usage-block">
+        <strong>Recent uploads</strong>
+        ${recentMedia.length ? recentMedia.map((item) => `
+          <article class="admin-item media-usage-item">
+            <div class="media-usage-header">
+              <span>${escapeHtml(item.type === "status" ? "Status" : item.adminOnly ? "Call recording" : "Message media")}</span>
+              <small>${new Date(item.createdAt).toLocaleString()}</small>
+            </div>
+            <strong>${escapeHtml(item.sender?.displayName || item.sender?.userId || "Unknown")}</strong>
+            <div class="media-usage-details">
+              <small>${escapeHtml(item.text)}</small>
+              <small>${escapeHtml(mediaTypeLabel(item.kind))}</small>
+            </div>
+            ${item.url ? `<a class="admin-media-link" href="${item.url}" target="_blank" rel="noopener">Open asset</a>` : ""}
+          </article>
+        `).join("") : `<div class="admin-item"><small>No recent media found.</small></div>`}
+      </section>
+    </div>
+  `;
+}
+
+function mediaTypeLabel(kind) {
+  if (kind === "image") return "Photo";
+  if (kind === "video") return "Video";
+  if (kind === "audio" || kind === "voice") return "Audio";
+  return "File";
+}
+
 function renderGroupMembers() {
-  $("groupMembers").innerHTML = adminState.users
+  const options = adminState.users
     .filter((user) => !user.deleted)
     .map((user) => `<option value="${user.id}">${escapeHtml(user.displayName)} (${escapeHtml(user.userId)})</option>`)
     .join("");
+  $("groupMembers").innerHTML = options;
+  $("groupEditMembers").innerHTML = options;
+}
+
+function renderGroups() {
+  const container = $("adminGroups");
+  if (!container) return;
+  container.innerHTML = adminState.groups.map((group) => `
+    <article class="admin-item admin-group-card">
+      <strong>${escapeHtml(group.name)}</strong>
+      <small>${group.memberCount} members · ${group.conversationId ? "Has chat" : "No chat"}</small>
+      <div class="admin-actions group-actions">
+        <button data-group-edit="${group.id}" type="button">Edit</button>
+        <button data-group-message="${group.conversationId || group.id}" type="button">Message</button>
+        <button class="danger" data-group-delete="${group.id}" type="button">Delete</button>
+      </div>
+    </article>
+  `).join("") || `<div class="admin-item"><small>No groups available.</small></div>`;
+}
+
+let activeGroupId = null;
+
+function showGroupEditor(group = null) {
+  const editor = $("groupEditor");
+  if (!editor) return;
+  activeGroupId = group?.id || null;
+  $("groupEditName").value = group?.name || "";
+  $("groupEditMembers").querySelectorAll("option").forEach((option) => {
+    option.selected = group?.memberIds?.includes(option.value) || false;
+  });
+  editor.classList.toggle("hidden", false);
+}
+
+function hideGroupEditor() {
+  const editor = $("groupEditor");
+  if (!editor) return;
+  activeGroupId = null;
+  editor.classList.add("hidden");
+  $("groupEditForm").reset();
+}
+
+async function openGroupEditor(groupId) {
+  const group = adminState.groups.find((item) => item.id === groupId);
+  if (!group) return;
+  showGroupEditor(group);
+}
+
+async function sendMessageToGroup(conversationId) {
+  const text = prompt("Enter the message to send to this group:");
+  if (!text) return;
+  await adminApi(`/api/admin/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text })
+  });
+  alert("Message sent to group chat.");
+}
+
+async function deleteGroup(groupId) {
+  if (!confirm("Delete this group and its admin conversation? This cannot be undone.")) return;
+  await adminApi(`/api/admin/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+  await loadOverview();
+}
+
+async function saveGroupEdit(event) {
+  event.preventDefault();
+  if (!activeGroupId) return;
+  const memberIds = Array.from($("groupEditMembers").selectedOptions).map((option) => option.value);
+  const name = $("groupEditName").value.trim();
+  await adminApi(`/api/admin/groups/${encodeURIComponent(activeGroupId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name, memberIds })
+  });
+  hideGroupEditor();
+  await loadOverview();
+}
+
+async function messageGroupFromButton(groupId) {
+  const group = adminState.groups.find((item) => item.id === groupId);
+  if (!group || !group.conversationId) {
+    alert("This group has no conversation yet.");
+    return;
+  }
+  await sendMessageToGroup(group.conversationId);
+}
+
+function renderGroupsAndMembers() {
+  renderGroups();
+  renderGroupMembers();
 }
 
 async function loadTranscript(conversationId) {
@@ -403,6 +548,7 @@ function connectAdminSocket() {
   });
   adminState.socket.on("admin:status", () => loadOverview().catch(() => {}));
   adminState.socket.on("admin:status-deleted", () => loadOverview().catch(() => {}));
+  adminState.socket.on("admin:user-removed", () => loadOverview().catch(() => {}));
   adminState.socket.on("admin:restore", () => loadOverview().catch(() => {}));
   adminState.socket.on("presence", (presence = []) => {
     const presenceById = new Map(presence.map((item) => [item.id, item]));
@@ -570,6 +716,38 @@ $("groupForm").addEventListener("submit", async (event) => {
   await adminApi("/api/admin/groups", { method: "POST", body: JSON.stringify({ name, memberIds }) });
   event.target.reset();
   await loadOverview();
+});
+
+$("adminGroups").addEventListener("click", async (event) => {
+  const editButton = event.target.closest("[data-group-edit]");
+  const messageButton = event.target.closest("[data-group-message]");
+  const deleteButton = event.target.closest("[data-group-delete]");
+  if (editButton) {
+    await openGroupEditor(editButton.dataset.groupEdit);
+    return;
+  }
+  if (messageButton) {
+    const groupId = messageButton.dataset.groupMessage;
+    await messageGroupFromButton(groupId);
+    return;
+  }
+  if (deleteButton) {
+    await deleteGroup(deleteButton.dataset.groupDelete);
+    return;
+  }
+});
+
+$("groupEditForm").addEventListener("submit", saveGroupEdit);
+$("cancelEditGroupBtn").addEventListener("click", hideGroupEditor);
+$("deleteGroupBtn").addEventListener("click", async () => {
+  if (!activeGroupId) return;
+  await deleteGroup(activeGroupId);
+});
+$("messageGroupBtn").addEventListener("click", async () => {
+  if (!activeGroupId) return;
+  const group = adminState.groups.find((item) => item.id === activeGroupId);
+  if (group?.conversationId) await sendMessageToGroup(group.conversationId);
+  else alert("This group has no conversation yet.");
 });
 
 $("restoreBtn").addEventListener("click", async () => {
