@@ -770,8 +770,12 @@ function handlePrivacyVisibilityChange() {
   else handlePrivacyReturn();
 }
 
+function formatCalculatorDisplayValue(value) {
+  return String(value).replace(/\*/g, "×").replace(/\//g, "÷");
+}
+
 function updateCalculatorDisplay(value = state.calculatorExpression || "0") {
-  $("calculatorDisplay").textContent = value;
+  $("calculatorDisplay").textContent = formatCalculatorDisplayValue(value);
 }
 
 function updateCalculatorHistory(text = "") {
