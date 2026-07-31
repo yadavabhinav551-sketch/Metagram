@@ -64,7 +64,8 @@ const state = {
     type: "voice",
     shouldRecord: false,
     incoming: false,
-    active: false
+    active: false,
+    viewMode: "default"
   }
 };
 
@@ -2270,10 +2271,13 @@ async function prepareCall({ conversationId, peerId, incoming = false, type = "v
   state.call.type = type;
   state.call.shouldRecord = shouldRecord;
   state.call.active = true;
+  state.call.viewMode = "default";
   $("callTitle").textContent = type === "video" ? "Video call" : "Voice call";
   $("callModal").classList.remove("hidden");
   $("callVideoGrid").classList.toggle("hidden", type !== "video");
   $("switchCallCameraBtn").classList.toggle("hidden", type !== "video");
+  $("toggleCallViewBtn").classList.toggle("hidden", type !== "video");
+  updateCallViewMode();
   $("incomingCallActions").classList.toggle("hidden", !incoming);
   $("endCallBtn").classList.toggle("hidden", incoming);
   $("callBtn").classList.add("active-call");
@@ -2377,7 +2381,8 @@ function endCall(notifyPeer = true) {
     type: "voice",
     shouldRecord: false,
     incoming: false,
-    active: false
+    active: false,
+    viewMode: "default"
   };
   $("remoteAudio").srcObject = null;
   $("remoteVideo").srcObject = null;
@@ -2389,7 +2394,18 @@ function endCall(notifyPeer = true) {
   $("endCallBtn").classList.remove("hidden");
   $("callBtn").classList.remove("active-call");
   $("videoCallBtn").classList.remove("active-call");
+  $("callVideoGrid").classList.remove("swap-view");
   renderHeader();
+}
+
+function updateCallViewMode() {
+  const grid = $("callVideoGrid");
+  if (!grid) return;
+  grid.classList.toggle("swap-view", state.call.viewMode === "swapped");
+  const button = $("toggleCallViewBtn");
+  if (button) {
+    button.textContent = state.call.viewMode === "swapped" ? "Normal view" : "Swap view";
+  }
 }
 
 function escapeHtml(value = "") {
@@ -3071,6 +3087,10 @@ $("cameraSelect").addEventListener("change", () => {
 });
 $("switchCallCameraBtn").addEventListener("click", () => {
   switchCallCamera();
+});
+$("toggleCallViewBtn").addEventListener("click", () => {
+  state.call.viewMode = state.call.viewMode === "swapped" ? "default" : "swapped";
+  updateCallViewMode();
 });
 $("callBtn").addEventListener("click", () => {
   if (!directPeer()) return;
