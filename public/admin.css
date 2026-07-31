@@ -402,6 +402,74 @@ button.admin-item:hover,
   overflow-wrap: anywhere;
 }
 
+.admin-media-button {
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: rgba(59, 77, 184, 0.08);
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin-left: 8px;
+}
+
+.admin-media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.admin-media-with-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-media {
+  display: grid;
+  gap: 10px;
+}
+
+.media-modal-card {
+  width: min(780px, 100%);
+  max-height: min(90vh, 90%);
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.media-fullscreen-video {
+  width: 100%;
+  max-height: min(70vh, 80vh);
+  border-radius: 12px;
+  background: #000;
+}
+
+.media-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+}
+
+.modal-layer.hidden {
+  display: none;
+}
+
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(15, 23, 21, 0.8);
+}
+
+.media-modal-card {
+  background: #11161a;
+  border-radius: 16px;
+  color: #fff;
+}
+
 .admin-media-link:hover {
   text-decoration: underline;
 }

@@ -2322,6 +2322,9 @@ function showIncomingCall({ conversationId, fromUserId, fromName, callType = "vo
   $("callTitle").textContent = `${fromName || "User"} is calling`;
   $("callStatus").textContent = callType === "video" ? "Incoming video call" : "Incoming voice call";
   $("callVideoGrid").classList.toggle("hidden", callType !== "video");
+  $("switchCallCameraBtn").classList.toggle("hidden", callType !== "video");
+  $("toggleCallViewBtn").classList.toggle("hidden", callType !== "video");
+  updateCallViewMode();
   $("incomingCallActions").classList.remove("hidden");
   $("endCallBtn").classList.add("hidden");
   $("callModal").classList.remove("hidden");

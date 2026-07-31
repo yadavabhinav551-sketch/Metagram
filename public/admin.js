@@ -501,6 +501,22 @@ async function toggleActiveConversationHiddenStatus() {
   }
 }
 
+async function cleanupClusterData(cluster, buttonId) {
+  if (!confirm(`This will permanently remove all non-essential data from the ${cluster} cluster. Admin credentials and required login state will remain. Continue?`)) return;
+  const button = $(buttonId);
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await adminApi(`/api/admin/cleanup?cluster=${encodeURIComponent(cluster)}`, { method: "POST" });
+    alert(`Cluster cleanup complete for ${cluster}.`);
+    await loadOverview();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function deleteActiveConversationFromAdmin() {
   const conversationId = adminState.activeConversationId;
   if (!conversationId) return;
@@ -551,11 +567,32 @@ function renderAdminReactions(message) {
 
 function renderAdminMedia(media, message = null) {
   if (!media) return "";
-  const fileLink = `<a class="admin-media-link" href="${media.url}" target="_blank" rel="noopener" download="${escapeHtml(media.originalName || "media")}">${escapeHtml(media.originalName || "Download media")}</a>`;
-  if (media.kind === "image") return `<div class="admin-media"><img src="${media.url}" alt="${escapeHtml(media.originalName)}">${fileLink}</div>`;
-  if (media.kind === "audio" || media.kind === "voice") return `<div class="admin-media"><audio controls preload="metadata" src="${media.url}"></audio>${fileLink}</div>`;
-  if (media.kind === "video") return `<div class="admin-media"><video controls preload="metadata" src="${media.url}"></video>${fileLink}</div>`;
-  return `<a href="${media.url}" target="_blank" rel="noopener">${escapeHtml(media.originalName)}</a>`;
+  const downloadLink = `<a class="admin-media-link" href="${media.url}" target="_blank" rel="noopener" download="${escapeHtml(media.originalName || "media")}">${escapeHtml(media.originalName || "Download media")}</a>`;
+  const fullscreenButton = `<button class="admin-media-link admin-media-button" data-fullscreen-url="${media.url}" data-fullscreen-name="${escapeHtml(media.originalName || "media")}" type="button">Fullscreen</button>`;
+  if (media.kind === "image") return `<div class="admin-media admin-media-with-actions"><img src="${media.url}" alt="${escapeHtml(media.originalName)}"><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
+  if (media.kind === "audio" || media.kind === "voice") return `<div class="admin-media admin-media-with-actions"><audio controls preload="metadata" src="${media.url}"></audio><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
+  if (media.kind === "video") return `<div class="admin-media admin-media-with-actions"><video controls preload="metadata" src="${media.url}"></video><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
+  return `<div class="admin-media admin-media-with-actions"><div>${escapeHtml(media.originalName)}</div><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
+}
+
+function openAdminMediaFullscreen(url, name = "media") {
+  const video = $("adminMediaFullscreenVideo");
+  const downloadLink = $("adminMediaDownloadLink");
+  if (!video || !downloadLink) return;
+  video.src = url;
+  video.setAttribute("controls", "");
+  downloadLink.href = url;
+  downloadLink.download = name;
+  $("adminMediaModal").classList.remove("hidden");
+}
+
+function closeAdminMediaFullscreen() {
+  const video = $("adminMediaFullscreenVideo");
+  if (video) {
+    video.pause();
+    video.src = "";
+  }
+  $("adminMediaModal").classList.add("hidden");
 }
 
 async function updateUser(id, patch) {
@@ -660,6 +697,19 @@ $("adminConversations").addEventListener("click", async (event) => {
   if (button) await loadTranscript(button.dataset.conversation);
 });
 
+$("adminMessages").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-fullscreen-url]");
+  if (!button) return;
+  const url = button.dataset.fullscreenUrl;
+  const name = button.dataset.fullscreenName || "media";
+  openAdminMediaFullscreen(url, name);
+});
+
+$("adminMediaCloseBtn").addEventListener("click", closeAdminMediaFullscreen);
+$("adminMediaModal").addEventListener("click", (event) => {
+  if (event.target === $("adminMediaModal")) closeAdminMediaFullscreen();
+});
+
 $("conversationSearchInput").addEventListener("input", (event) => {
   adminState.conversationSearch = event.target.value || "";
   renderConversations();
@@ -688,6 +738,9 @@ $("toggleConversationHiddenBtn").addEventListener("click", toggleActiveConversat
 
 $("clearTranscriptBtn").addEventListener("click", clearActiveTranscript);
 $("deleteAdminConversationBtn").addEventListener("click", deleteActiveConversationFromAdmin);
+$("cleanupAppClusterBtn").addEventListener("click", async () => cleanupClusterData("app", "cleanupAppClusterBtn"));
+$("cleanupAdminClusterBtn").addEventListener("click", async () => cleanupClusterData("admin", "cleanupAdminClusterBtn"));
+$("cleanupBothClustersBtn").addEventListener("click", async () => cleanupClusterData("both", "cleanupBothClustersBtn"));
 
 $("adminLogoutBtn").addEventListener("click", () => {
   adminState.socket?.disconnect();

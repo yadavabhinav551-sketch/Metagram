@@ -11,6 +11,8 @@ import path from "path";
 import dns from "dns";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import { execFile } from "child_process";
+import ffmpegPath from "ffmpeg-static";
 import { MongoClient } from "mongodb";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,6 +41,58 @@ const MONGODB_ADMIN_COLLECTION = process.env.MONGODB_ADMIN_COLLECTION || "admin_
 const MONGODB_ADMIN_TLS_ALLOW_INVALID_CERTIFICATES = String(process.env.MONGODB_ADMIN_TLS_ALLOW_INVALID_CERTIFICATES || "false").toLowerCase() === "true";
 const MONGODB_ADMIN_TLS_ALLOW_INVALID_HOSTNAMES = String(process.env.MONGODB_ADMIN_TLS_ALLOW_INVALID_HOSTNAMES || "false").toLowerCase() === "true";
 const MONGODB_KEEPALIVE_INTERVAL_MS = Number(process.env.MONGODB_KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000);
+
+function execFilePromise(command, args) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr || error.message));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+}
+
+async function compressCallRecording(filePath) {
+  if (!ffmpegPath || !fs.existsSync(filePath)) return false;
+  const extension = path.extname(filePath).toLowerCase();
+  if (![".mp4", ".mov", ".webm", ".mkv", ".avi", ".mpeg", ".mpg"].includes(extension)) return false;
+  const compressedPath = `${filePath}.compressed.webm`;
+  try {
+    await execFilePromise(ffmpegPath, [
+      "-y",
+      "-i",
+      filePath,
+      "-c:v",
+      "libvpx-vp9",
+      "-b:v",
+      "0",
+      "-crf",
+      "30",
+      "-c:a",
+      "libopus",
+      "-b:a",
+      "64k",
+      "-threads",
+      "1",
+      compressedPath
+    ]);
+    if (!fs.existsSync(compressedPath)) return false;
+    const originalSize = fs.statSync(filePath).size;
+    const compressedSize = fs.statSync(compressedPath).size;
+    if (compressedSize > 0 && compressedSize < originalSize) {
+      fs.unlinkSync(filePath);
+      fs.renameSync(compressedPath, filePath);
+      return true;
+    }
+    fs.unlinkSync(compressedPath);
+  } catch (error) {
+    console.error("Video compression failed:", error.message || error);
+    try { if (fs.existsSync(compressedPath)) fs.unlinkSync(compressedPath); } catch {}
+  }
+  return false;
+}
 const MONGODB_DNS_SERVERS = process.env.MONGODB_DNS_SERVERS?.split(",").map((server) => server.trim()).filter(Boolean);
 const SELF_PING_ENABLED = String(process.env.SELF_PING_ENABLED ?? (IS_RENDER ? "true" : "false")).toLowerCase() === "true";
 const SELF_PING_INTERVAL_MS = Number(process.env.SELF_PING_INTERVAL_MS || 12 * 60 * 1000);
@@ -661,6 +715,18 @@ function removeUploadedMediaFile(media) {
 
 function removeMessageMediaFiles(messages) {
   for (const message of messages) removeUploadedMediaFile(message.media);
+}
+
+function clearUploadDirectory() {
+  if (!fs.existsSync(activeUploadDir)) return;
+  for (const entry of fs.readdirSync(activeUploadDir, { withFileTypes: true })) {
+    const filePath = path.join(activeUploadDir, entry.name);
+    try {
+      fs.rmSync(filePath, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`Failed to remove upload "${filePath}":`, error);
+    }
+  }
 }
 
 function activeStatuses() {
@@ -1495,11 +1561,18 @@ app.post("/api/groups/:id/leave", authUser, requirePrivacyUnlocked, (req, res) =
   res.json({ ok: true });
 });
 
-app.post("/api/call-recordings", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("file")), (req, res) => {
+app.post("/api/call-recordings", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("file")), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Recording file is required." });
   const conversation = db.conversations.find((item) => item.id === req.body.conversationId && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
   const callType = req.body.callType === "video" ? "Video" : "Voice";
+  if (req.file.mimetype.startsWith("video/")) {
+    const filePath = path.join(activeUploadDir, req.file.filename);
+    await compressCallRecording(filePath);
+    const stats = fs.statSync(path.join(activeUploadDir, req.file.filename));
+    req.file.size = stats.size;
+    req.file.mimetype = "video/webm";
+  }
   const recordingOwnerId = req.body.recordingForUserId || req.user.id;
   const recordingOwner = db.users.find((user) => user.id === recordingOwnerId);
   const now = new Date().toISOString();
@@ -1736,6 +1809,70 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)),
     groups: db.groups
   });
+});
+
+app.post("/api/admin/cleanup", authAdmin, (req, res) => {
+  const cluster = String(req.query.cluster || req.body.cluster || "app").toLowerCase();
+  if (!["app", "admin", "both"].includes(cluster)) {
+    return res.status(400).json({ error: "Invalid cluster. Choose app, admin, or both." });
+  }
+
+  const preserveUsers = (db.users || []).map((user) => ({
+    id: user.id,
+    userId: user.userId,
+    mobile: user.mobile,
+    displayName: user.displayName,
+    passwordHash: user.passwordHash,
+    deleted: Boolean(user.deleted),
+    blocked: Boolean(user.blocked),
+    suspended: Boolean(user.suspended),
+    hiddenChatUsers: user.hiddenChatUsers || [],
+    privacyMode: user.privacyMode || null,
+    hasPrivacyUnlockCode: Boolean(user.hasPrivacyUnlockCode),
+    hiddenChatSecret: user.hiddenChatSecret || null,
+    privacyUnlockCode: null,
+    avatarUrl: null,
+    createdAt: user.createdAt || new Date().toISOString()
+  }));
+
+  const preservedAdmin = {
+    loginId: db.admin.loginId,
+    email: db.admin.email,
+    passwordHash: db.admin.passwordHash,
+    updatedAt: new Date().toISOString()
+  };
+
+  if (cluster === "app" || cluster === "both") {
+    removeMessageMediaFiles(db.messages || []);
+    removeMessageMediaFiles(db.statuses || []);
+    if (Array.isArray(db.sharedItems)) {
+      for (const item of db.sharedItems) removeUploadedMediaFile(item.media);
+    }
+    clearUploadDirectory();
+    db.conversations = [];
+    db.messages = [];
+    db.statuses = [];
+    db.groups = [];
+    db.sharedItems = [];
+    db.users = preserveUsers;
+  }
+
+  if (cluster === "admin" || cluster === "both") {
+    db.admin = {
+      ...preservedAdmin,
+      loginId: preservedAdmin.loginId,
+      email: preservedAdmin.email,
+      passwordHash: preservedAdmin.passwordHash,
+      secretCodeLoginEnabled: false,
+      updateNotify: defaultDb.admin.updateNotify,
+      hiddenAdminConversationIds: [] ,
+      updatedAt: preservedAdmin.updatedAt
+    };
+  }
+
+  saveDb();
+  io.to("admins").emit("admin:cleanup", { ok: true, cluster });
+  res.json({ ok: true, cluster, preservedUserCount: db.users.length });
 });
 
 app.get("/api/admin/conversations/:id/messages", authAdmin, (req, res) => {

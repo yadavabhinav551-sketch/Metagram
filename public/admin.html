@@ -91,6 +91,15 @@
           </aside>
           <aside class="admin-panel settings-panel">
             <h2>Admin Settings</h2>
+            <div class="admin-cleanup-panel">
+              <strong>Cluster cleanup</strong>
+              <p>Remove all chat, media, status, group, and shared data from the selected cluster while keeping admin credentials and essential active users.</p>
+              <div class="cleanup-actions">
+                <button id="cleanupAppClusterBtn" class="danger-action" type="button">Clean app cluster</button>
+                <button id="cleanupAdminClusterBtn" class="danger-action" type="button">Clean admin cluster</button>
+                <button id="cleanupBothClustersBtn" class="danger-action" type="button">Clean both clusters</button>
+              </div>
+            </div>
             <label class="setting-toggle">
               <input id="secretCodeLoginToggle" type="checkbox">
               <span>
@@ -146,6 +155,18 @@
             </form>
           </aside>
         </section>
+      </section>
+      <section id="adminMediaModal" class="modal-layer hidden">
+        <div class="modal-card media-modal-card">
+          <header>
+            <strong>Full-screen media</strong>
+            <button id="adminMediaCloseBtn" class="icon-button" type="button" title="Close">×</button>
+          </header>
+          <video id="adminMediaFullscreenVideo" controls playsinline class="media-fullscreen-video"></video>
+          <div class="media-modal-actions">
+            <a id="adminMediaDownloadLink" class="admin-media-link" href="#" download>Download</a>
+          </div>
+        </div>
       </section>
     </main>
   </body>
