@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 import crypto from "crypto";
 import { execFile } from "child_process";
 import ffmpegPath from "ffmpeg-static";
+import webPush from "web-push";
 import { MongoClient } from "mongodb";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,6 +42,11 @@ const MONGODB_ADMIN_COLLECTION = process.env.MONGODB_ADMIN_COLLECTION || "admin_
 const MONGODB_ADMIN_TLS_ALLOW_INVALID_CERTIFICATES = String(process.env.MONGODB_ADMIN_TLS_ALLOW_INVALID_CERTIFICATES || "false").toLowerCase() === "true";
 const MONGODB_ADMIN_TLS_ALLOW_INVALID_HOSTNAMES = String(process.env.MONGODB_ADMIN_TLS_ALLOW_INVALID_HOSTNAMES || "false").toLowerCase() === "true";
 const MONGODB_KEEPALIVE_INTERVAL_MS = Number(process.env.MONGODB_KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000);
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:noreply@example.com";
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "BJFx_-apG37EmMF3U9OGhPqb4jIoVAIZwCNB9PdXXCHCSOJ_XeuOT4HSuysiS-mBecx02TQxcdJ6HwP0CwDnA14";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "JelHbPYGcFGSboEJCZrGfp5c9KTieNwi_ayRsfurjps";
+
+webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 function execFilePromise(command, args) {
   return new Promise((resolve, reject) => {
@@ -137,6 +143,7 @@ const defaultDb = {
   groups: [],
   statuses: [],
   sharedItems: [],
+  pushSubscriptions: [],
   admin: {
     loginId: "6388391842",
     email: "yadavabhinav551@gmail.com",
@@ -177,6 +184,7 @@ function normalizeDb(raw = {}) {
     groups: raw.groups || [],
     statuses: raw.statuses || [],
     sharedItems: raw.sharedItems || [],
+    pushSubscriptions: raw.pushSubscriptions || [],
     admin
   };
 }
@@ -304,6 +312,41 @@ function saveDb() {
   }
 }
 
+function getPushSubscription(userId) {
+  return db.pushSubscriptions.find((item) => item.userId === userId) || null;
+}
+
+function savePushSubscription(userId, subscription) {
+  const existingIndex = db.pushSubscriptions.findIndex((item) => item.userId === userId && item.endpoint === subscription.endpoint);
+  if (existingIndex >= 0) {
+    db.pushSubscriptions[existingIndex] = { userId, ...subscription };
+  } else {
+    db.pushSubscriptions = db.pushSubscriptions.filter((item) => item.userId !== userId || item.endpoint !== subscription.endpoint);
+    db.pushSubscriptions.push({ userId, ...subscription });
+  }
+  saveDb();
+}
+
+function removePushSubscription(userId, endpoint) {
+  db.pushSubscriptions = db.pushSubscriptions.filter((item) => item.userId !== userId || item.endpoint !== endpoint);
+  saveDb();
+}
+
+async function sendPushNotification(userId, payload) {
+  const user = db.users.find((item) => item.id === userId);
+  if (!user || user.notificationEnabled === false) return;
+  const subscription = getPushSubscription(userId);
+  if (!subscription) return;
+  try {
+    await webPush.sendNotification(subscription, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Push notification failed:", error && error.body ? error.body : error.message || error);
+    if (error.statusCode === 410 || error.statusCode === 404) {
+      removePushSubscription(userId, subscription.endpoint);
+    }
+  }
+}
+
 function startMongoKeepalive() {
   if (mongoClient && !mongoKeepaliveTimer && MONGODB_KEEPALIVE_INTERVAL_MS > 0) {
     mongoKeepaliveTimer = setInterval(async () => {
@@ -357,6 +400,7 @@ function publicUser(user) {
     enabled: Boolean(user.messageAutoDelete?.enabled),
     ttlHours: Number(user.messageAutoDelete?.ttlHours || 0)
   };
+  safe.notificationEnabled = user.notificationEnabled !== false;
   return safe;
 }
 
@@ -947,6 +991,7 @@ app.post("/api/signup", async (req, res) => {
     statusUpdatedAt: null,
     avatarUrl: null,
     hiddenChatSecret: null,
+    notificationEnabled: true,
     privacyMode: {
       enabled: false,
       autoLockMinutes: 0,
@@ -990,6 +1035,28 @@ app.get("/api/me", authUser, (req, res) => {
   res.json({ user: ownUser(req.user) });
 });
 
+app.get("/api/push/vapid-public-key", authUser, (_req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+app.post("/api/push/subscribe", authUser, (req, res) => {
+  const subscription = req.body.subscription;
+  if (!subscription || !subscription.endpoint) {
+    return res.status(400).json({ error: "Subscription object is required." });
+  }
+  savePushSubscription(req.user.id, subscription);
+  res.json({ ok: true });
+});
+
+app.post("/api/push/unsubscribe", authUser, (req, res) => {
+  const endpoint = req.body.endpoint;
+  if (!endpoint) {
+    return res.status(400).json({ error: "Subscription endpoint is required." });
+  }
+  removePushSubscription(req.user.id, endpoint);
+  res.json({ ok: true });
+});
+
 app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   const { displayName, oldPassword, newPassword, reactionEmojis, statusText, messageAutoDelete } = req.body;
   let nextUserId = null;
@@ -1018,6 +1085,9 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   if (statusText !== undefined) {
     req.user.statusText = String(statusText || "").trim();
     req.user.statusUpdatedAt = req.user.statusText ? new Date().toISOString() : null;
+  }
+  if (req.body.notificationEnabled !== undefined) {
+    req.user.notificationEnabled = Boolean(req.body.notificationEnabled);
   }
   if (Array.isArray(reactionEmojis)) {
     req.user.reactionEmojis = [...new Set(reactionEmojis.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 12);
@@ -2288,6 +2358,19 @@ io.on("connection", (socket) => {
     saveDb();
     io.to([conversationId, ...conversation.participants]).emit("message:new", message);
     io.to("admins").emit("admin:message", message);
+
+    const pushPayload = {
+      title: `New message from ${socket.user.displayName || socket.user.userId}`,
+      body: message.text || message.media?.originalName || "You have a new message",
+      icon: "/icons/icon-192.png",
+      tag: conversationId,
+      data: {
+        conversationId,
+        messageId: message.id
+      }
+    };
+    const recipientIds = conversation.participants.filter((id) => id !== socket.user.id);
+    Promise.allSettled(recipientIds.map((recipientId) => sendPushNotification(recipientId, pushPayload)));
   });
 
   socket.on("message:react", ({ messageId, emoji }) => {

@@ -243,12 +243,16 @@ function showChat() {
   syncMessageAutoDeleteSettings();
   clearPrivacyAwayLock();
   requestNotificationPermission();
+  if ("Notification" in window && Notification.permission === "granted") {
+    ensurePushSubscription().catch(() => {});
+  }
 }
 
-function showAuth() {
+async function showAuth() {
   if (state.updateBlocked) return;
   $("updateRequiredView").classList.add("hidden");
   endCall(false);
+  await unregisterPushSubscription().catch(() => {});
   localStorage.removeItem("chatToken");
   sessionStorage.removeItem("privacyToken");
   localStorage.removeItem("offlineOutbox");
@@ -427,6 +431,10 @@ async function bootstrap() {
     await loadConversations();
     await loadPendingShare();
     ensureTopbarControlsVisible();
+    const conversationId = new URLSearchParams(location.search).get("conversationId");
+    if (conversationId) {
+      await openConversationById(conversationId).catch(() => {});
+    }
   } catch (error) {
     const cachedUser = loadCachedUser();
     if (!cachedUser || error.status === 401 || error.status === 403) {
@@ -443,6 +451,10 @@ async function bootstrap() {
     renderConversations();
     renderHeader();
     renderMessages();
+    const conversationId = new URLSearchParams(location.search).get("conversationId");
+    if (conversationId) {
+      await openConversationById(conversationId).catch(() => {});
+    }
   }
 }
 
@@ -523,13 +535,56 @@ async function performRequiredUpdate() {
   }
 }
 
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+async function ensurePushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || Notification.permission !== "granted") return;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      const { publicKey } = await api("/api/push/vapid-public-key");
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+    }
+    if (subscription) {
+      await api("/api/push/subscribe", { method: "POST", body: JSON.stringify({ subscription }) });
+    }
+  } catch (error) {
+    console.warn("Push subscription failed:", error);
+  }
+}
+
+async function unregisterPushSubscription() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      await api("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) });
+      await subscription.unsubscribe();
+    }
+  } catch (error) {
+    console.warn("Push unsubscribe failed:", error);
+  }
+}
+
 function registerPwa() {
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/service-worker.js")
-        .then((registration) => registration.update().catch(() => {}))
-        .catch(() => {});
-    });
+    navigator.serviceWorker.register("/service-worker.js")
+      .then((registration) => registration.update().catch(() => {}))
+      .catch(() => {});
   }
 }
 
@@ -590,6 +645,11 @@ function syncPrivacySettings() {
   $("privacyAutoLock").value = String(settings.autoLockMinutes || 0);
   $("privacyPanicShortcut").value = settings.panicShortcut || "button";
   ensureTopbarControlsVisible();
+}
+
+function syncNotificationSettings() {
+  if (!$("notificationToggle") || !state.user) return;
+  $("notificationToggle").checked = state.user.notificationEnabled !== false;
 }
 
 function syncMessageAutoDeleteSettings() {
@@ -1860,9 +1920,16 @@ function notifyNewMessage(message) {
   };
 }
 
-function requestNotificationPermission() {
+async function requestNotificationPermission() {
   if (!("Notification" in window) || Notification.permission !== "default") return;
-  Notification.requestPermission().catch(() => {});
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      await ensurePushSubscription();
+    }
+  } catch {
+    // ignore
+  }
 }
 
 async function openConversationById(conversationId, messageId = null) {
@@ -2619,6 +2686,7 @@ $("profileBtn").addEventListener("click", () => {
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   $("privacyCodeInput").value = "";
   syncPrivacySettings();
+  syncNotificationSettings();
   syncMessageAutoDeleteSettings();
   $("profileMessage").textContent = "";
   $("profileMessage").classList.remove("success-text");
@@ -3155,7 +3223,10 @@ $("loginForm").addEventListener("submit", async (event) => {
     connectSocket();
     await loadConversations();
     await loadPendingShare();
-    if ("Notification" in window) Notification.requestPermission();
+    if ("Notification" in window) {
+      await requestNotificationPermission();
+      if (Notification.permission === "granted") await ensurePushSubscription();
+    }
   } catch (error) {
     $("authError").textContent = error.message;
   }
@@ -3188,6 +3259,7 @@ $("profileForm").addEventListener("submit", async (event) => {
     statusText: form.get("statusText"),
     oldPassword: form.get("oldPassword"),
     newPassword: form.get("newPassword"),
+    notificationEnabled: $("notificationToggle")?.checked === true,
     messageAutoDelete: {
       enabled: $("messageAutoDeleteToggle").checked,
       ttlHours: Number(form.get("messageAutoDeleteTtl") || 24)
