@@ -228,6 +228,31 @@
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.recording-view-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #4c5a78;
+  font-size: 13px;
+}
+
+.recording-view-control select {
+  border: 1px solid #d7e0ef;
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: #fff;
+  color: #24325c;
+}
+
+.recording-side-tag {
+  display: inline-block;
+  margin-top: 8px;
+  color: #3b4db8;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .transcript-head h2 {

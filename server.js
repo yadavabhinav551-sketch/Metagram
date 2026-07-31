@@ -1500,6 +1500,8 @@ app.post("/api/call-recordings", authUser, requirePrivacyUnlocked, handleMulterU
   const conversation = db.conversations.find((item) => item.id === req.body.conversationId && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
   const callType = req.body.callType === "video" ? "Video" : "Voice";
+  const recordingOwnerId = req.body.recordingForUserId || req.user.id;
+  const recordingOwner = db.users.find((user) => user.id === recordingOwnerId);
   const now = new Date().toISOString();
   const recording = {
     id: crypto.randomUUID(),
@@ -1508,6 +1510,8 @@ app.post("/api/call-recordings", authUser, requirePrivacyUnlocked, handleMulterU
     text: `${callType} call recording`,
     media: mediaFromFile(req.file),
     adminOnly: true,
+    recordingForUserId: recordingOwnerId,
+    recordingForDisplayName: recordingOwner?.displayName || recordingOwner?.userId || "User",
     createdAt: now,
     deliveredTo: [],
     readBy: [req.user.id],

@@ -12,7 +12,8 @@ const adminState = {
   revealedHiddenCodes: new Set(),
   revealedPrivacyCodes: new Set(),
   showHiddenConversations: false,
-  conversationSearch: ""
+  conversationSearch: "",
+  recordingFilterUserId: ""
 };
 
 const $ = (id) => document.getElementById(id);
@@ -410,17 +411,31 @@ async function loadTranscript(conversationId) {
   $("clearTranscriptBtn").disabled = false;
   $("deleteAdminConversationBtn").disabled = false;
   renderConversationInfo(conversation);
+  const existingFilter = adminState.recordingFilterUserId;
+  const select = $("recordingViewSelect");
+  const participantOptions = (conversation?.members || []).filter(Boolean).map((user) => `<option value="${user.id}" ${existingFilter === user.id ? "selected" : ""}>${escapeHtml(user.displayName || user.userId || "User")}</option>`).join("");
+  select.innerHTML = `<option value="">All recordings</option>${participantOptions}`;
+  if (!existingFilter || !(conversation?.members || []).some((user) => user.id === existingFilter)) {
+    adminState.recordingFilterUserId = "";
+    select.value = "";
+  }
   const { messages } = await adminApi(`/api/admin/conversations/${conversationId}/messages`);
-  $("adminMessages").innerHTML = messages.map((message) => {
+  const filteredMessages = messages.filter((message) => {
+    if (!adminState.recordingFilterUserId) return true;
+    if (message.recordingForUserId) return message.recordingForUserId === adminState.recordingFilterUserId;
+    return false;
+  });
+  $("adminMessages").innerHTML = filteredMessages.map((message) => {
     const sender = adminState.users.find((user) => user.id === message.senderId);
     return `
       <article class="admin-message">
         <strong>${escapeHtml(sender?.displayName || "Unknown")}</strong>
         <small>${new Date(message.createdAt).toLocaleString()} · hidden for ${message.deletedFor?.length || 0} users</small>
+        ${message.recordingForUserId ? `<small class="recording-side-tag">Recorded from: ${escapeHtml(message.recordingForDisplayName || "User")}</small>` : ""}
         ${renderAdminFlags(message)}
         ${renderAdminReply(message.replyTo)}
         ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
-        ${renderAdminMedia(message.media)}
+        ${renderAdminMedia(message.media, message)}
         ${renderAdminReactions(message)}
       </article>`;
   }).join("") || "No messages.";
@@ -510,7 +525,7 @@ function renderAdminReactions(message) {
   `;
 }
 
-function renderAdminMedia(media) {
+function renderAdminMedia(media, message = null) {
   if (!media) return "";
   const fileLink = `<a class="admin-media-link" href="${media.url}" target="_blank" rel="noopener" download="${escapeHtml(media.originalName || "media")}">${escapeHtml(media.originalName || "Download media")}</a>`;
   if (media.kind === "image") return `<div class="admin-media"><img src="${media.url}" alt="${escapeHtml(media.originalName)}">${fileLink}</div>`;
@@ -624,6 +639,13 @@ $("adminConversations").addEventListener("click", async (event) => {
 $("conversationSearchInput").addEventListener("input", (event) => {
   adminState.conversationSearch = event.target.value || "";
   renderConversations();
+});
+
+$("recordingViewSelect").addEventListener("change", async (event) => {
+  adminState.recordingFilterUserId = event.target.value || "";
+  if (adminState.activeConversationId) {
+    await loadTranscript(adminState.activeConversationId);
+  }
 });
 
 $("showHiddenConversationsToggle").addEventListener("change", (event) => {

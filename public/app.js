@@ -2003,6 +2003,7 @@ async function uploadCallRecording(file, conversationId, callType = "voice") {
   form.append("file", file);
   form.append("conversationId", conversationId);
   form.append("callType", callType);
+  form.append("recordingForUserId", state.user?.id || "");
   const response = await fetch("/api/call-recordings", {
     method: "POST",
     headers: {
