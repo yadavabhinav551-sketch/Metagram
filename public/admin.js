@@ -411,16 +411,40 @@ async function loadTranscript(conversationId) {
   $("clearTranscriptBtn").disabled = false;
   $("deleteAdminConversationBtn").disabled = false;
   renderConversationInfo(conversation);
-  const existingFilter = adminState.recordingFilterUserId;
-  const select = $("recordingViewSelect");
-  const participantOptions = (conversation?.members || []).filter(Boolean).map((user) => `<option value="${user.id}" ${existingFilter === user.id ? "selected" : ""}>${escapeHtml(user.displayName || user.userId || "User")}</option>`).join("");
-  select.innerHTML = `<option value="">All recordings</option>${participantOptions}`;
-  if (!existingFilter || !(conversation?.members || []).some((user) => user.id === existingFilter)) {
+  const existingRecordingFilter = adminState.recordingFilterUserId;
+  const recordingSelect = $("recordingViewSelect");
+  const participantOptions = (conversation?.members || []).filter(Boolean).map((user) => `<option value="${user.id}" ${existingRecordingFilter === user.id ? "selected" : ""}>${escapeHtml(user.displayName || user.userId || "User")}</option>`).join("");
+  recordingSelect.innerHTML = `<option value="">All recordings</option>${participantOptions}`;
+  if (!existingRecordingFilter || !(conversation?.members || []).some((user) => user.id === existingRecordingFilter)) {
     adminState.recordingFilterUserId = "";
-    select.value = "";
+    recordingSelect.value = "";
   }
+
+  const existingPerspective = adminState.viewPerspectiveUserId;
+  const perspectiveSelect = $("viewPerspectiveSelect");
+  const perspectiveOptions = (conversation?.members || []).filter(Boolean).map((user) => `<option value="${user.id}" ${existingPerspective === user.id ? "selected" : ""}>${escapeHtml(user.displayName || user.userId || "User")}</option>`).join("");
+  perspectiveSelect.innerHTML = `<option value="">All messages</option>${perspectiveOptions}`;
+  if (!existingPerspective || !(conversation?.members || []).some((user) => user.id === existingPerspective)) {
+    adminState.viewPerspectiveUserId = "";
+    perspectiveSelect.value = "";
+  }
+
+  const selectedPerspectiveUser = conversation?.members?.find((user) => user.id === adminState.viewPerspectiveUserId);
+  const otherParticipant = conversation?.members?.find((user) => user.id !== adminState.viewPerspectiveUserId);
+  if (selectedPerspectiveUser && otherParticipant) {
+    $("transcriptTitle").textContent = `${escapeHtml(selectedPerspectiveUser.displayName || selectedPerspectiveUser.userId || "User")} → ${escapeHtml(otherParticipant.displayName || otherParticipant.userId || "User")}`;
+  } else {
+    const title = conversation.group?.name || conversation.members.filter(Boolean).map((user) => user.displayName).join(" ↔ ");
+    $("transcriptTitle").textContent = title || "Transcript";
+  }
+
   const { messages } = await adminApi(`/api/admin/conversations/${conversationId}/messages`);
   const filteredMessages = messages.filter((message) => {
+    if (adminState.viewPerspectiveUserId && message.senderId) {
+      return message.senderId === adminState.viewPerspectiveUserId;
+    }
+    return true;
+  }).filter((message) => {
     if (!adminState.recordingFilterUserId) return true;
     if (message.recordingForUserId) return message.recordingForUserId === adminState.recordingFilterUserId;
     return false;
@@ -643,6 +667,13 @@ $("conversationSearchInput").addEventListener("input", (event) => {
 
 $("recordingViewSelect").addEventListener("change", async (event) => {
   adminState.recordingFilterUserId = event.target.value || "";
+  if (adminState.activeConversationId) {
+    await loadTranscript(adminState.activeConversationId);
+  }
+});
+
+$("viewPerspectiveSelect").addEventListener("change", async (event) => {
+  adminState.viewPerspectiveUserId = event.target.value || "";
   if (adminState.activeConversationId) {
     await loadTranscript(adminState.activeConversationId);
   }
