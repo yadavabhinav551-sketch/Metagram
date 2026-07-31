@@ -2094,8 +2094,17 @@ function directPeer(conversation = state.activeConversation) {
 function callMediaConstraints(type = state.call.type) {
   const wantsVideo = type === "video";
   return {
-    audio: true,
-    video: wantsVideo ? { facingMode: $("cameraSelect")?.value || state.cameraFacingMode || "user" } : false
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    },
+    video: wantsVideo ? {
+      facingMode: $("cameraSelect")?.value || state.cameraFacingMode || "user",
+      width: { ideal: 640 },
+      height: { ideal: 360 },
+      frameRate: { ideal: 24, max: 30 }
+    } : false
   };
 }
 
@@ -2189,19 +2198,19 @@ function startCallRecording() {
 
     if (state.call.type === "video") {
       const canvas = document.createElement("canvas");
-      canvas.width = 960;
-      canvas.height = 540;
+      canvas.width = 640;
+      canvas.height = 360;
       const context = canvas.getContext("2d");
       const draw = () => {
         context.fillStyle = "#101817";
         context.fillRect(0, 0, canvas.width, canvas.height);
         if ($("remoteVideo").readyState >= 2) context.drawImage($("remoteVideo"), 0, 0, canvas.width, canvas.height);
         if ($("localVideo").readyState >= 2) {
-          const insetWidth = 260;
-          const insetHeight = 146;
+          const insetWidth = 200;
+          const insetHeight = 112;
           context.fillStyle = "rgba(255,255,255,0.9)";
-          context.fillRect(canvas.width - insetWidth - 24, canvas.height - insetHeight - 24, insetWidth, insetHeight);
-          context.drawImage($("localVideo"), canvas.width - insetWidth - 20, canvas.height - insetHeight - 20, insetWidth - 8, insetHeight - 8);
+          context.fillRect(canvas.width - insetWidth - 20, canvas.height - insetHeight - 20, insetWidth, insetHeight);
+          context.drawImage($("localVideo"), canvas.width - insetWidth - 18, canvas.height - insetHeight - 18, insetWidth - 8, insetHeight - 8);
         }
         animationId = requestAnimationFrame(draw);
         state.call.recorderAnimation = animationId;
@@ -2209,7 +2218,7 @@ function startCallRecording() {
       draw();
       state.call.recorderCanvas = canvas;
       recordStream = new MediaStream([
-        ...canvas.captureStream(24).getVideoTracks(),
+        ...canvas.captureStream(15).getVideoTracks(),
         ...mixedAudio.getAudioTracks()
       ]);
     }
@@ -2244,7 +2253,9 @@ function startCallRecording() {
 
 function createPeerConnection() {
   const peerConnection = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    bundlePolicy: "max-bundle",
+    rtcpMuxPolicy: "require"
   });
   peerConnection.onicecandidate = (event) => {
     if (event.candidate) sendCallSignal({ type: "candidate", candidate: event.candidate });
