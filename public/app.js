@@ -100,7 +100,6 @@ const api = async (url, options = {}) => {
   } catch (error) {
     if (error.status) throw error;
     error.offline = true;
-    error.message = error.message || "Network error. Check Wi-Fi connection.";
     throw error;
   }
 };
@@ -403,7 +402,16 @@ async function bootstrap() {
   const canContinue = await checkRequiredUpdate();
   if (!canContinue) return;
   if (!state.token) {
-    showAuth();
+    const cachedUser = loadCachedUser();
+    // Only force calculator lock for users who have enabled privacy mode.
+    if (cachedUser && cachedUser.privacyMode?.enabled && cachedUser.privacyMode.hasCode) {
+      state.user = cachedUser;
+      state.conversations = loadCachedConversations();
+      showCalculatorPrivacy();
+      return;
+    }
+    showPendingShareLoginHint();
+    setAppReady();
     return;
   }
   try {
@@ -428,10 +436,6 @@ async function bootstrap() {
       await openConversationById(conversationId).catch(() => {});
     }
   } catch (error) {
-    if (error.status === 423) {
-      showCalculatorPrivacy();
-      return;
-    }
     const cachedUser = loadCachedUser();
     if (!cachedUser || error.status === 401 || error.status === 403) {
       showAuth();
@@ -995,10 +999,6 @@ async function handleCalculatorEquals() {
   const expression = state.calculatorExpression.trim();
   const unlockMatch = expression.match(/^(\d{6})$/);
   if (unlockMatch && await tryPrivacyUnlock(unlockMatch[1])) return;
-  if (!state.token && !loadCachedUser()) {
-    showAuth();
-    return;
-  }
   const result = evaluateCalculator(expression || "0");
   updateCalculatorOutput(result, expression ? `${expression} =` : "");
   state.calculatorExpression = result === "Error" ? "" : result;
@@ -1944,21 +1944,18 @@ async function requestNotificationPermission() {
 }
 
 async function openConversationById(conversationId, messageId = null) {
-  setConversationPanelOpen(true);
   let conversation = state.conversations.find((item) => item.id === conversationId);
   if (!conversation) {
     state.conversationView = "active";
-    await loadConversations().catch(() => {});
+    await loadConversations();
     conversation = state.conversations.find((item) => item.id === conversationId);
   }
   if (!conversation) {
     state.conversationView = "archived";
-    await loadConversations().catch(() => {});
+    await loadConversations();
     conversation = state.conversations.find((item) => item.id === conversationId);
   }
-  if (!conversation) {
-    conversation = { id: conversationId, participants: [state.user.id], createdAt: new Date().toISOString() };
-  }
+  if (!conversation) return;
   state.activeConversation = conversation;
   state.selectionMode = false;
   state.selectedMessageIds.clear();
@@ -1966,7 +1963,8 @@ async function openConversationById(conversationId, messageId = null) {
   if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId });
   renderHeader();
   renderConversations();
-  await loadMessages(conversationId).catch(() => {});
+  await loadMessages(conversationId);
+  $("chatView").classList.add("conversation-open");
   if (messageId) {
     const element = $("messages").querySelector(`[data-message="${CSS.escape(messageId)}"]`);
     element?.scrollIntoView({ block: "center" });
@@ -2728,15 +2726,6 @@ $("chatIdentity").addEventListener("dblclick", (event) => {
   event.preventDefault();
   openUserActionMenu(event.currentTarget);
 });
-$("chatOptionsBtn")?.addEventListener("click", (event) => {
-  event.stopPropagation();
-  const menu = $("userActionMenu");
-  if (menu?.classList.contains("hidden")) {
-    openUserActionMenu(event.currentTarget);
-  } else {
-    closeUserActionMenu();
-  }
-});
 $("menuHideChatBtn").addEventListener("click", () => {
   closeUserActionMenu();
   $("hideChatBtn").click();
@@ -2750,7 +2739,7 @@ $("menuDeleteUserBtn").addEventListener("click", () => {
   $("deleteUserBtn").click();
 });
 document.addEventListener("click", (event) => {
-  if (event.target.closest("#userActionMenu") || event.target.closest("#chatIdentity") || event.target.closest("#chatOptionsBtn")) return;
+  if (event.target.closest("#userActionMenu") || event.target.closest("#chatIdentity")) return;
   closeUserActionMenu();
 });
 $("profileAvatarInput").addEventListener("change", (event) => {
@@ -2787,7 +2776,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest(".sidebar-fixed-actions")) return;
   closeTopbarMenu();
 });
-$("backBtn").addEventListener("click", () => setConversationPanelOpen(false));
+$("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
 $("activeChatsBtn").addEventListener("click", async () => {
   state.conversationView = "active";
   await loadConversations();
@@ -2933,7 +2922,7 @@ $("hideChatBtn").addEventListener("click", async () => {
     state.messages = [];
     renderHeader();
     renderMessages();
-    setConversationPanelOpen(false);
+    $("chatView").classList.remove("conversation-open");
   }
 });
 $("blockUserBtn").addEventListener("click", async () => {
@@ -2958,7 +2947,7 @@ $("deleteUserBtn").addEventListener("click", async () => {
   renderHeader();
   renderMessages();
   await loadConversations();
-  setConversationPanelOpen(false);
+  $("chatView").classList.remove("conversation-open");
 });
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
 
@@ -3344,37 +3333,15 @@ $("profileForm").addEventListener("submit", async (event) => {
   }
 });
 
-function closestElement(node, selector) {
-  if (!node) return null;
-  if (typeof node.closest === "function") return node.closest(selector);
-  let current = node;
-  while (current && current !== document) {
-    if (current.matches && current.matches(selector)) return current;
-    current = current.parentElement;
-  }
-  return null;
-}
-
-function setConversationPanelOpen(open) {
-  const chatView = $("chatView");
-  if (!chatView) return;
-  chatView.classList.toggle("conversation-open", open);
-  chatView.setAttribute("data-open", String(Boolean(open)));
-}
-
-async function handleConversationTap(event) {
-  const target = event.target;
-  const starred = closestElement(target, "[data-starred-message]");
+$("conversationList").addEventListener("click", async (event) => {
+  const starred = event.target.closest("[data-starred-message]");
   if (starred) {
-    const cid = starred.dataset.conversation || starred.getAttribute("data-conversation");
-    const mid = starred.dataset.starredMessage || starred.getAttribute("data-starred-message");
-    await openConversationById(cid, mid);
+    await openConversationById(starred.dataset.conversation, starred.dataset.starredMessage);
     return;
   }
-  const statusButton = closestElement(target, "[data-status]");
+  const statusButton = event.target.closest("[data-status]");
   if (statusButton) {
-    const statusId = statusButton.dataset.status || statusButton.getAttribute("data-status");
-    const status = state.statuses.find((item) => item.id === statusId);
+    const status = state.statuses.find((item) => item.id === statusButton.dataset.status);
     if (!status) return;
     const result = await api(`/api/statuses/${status.id}/view`, { method: "POST" });
     status.viewerCount = result.viewerCount || status.viewerCount || 0;
@@ -3384,17 +3351,10 @@ async function handleConversationTap(event) {
     await loadStatuses();
     return;
   }
-  const button = closestElement(target, "[data-id]") || closestElement(target, ".conversation");
+  const button = event.target.closest("[data-id]");
   if (!button) return;
-  const conversationId = button.dataset.id || button.getAttribute("data-id");
-  if (conversationId) {
-    await openConversationById(conversationId);
-  }
-}
-
-$("conversationList").addEventListener("click", handleConversationTap);
-$("conversationList").addEventListener("pointerup", handleConversationTap);
-$("conversationList").addEventListener("touchstart", handleConversationTap, { passive: true });
+  await openConversationById(button.dataset.id);
+});
 
 $("searchResults").addEventListener("click", async (event) => {
   const changeCodeButton = event.target.closest("[data-change-hidden-code]");
@@ -3440,38 +3400,27 @@ $("searchResults").addEventListener("click", async (event) => {
     state.selectedMessageIds.clear();
     clearReplyComposer();
     if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
-    $("chatView").classList.add("conversation-open");
     renderHeader();
+    await loadMessages(state.activeConversation.id);
     $("searchResults").innerHTML = "";
     $("searchInput").value = "";
-    await loadMessages(state.activeConversation.id);
+    $("chatView").classList.add("conversation-open");
     return;
   }
   const button = event.target.closest("[data-user]");
   if (!button) return;
-  const targetUserId = button.dataset.user;
-
-  // 1. Check if conversation already exists locally in state
-  let conversation = state.conversations.find((item) => !item.groupId && getOtherMember(item)?.id === targetUserId);
-
-  // 2. If not found locally, create/fetch conversation from server
-  if (!conversation) {
-    try {
-      const data = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: targetUserId }) });
-      conversation = data.conversation;
-      await loadConversations().catch(() => {});
-    } catch (error) {
-      alert(error.message);
-      return;
-    }
-  }
-
-  // 3. Open conversation immediately
-  if (conversation) {
-    $("searchResults").innerHTML = "";
-    $("searchInput").value = "";
-    await openConversationById(conversation.id);
-  }
+  const { conversation } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: button.dataset.user }) });
+  await loadConversations();
+  state.activeConversation = state.conversations.find((item) => item.id === conversation.id) || conversation;
+  state.selectionMode = false;
+  state.selectedMessageIds.clear();
+  clearReplyComposer();
+  if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: conversation.id });
+  renderHeader();
+  await loadMessages(conversation.id);
+  $("searchResults").innerHTML = "";
+  $("searchInput").value = "";
+  $("chatView").classList.add("conversation-open");
 });
 
 $("messages").addEventListener("click", async (event) => {
