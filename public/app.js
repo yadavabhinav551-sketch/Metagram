@@ -3347,12 +3347,15 @@ $("profileForm").addEventListener("submit", async (event) => {
 async function handleConversationTap(event) {
   const starred = event.target.closest("[data-starred-message]");
   if (starred) {
-    await openConversationById(starred.dataset.conversation, starred.dataset.starredMessage);
+    const cid = starred.dataset.conversation || starred.getAttribute("data-conversation");
+    const mid = starred.dataset.starredMessage || starred.getAttribute("data-starred-message");
+    await openConversationById(cid, mid);
     return;
   }
   const statusButton = event.target.closest("[data-status]");
   if (statusButton) {
-    const status = state.statuses.find((item) => item.id === statusButton.dataset.status);
+    const statusId = statusButton.dataset.status || statusButton.getAttribute("data-status");
+    const status = state.statuses.find((item) => item.id === statusId);
     if (!status) return;
     const result = await api(`/api/statuses/${status.id}/view`, { method: "POST" });
     status.viewerCount = result.viewerCount || status.viewerCount || 0;
@@ -3362,9 +3365,12 @@ async function handleConversationTap(event) {
     await loadStatuses();
     return;
   }
-  const button = event.target.closest("[data-id]");
+  const button = event.target.closest("[data-id]") || event.target.closest(".conversation");
   if (!button) return;
-  await openConversationById(button.dataset.id);
+  const conversationId = button.dataset.id || button.getAttribute("data-id");
+  if (conversationId) {
+    await openConversationById(conversationId);
+  }
 }
 
 $("conversationList").addEventListener("click", handleConversationTap);

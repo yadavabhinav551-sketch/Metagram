@@ -545,10 +545,6 @@ input:focus, select:focus {
   -webkit-tap-highlight-color: transparent;
 }
 
-.conversation * {
-  pointer-events: none;
-}
-
 .conversation:hover, .conversation.active {
   background: var(--wa-card);
 }
@@ -937,13 +933,14 @@ input:focus, select:focus {
    6. RESPONSIVE MOBILE MEDIA QUERIES
    ========================================================================== */
 
-@media (max-width: 768px) {
+@media (max-width: 992px) {
   .chat-view {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
     display: flex;
+    width: 100%;
   }
 
   .chat-panel {
@@ -951,6 +948,8 @@ input:focus, select:focus {
     position: fixed;
     inset: 0;
     z-index: 30;
+    width: 100%;
+    height: 100dvh;
   }
 
   .chat-view.conversation-open .sidebar {
@@ -966,7 +965,7 @@ input:focus, select:focus {
   }
 }
 
-@media (min-width: 769px) {
+@media (min-width: 993px) {
   .mobile-only {
     display: none !important;
   }
