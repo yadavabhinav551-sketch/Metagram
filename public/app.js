@@ -401,14 +401,12 @@ async function bootstrap() {
   showPendingShareError();
   const canContinue = await checkRequiredUpdate();
   if (!canContinue) return;
+  showCalculatorPrivacy();
   if (!state.token) {
     const cachedUser = loadCachedUser();
-    // Only force calculator lock for users who have enabled privacy mode.
-    if (cachedUser && cachedUser.privacyMode?.enabled && cachedUser.privacyMode.hasCode) {
+    if (cachedUser) {
       state.user = cachedUser;
       state.conversations = loadCachedConversations();
-      showCalculatorPrivacy();
-      return;
     }
     showPendingShareLoginHint();
     setAppReady();
@@ -999,6 +997,10 @@ async function handleCalculatorEquals() {
   const expression = state.calculatorExpression.trim();
   const unlockMatch = expression.match(/^(\d{6})$/);
   if (unlockMatch && await tryPrivacyUnlock(unlockMatch[1])) return;
+  if (!state.token && !loadCachedUser()) {
+    showAuth();
+    return;
+  }
   const result = evaluateCalculator(expression || "0");
   updateCalculatorOutput(result, expression ? `${expression} =` : "");
   state.calculatorExpression = result === "Error" ? "" : result;

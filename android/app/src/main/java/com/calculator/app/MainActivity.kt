@@ -6,9 +6,13 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -20,10 +24,15 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var currentUrlIndex = 0
+    private var urlsToTry = arrayOf(
+        "http://127.0.0.1:3000",
+        "http://192.168.16.94:3000"
+    )
 
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
+    ) {
         // Permissions handled
     }
 
@@ -54,8 +63,18 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
         setupWebView()
 
-        val serverUrl = getString(R.string.server_url)
-        webView.loadUrl(serverUrl)
+        val configuredUrl = getString(R.string.server_url)
+        if (configuredUrl.isNotEmpty()) {
+            urlsToTry = arrayOf("http://127.0.0.1:3000", configuredUrl)
+        }
+
+        loadCurrentUrl()
+    }
+
+    private fun loadCurrentUrl() {
+        if (currentUrlIndex < urlsToTry.size) {
+            webView.loadUrl(urlsToTry[currentUrlIndex])
+        }
     }
 
     private fun checkAndRequestPermissions() {
@@ -98,6 +117,26 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 return false
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                if (request?.isForMainFrame == true) {
+                    if (currentUrlIndex < urlsToTry.size - 1) {
+                        currentUrlIndex++
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            loadCurrentUrl()
+                        }, 1000)
+                    } else {
+                        // Retry current URL after 3 seconds
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            loadCurrentUrl()
+                        }, 3000)
+                    }
+                }
             }
         }
 

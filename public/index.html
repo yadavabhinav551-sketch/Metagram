@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
-    <meta name="theme-color" content="#0b141a">
-    <meta name="background-color" content="#0b141a">
+    <meta name="theme-color" content="#000000">
+    <meta name="background-color" content="#000000">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,10 +13,10 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=wa-ui-v52" as="style">
-    <link rel="stylesheet" href="/styles.css?v=wa-ui-v52">
+    <link rel="preload" href="/styles.css?v=wa-ui-v53" as="style">
+    <link rel="stylesheet" href="/styles.css?v=wa-ui-v53">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=wa-ui-v52" defer></script>
+    <script src="/app.js?v=wa-ui-v53" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -31,10 +31,10 @@
         </div>
       </section>
 
-      <section id="calculatorPrivacyView" class="calculator-privacy-view hidden" aria-label="Calculator">
+      <section id="calculatorPrivacyView" class="calculator-privacy-view" aria-label="Calculator">
         <div class="calculator-shell" id="calculatorShell">
           <div class="calculator-toolbar">
-            <div class="calculator-title">Calculator</div>
+            <div class="calculator-title" id="calculatorTitle">Calculator</div>
             <button id="calculatorModeToggle" class="calculator-mode-toggle" type="button" aria-pressed="false">Sci</button>
           </div>
           <div class="calculator-display">
@@ -75,7 +75,7 @@
         </div>
       </section>
 
-      <section id="authView" class="auth-view">
+      <section id="authView" class="auth-view hidden">
         <div class="brand-block">
           <img src="/icon.svg" alt="Calculator" class="brand-icon">
           <h1>Calculator</h1>
