@@ -1,30 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#1e1e24"/>
-      <stop offset="100%" stop-color="#0c0c10"/>
-    </linearGradient>
-  </defs>
-  <rect width="128" height="128" rx="28" fill="url(#bgGrad)"/>
-  <rect x="2" y="2" width="124" height="124" rx="26" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="1.5"/>
-  <rect x="12" y="11" width="104" height="24" rx="6" fill="#08080c" stroke="#2d2d38" stroke-width="1"/>
+  <rect width="128" height="128" rx="28" fill="#17171c"/>
+  <rect x="2" y="2" width="124" height="124" rx="26" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1"/>
+  <rect x="15" y="13" width="98" height="23" rx="5" fill="#0a0a0e" stroke="#282830" stroke-width="1"/>
 
-  <circle cx="24" cy="48" r="9.5" fill="#a5a5aa"/>
-  <circle cx="52" cy="48" r="9.5" fill="#a5a5aa"/>
-  <circle cx="80" cy="48" r="9.5" fill="#a5a5aa"/>
-  <circle cx="108" cy="48" r="9.5" fill="#ff9f0a"/>
+  <circle cx="26" cy="52" r="9" fill="#a5a5a5"/>
+  <circle cx="51" cy="52" r="9" fill="#a5a5a5"/>
+  <circle cx="76" cy="52" r="9" fill="#a5a5a5"/>
+  <circle cx="101" cy="52" r="9" fill="#ff9f0a"/>
 
-  <circle cx="24" cy="68" r="9.5" fill="#333338"/>
-  <circle cx="52" cy="68" r="9.5" fill="#333338"/>
-  <circle cx="80" cy="68" r="9.5" fill="#333338"/>
-  <circle cx="108" cy="68" r="9.5" fill="#ff9f0a"/>
+  <circle cx="26" cy="68" r="9" fill="#333338"/>
+  <circle cx="51" cy="68" r="9" fill="#333338"/>
+  <circle cx="76" cy="68" r="9" fill="#333338"/>
+  <circle cx="101" cy="68" r="9" fill="#ff9f0a"/>
 
-  <circle cx="24" cy="88" r="9.5" fill="#333338"/>
-  <circle cx="52" cy="88" r="9.5" fill="#333338"/>
-  <circle cx="80" cy="88" r="9.5" fill="#333338"/>
-  <circle cx="108" cy="88" r="9.5" fill="#ff9f0a"/>
+  <circle cx="26" cy="84" r="9" fill="#333338"/>
+  <circle cx="51" cy="84" r="9" fill="#333338"/>
+  <circle cx="76" cy="84" r="9" fill="#333338"/>
+  <circle cx="101" cy="84" r="9" fill="#ff9f0a"/>
 
-  <rect x="14.5" y="98.5" width="47" height="19" rx="9.5" fill="#333338"/>
-  <circle cx="80" cy="108" r="9.5" fill="#333338"/>
-  <circle cx="108" cy="108" r="9.5" fill="#ff9f0a"/>
+  <rect x="17" y="91" width="43" height="18" rx="9" fill="#333338"/>
+  <circle cx="76" cy="100" r="9" fill="#333338"/>
+  <circle cx="101" cy="100" r="9" fill="#ff9f0a"/>
 </svg>
