@@ -1235,7 +1235,14 @@ function renderConversations() {
     normalizeUiText();
     return;
   }
-  $("conversationList").innerHTML = state.conversations.map((conversation) => {
+  const sortedConversations = state.conversations.slice().sort((a, b) => {
+    if (Boolean(a.pinned) !== Boolean(b.pinned)) return Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
+    const timeA = new Date(a.lastMessage?.createdAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.lastMessage?.createdAt || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  $("conversationList").innerHTML = sortedConversations.map((conversation) => {
     const title = conversation.group?.name || getOtherMember(conversation)?.displayName || "Chat";
     const other = getOtherMember(conversation);
     const status = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
