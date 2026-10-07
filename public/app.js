@@ -1944,27 +1944,29 @@ async function requestNotificationPermission() {
 }
 
 async function openConversationById(conversationId, messageId = null) {
+  $("chatView").classList.add("conversation-open");
   let conversation = state.conversations.find((item) => item.id === conversationId);
   if (!conversation) {
     state.conversationView = "active";
-    await loadConversations();
+    await loadConversations().catch(() => {});
     conversation = state.conversations.find((item) => item.id === conversationId);
   }
   if (!conversation) {
     state.conversationView = "archived";
-    await loadConversations();
+    await loadConversations().catch(() => {});
     conversation = state.conversations.find((item) => item.id === conversationId);
   }
-  if (!conversation) return;
+  if (!conversation) {
+    conversation = { id: conversationId, participants: [state.user.id], createdAt: new Date().toISOString() };
+  }
   state.activeConversation = conversation;
   state.selectionMode = false;
   state.selectedMessageIds.clear();
   clearReplyComposer();
   if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId });
-  $("chatView").classList.add("conversation-open");
   renderHeader();
   renderConversations();
-  await loadMessages(conversationId);
+  await loadMessages(conversationId).catch(() => {});
   if (messageId) {
     const element = $("messages").querySelector(`[data-message="${CSS.escape(messageId)}"]`);
     element?.scrollIntoView({ block: "center" });
@@ -3418,18 +3420,29 @@ $("searchResults").addEventListener("click", async (event) => {
   }
   const button = event.target.closest("[data-user]");
   if (!button) return;
-  const { conversation } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: button.dataset.user }) });
-  await loadConversations();
-  state.activeConversation = state.conversations.find((item) => item.id === conversation.id) || conversation;
-  state.selectionMode = false;
-  state.selectedMessageIds.clear();
-  clearReplyComposer();
-  if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: conversation.id });
-  $("chatView").classList.add("conversation-open");
-  renderHeader();
-  $("searchResults").innerHTML = "";
-  $("searchInput").value = "";
-  await loadMessages(conversation.id);
+  const targetUserId = button.dataset.user;
+
+  // 1. Check if conversation already exists locally in state
+  let conversation = state.conversations.find((item) => !item.groupId && getOtherMember(item)?.id === targetUserId);
+
+  // 2. If not found locally, create/fetch conversation from server
+  if (!conversation) {
+    try {
+      const data = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: targetUserId }) });
+      conversation = data.conversation;
+      await loadConversations().catch(() => {});
+    } catch (error) {
+      alert(error.message);
+      return;
+    }
+  }
+
+  // 3. Open conversation immediately
+  if (conversation) {
+    $("searchResults").innerHTML = "";
+    $("searchInput").value = "";
+    await openConversationById(conversation.id);
+  }
 });
 
 $("messages").addEventListener("click", async (event) => {
