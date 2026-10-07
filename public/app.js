@@ -1961,10 +1961,10 @@ async function openConversationById(conversationId, messageId = null) {
   state.selectedMessageIds.clear();
   clearReplyComposer();
   if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId });
+  $("chatView").classList.add("conversation-open");
   renderHeader();
   renderConversations();
   await loadMessages(conversationId);
-  $("chatView").classList.add("conversation-open");
   if (messageId) {
     const element = $("messages").querySelector(`[data-message="${CSS.escape(messageId)}"]`);
     element?.scrollIntoView({ block: "center" });
@@ -3409,11 +3409,11 @@ $("searchResults").addEventListener("click", async (event) => {
     state.selectedMessageIds.clear();
     clearReplyComposer();
     if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
+    $("chatView").classList.add("conversation-open");
     renderHeader();
-    await loadMessages(state.activeConversation.id);
     $("searchResults").innerHTML = "";
     $("searchInput").value = "";
-    $("chatView").classList.add("conversation-open");
+    await loadMessages(state.activeConversation.id);
     return;
   }
   const button = event.target.closest("[data-user]");
@@ -3425,11 +3425,11 @@ $("searchResults").addEventListener("click", async (event) => {
   state.selectedMessageIds.clear();
   clearReplyComposer();
   if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: conversation.id });
+  $("chatView").classList.add("conversation-open");
   renderHeader();
-  await loadMessages(conversation.id);
   $("searchResults").innerHTML = "";
   $("searchInput").value = "";
-  $("chatView").classList.add("conversation-open");
+  await loadMessages(conversation.id);
 });
 
 $("messages").addEventListener("click", async (event) => {
