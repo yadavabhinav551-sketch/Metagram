@@ -998,7 +998,15 @@ function appendCalculatorValue(value) {
 async function handleCalculatorEquals() {
   const expression = state.calculatorExpression.trim();
   const unlockMatch = expression.match(/^(\d{6})$/);
-  if (unlockMatch && await tryPrivacyUnlock(unlockMatch[1])) return;
+  if (unlockMatch) {
+    const code = unlockMatch[1];
+    const unlocked = await tryPrivacyUnlock(code);
+    if (unlocked) return;
+    if (!state.token && !loadCachedUser()) {
+      showAuth();
+      return;
+    }
+  }
   const result = evaluateCalculator(expression || "0");
   updateCalculatorOutput(result, expression ? `${expression} =` : "");
   state.calculatorExpression = result === "Error" ? "" : result;
