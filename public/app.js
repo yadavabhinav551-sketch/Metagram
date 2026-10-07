@@ -3344,7 +3344,7 @@ $("profileForm").addEventListener("submit", async (event) => {
   }
 });
 
-$("conversationList").addEventListener("click", async (event) => {
+async function handleConversationTap(event) {
   const starred = event.target.closest("[data-starred-message]");
   if (starred) {
     await openConversationById(starred.dataset.conversation, starred.dataset.starredMessage);
@@ -3365,7 +3365,9 @@ $("conversationList").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-id]");
   if (!button) return;
   await openConversationById(button.dataset.id);
-});
+}
+
+$("conversationList").addEventListener("click", handleConversationTap);
 
 $("searchResults").addEventListener("click", async (event) => {
   const changeCodeButton = event.target.closest("[data-change-hidden-code]");

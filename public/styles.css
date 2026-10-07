@@ -541,6 +541,12 @@ input:focus, select:focus {
   transition: background 0.16s ease;
   user-select: none;
   text-align: left;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.conversation * {
+  pointer-events: none;
 }
 
 .conversation:hover, .conversation.active {
