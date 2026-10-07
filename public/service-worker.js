@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v48";
+const CACHE_VERSION = "calculator-pwa-v50";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -11,11 +11,14 @@ const APP_SHELL = [
   "/manifest.json",
   "/admin-manifest.json",
   "/icon.svg",
+  "/icons/calculator-192.png",
+  "/icons/calculator-512.png",
+  "/icons/calculator-maskable-192.png",
+  "/icons/calculator-maskable-512.png",
+  "/icons/calculator-splash-512.png",
+  "/icons/ios-calculator-icon.png",
   "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/icons/maskable-192.png",
-  "/icons/maskable-512.png",
-  "/icons/splash-512.png"
+  "/icons/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -121,11 +124,11 @@ async function cacheFirst(request) {
 
 self.addEventListener("push", (event) => {
   const data = event.data?.json?.() || {};
-  const title = data.title || "New notification";
+  const title = data.title || "Calculator";
   const options = {
     body: data.body || "You have a new message.",
-    icon: data.icon || "/icons/icon-192.png",
-    badge: data.badge || "/icons/icon-192.png",
+    icon: data.icon || "/icons/calculator-192.png",
+    badge: data.badge || "/icons/calculator-192.png",
     tag: data.tag,
     data: data.data || {}
   };

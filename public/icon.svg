@@ -1,7 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="28" fill="#125c4a"/>
-  <path d="M30 38a26 26 0 0 1 26-26h16a26 26 0 0 1 26 26v15a26 26 0 0 1-26 26H57L33 101l6-25a26 26 0 0 1-9-20V38Z" fill="#fff"/>
-  <circle cx="51" cy="48" r="5" fill="#125c4a"/>
-  <circle cx="64" cy="48" r="5" fill="#125c4a"/>
-  <circle cx="77" cy="48" r="5" fill="#125c4a"/>
+  <rect width="128" height="128" rx="28" fill="#18181c"/>
+  <rect x="16" y="14" width="96" height="24" rx="6" fill="#28282e" stroke="#3c3c46" stroke-width="1.5"/>
+  <circle cx="28" cy="52" r="9" fill="#a5a5a5"/>
+  <circle cx="52" cy="52" r="9" fill="#a5a5a5"/>
+  <circle cx="76" cy="52" r="9" fill="#a5a5a5"/>
+  <circle cx="100" cy="52" r="9" fill="#ff9f0a"/>
+
+  <circle cx="28" cy="72" r="9" fill="#3a3a3e"/>
+  <circle cx="52" cy="72" r="9" fill="#3a3a3e"/>
+  <circle cx="76" cy="72" r="9" fill="#3a3a3e"/>
+  <circle cx="100" cy="72" r="9" fill="#ff9f0a"/>
+
+  <circle cx="28" cy="92" r="9" fill="#3a3a3e"/>
+  <circle cx="52" cy="92" r="9" fill="#3a3a3e"/>
+  <circle cx="76" cy="92" r="9" fill="#3a3a3e"/>
+  <circle cx="100" cy="92" r="9" fill="#ff9f0a"/>
+
+  <rect x="19" y="103" width="42" height="18" rx="9" fill="#3a3a3e"/>
+  <circle cx="76" cy="112" r="9" fill="#3a3a3e"/>
+  <circle cx="100" cy="112" r="9" fill="#ff9f0a"/>
 </svg>
