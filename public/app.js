@@ -2719,6 +2719,15 @@ $("chatIdentity").addEventListener("dblclick", (event) => {
   event.preventDefault();
   openUserActionMenu(event.currentTarget);
 });
+$("chatOptionsBtn")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const menu = $("userActionMenu");
+  if (menu?.classList.contains("hidden")) {
+    openUserActionMenu(event.currentTarget);
+  } else {
+    closeUserActionMenu();
+  }
+});
 $("menuHideChatBtn").addEventListener("click", () => {
   closeUserActionMenu();
   $("hideChatBtn").click();
@@ -2732,7 +2741,7 @@ $("menuDeleteUserBtn").addEventListener("click", () => {
   $("deleteUserBtn").click();
 });
 document.addEventListener("click", (event) => {
-  if (event.target.closest("#userActionMenu") || event.target.closest("#chatIdentity")) return;
+  if (event.target.closest("#userActionMenu") || event.target.closest("#chatIdentity") || event.target.closest("#chatOptionsBtn")) return;
   closeUserActionMenu();
 });
 $("profileAvatarInput").addEventListener("change", (event) => {
