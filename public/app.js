@@ -1944,7 +1944,7 @@ async function requestNotificationPermission() {
 }
 
 async function openConversationById(conversationId, messageId = null) {
-  $("chatView").classList.add("conversation-open");
+  setConversationPanelOpen(true);
   let conversation = state.conversations.find((item) => item.id === conversationId);
   if (!conversation) {
     state.conversationView = "active";
@@ -2787,7 +2787,7 @@ document.addEventListener("click", (event) => {
   if (event.target.closest(".sidebar-fixed-actions")) return;
   closeTopbarMenu();
 });
-$("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
+$("backBtn").addEventListener("click", () => setConversationPanelOpen(false));
 $("activeChatsBtn").addEventListener("click", async () => {
   state.conversationView = "active";
   await loadConversations();
@@ -2933,7 +2933,7 @@ $("hideChatBtn").addEventListener("click", async () => {
     state.messages = [];
     renderHeader();
     renderMessages();
-    $("chatView").classList.remove("conversation-open");
+    setConversationPanelOpen(false);
   }
 });
 $("blockUserBtn").addEventListener("click", async () => {
@@ -2958,7 +2958,7 @@ $("deleteUserBtn").addEventListener("click", async () => {
   renderHeader();
   renderMessages();
   await loadConversations();
-  $("chatView").classList.remove("conversation-open");
+  setConversationPanelOpen(false);
 });
 $("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
 
@@ -3344,15 +3344,34 @@ $("profileForm").addEventListener("submit", async (event) => {
   }
 });
 
+function closestElement(node, selector) {
+  if (!node) return null;
+  if (typeof node.closest === "function") return node.closest(selector);
+  let current = node;
+  while (current && current !== document) {
+    if (current.matches && current.matches(selector)) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function setConversationPanelOpen(open) {
+  const chatView = $("chatView");
+  if (!chatView) return;
+  chatView.classList.toggle("conversation-open", open);
+  chatView.setAttribute("data-open", String(Boolean(open)));
+}
+
 async function handleConversationTap(event) {
-  const starred = event.target.closest("[data-starred-message]");
+  const target = event.target;
+  const starred = closestElement(target, "[data-starred-message]");
   if (starred) {
     const cid = starred.dataset.conversation || starred.getAttribute("data-conversation");
     const mid = starred.dataset.starredMessage || starred.getAttribute("data-starred-message");
     await openConversationById(cid, mid);
     return;
   }
-  const statusButton = event.target.closest("[data-status]");
+  const statusButton = closestElement(target, "[data-status]");
   if (statusButton) {
     const statusId = statusButton.dataset.status || statusButton.getAttribute("data-status");
     const status = state.statuses.find((item) => item.id === statusId);
@@ -3365,7 +3384,7 @@ async function handleConversationTap(event) {
     await loadStatuses();
     return;
   }
-  const button = event.target.closest("[data-id]") || event.target.closest(".conversation");
+  const button = closestElement(target, "[data-id]") || closestElement(target, ".conversation");
   if (!button) return;
   const conversationId = button.dataset.id || button.getAttribute("data-id");
   if (conversationId) {
@@ -3374,6 +3393,8 @@ async function handleConversationTap(event) {
 }
 
 $("conversationList").addEventListener("click", handleConversationTap);
+$("conversationList").addEventListener("pointerup", handleConversationTap);
+$("conversationList").addEventListener("touchstart", handleConversationTap, { passive: true });
 
 $("searchResults").addEventListener("click", async (event) => {
   const changeCodeButton = event.target.closest("[data-change-hidden-code]");
