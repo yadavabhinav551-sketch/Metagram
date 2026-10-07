@@ -1,5 +1,5 @@
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 icons_dir = Path('public/icons')
 icons_dir.mkdir(parents=True, exist_ok=True)
@@ -68,7 +68,7 @@ def create_calculator_icon(size=1024):
 
 main_icon = create_calculator_icon(1024)
 
-# Save various icon sizes
+# Save web PWA icon sizes
 sizes = {
     'ios-calculator-icon.png': 512,
     'calculator-192.png': 192,
@@ -87,6 +87,24 @@ for filename, sz in sizes.items():
     resized = main_icon.resize((sz, sz), Image.Resampling.LANCZOS)
     resized.save(icons_dir / filename)
     print(f"Generated {filename} ({sz}x{sz})")
+
+# Save Android Studio mipmap icon sizes
+android_res = Path('android/app/src/main/res')
+mipmap_sizes = {
+    'mipmap-mdpi': 48,
+    'mipmap-hdpi': 72,
+    'mipmap-xhdpi': 96,
+    'mipmap-xxhdpi': 144,
+    'mipmap-xxxhdpi': 192,
+}
+
+for folder, sz in mipmap_sizes.items():
+    dir_path = android_res / folder
+    dir_path.mkdir(parents=True, exist_ok=True)
+    resized = main_icon.resize((sz, sz), Image.Resampling.LANCZOS)
+    resized.save(dir_path / 'ic_launcher.png')
+    resized.save(dir_path / 'ic_launcher_round.png')
+    print(f"Generated Android {folder} icons ({sz}x{sz})")
 
 # Generate public/icon.svg
 svg_content = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
