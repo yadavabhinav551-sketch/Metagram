@@ -1,72 +1,125 @@
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 icons_dir = Path('public/icons')
 icons_dir.mkdir(parents=True, exist_ok=True)
 
-def create_calculator_icon(size=1024):
+def create_professional_calculator_icon(size=1024):
+    # Master image with RGBA
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    # Base rounded square (iOS Dark Style)
-    radius = int(size * 0.22)
-    bg_color = (24, 24, 28, 255)
-    d.rounded_rectangle((0, 0, size, size), radius=radius, fill=bg_color)
+    # 1. Base Squircle Container (iOS 18 Dark Aesthetic)
+    radius = int(size * 0.225)
+    bg_top = (28, 28, 34, 255)
+    bg_bottom = (12, 12, 16, 255)
 
-    # Subtle inner border shadow
-    border_color = (45, 45, 52, 255)
-    d.rounded_rectangle((4, 4, size - 4, size - 4), radius=radius - 4, outline=border_color, width=int(size * 0.008))
+    # Gradient background
+    for y in range(size):
+        interp = y / float(size)
+        r = int(bg_top[0] + (bg_bottom[0] - bg_top[0]) * interp)
+        g = int(bg_top[1] + (bg_bottom[1] - bg_top[1]) * interp)
+        b = int(bg_top[2] + (bg_bottom[2] - bg_top[2]) * interp)
+        d.line([(0, y), (size, y)], fill=(r, g, b, 255))
 
-    # Calculator Screen Area
-    screen_margin_x = int(size * 0.12)
-    screen_top = int(size * 0.12)
-    screen_height = int(size * 0.18)
-    screen_box = (screen_margin_x, screen_top, size - screen_margin_x, screen_top + screen_height)
-    d.rounded_rectangle(screen_box, radius=int(size * 0.05), fill=(40, 40, 46, 255), outline=(60, 60, 70, 255), width=2)
+    # Mask to rounded squircle
+    mask = Image.new('L', (size, size), 0)
+    md = ImageDraw.Draw(mask)
+    md.rounded_rectangle((0, 0, size, size), radius=radius, fill=255)
+    img.putalpha(mask)
 
-    # Key grid setup
-    btn_radius = int(size * 0.075)
-    start_x = int(size * 0.22)
-    start_y = int(size * 0.40)
-    spacing_x = int(size * 0.19)
-    spacing_y = int(size * 0.135)
+    d = ImageDraw.Draw(img)
 
-    dark_fill = (58, 58, 62, 255)
-    light_fill = (165, 165, 165, 255)
-    orange_fill = (255, 159, 10, 255)
+    # Subtle inner border & top glass specular highlight
+    border_width = int(size * 0.008)
+    d.rounded_rectangle((border_width, border_width, size - border_width, size - border_width),
+                        radius=radius - border_width,
+                        outline=(255, 255, 255, 30), width=border_width)
 
-    # Row 0: Top function keys (C, +/-, %)
+    # Glass top edge shine
+    d.line([(radius, border_width + 1), (size - radius, border_width + 1)], fill=(255, 255, 255, 60), width=2)
+
+    # 2. Sleek Screen Window (Top LED Display)
+    screen_x1 = int(size * 0.08)
+    screen_y1 = int(size * 0.08)
+    screen_x2 = int(size * 0.92)
+    screen_y2 = int(size * 0.26)
+    screen_radius = int(size * 0.04)
+
+    # Inner shadow for screen
+    d.rounded_rectangle((screen_x1, screen_y1, screen_x2, screen_y2),
+                        radius=screen_radius, fill=(8, 8, 12, 255), outline=(45, 45, 55, 255), width=2)
+
+    # Display text simulator - Glowing Orange Number "0" or "1,234"
+    # Draw right-aligned sleek math display representation
+    calc_orange = (255, 159, 10, 255)
+    text_color = (255, 255, 255, 230)
+
+    # Simple crisp LED lines inside screen window
+    disp_y = int(screen_y1 + (screen_y2 - screen_y1) * 0.5)
+    disp_x_end = int(screen_x2 - size * 0.06)
+
+    # Draw crisp display digits graphic
+    # Representing "123" right-aligned
+    bar_w = int(size * 0.015)
+    bar_h = int(size * 0.06)
+
+    # 3. Key Grid Layout
+    btn_r = int(size * 0.085) # Circular radius
+    margin_left = int(size * 0.16)
+    margin_top = int(size * 0.33)
+    spacing_x = int(size * 0.226)
+    spacing_y = int(size * 0.128)
+
+    func_color = (165, 165, 170, 255)   # AC, +/-, %
+    num_color = (51, 51, 56, 255)        # 0-9, .
+    op_color = (255, 159, 10, 255)       # ÷, ×, -, +, =
+
+    # Helper function to draw circular buttons with soft radial gradient
+    def draw_button(cx, cy, radius_val, color, is_pill=False, pill_w=0):
+        if is_pill:
+            box = (cx - radius_val, cy - radius_val, cx + pill_w + radius_val, cy + radius_val)
+            d.rounded_rectangle(box, radius=radius_val, fill=color)
+            # Top subtle specular highlight
+            d.arc((cx - radius_val + 2, cy - radius_val + 2, cx + pill_w + radius_val - 2, cy + radius_val - 2),
+                  start=200, end=340, fill=(255, 255, 255, 45), width=int(size * 0.006))
+        else:
+            box = (cx - radius_val, cy - radius_val, cx + radius_val, cy + radius_val)
+            d.ellipse(box, fill=color)
+            # Top subtle specular highlight
+            d.arc(box, start=200, end=340, fill=(255, 255, 255, 45), width=int(size * 0.006))
+
+    # Row 0: Top function keys (AC, +/-, %)
     for col in range(3):
-        x = start_x + col * spacing_x
-        y = start_y
-        d.ellipse((x - btn_radius, y - btn_radius, x + btn_radius, y + btn_radius), fill=light_fill)
+        x = margin_left + col * spacing_x
+        y = margin_top
+        draw_button(x, y, btn_r, func_color)
 
-    # Right operator keys (÷, ×, -, +, =)
+    # Right operator column (÷, ×, -, +, =)
     for row in range(5):
-        x = start_x + 3 * spacing_x
-        y = start_y + row * spacing_y
-        d.ellipse((x - btn_radius, y - btn_radius, x + btn_radius, y + btn_radius), fill=orange_fill)
+        x = margin_left + 3 * spacing_x
+        y = margin_top + row * spacing_y
+        draw_button(x, y, btn_r, op_color)
 
-    # Number grid (7-8-9, 4-5-6, 1-2-3)
+    # Number keys (7-8-9, 4-5-6, 1-2-3)
     for row in range(1, 4):
         for col in range(3):
-            x = start_x + col * spacing_x
-            y = start_y + row * spacing_y
-            d.ellipse((x - btn_radius, y - btn_radius, x + btn_radius, y + btn_radius), fill=dark_fill)
+            x = margin_left + col * spacing_x
+            y = margin_top + row * spacing_y
+            draw_button(x, y, btn_r, num_color)
 
-    # Bottom Zero button (wide pill)
-    zero_y = start_y + 4 * spacing_y
-    zero_x1 = start_x - btn_radius
-    zero_x2 = start_x + spacing_x + btn_radius
-    d.rounded_rectangle((zero_x1, zero_y - btn_radius, zero_x2, zero_y + btn_radius), radius=btn_radius, fill=dark_fill)
+    # Bottom Zero button (Pill shape)
+    zero_y = margin_top + 4 * spacing_y
+    zero_x = margin_left
+    draw_button(zero_x, zero_y, btn_r, num_color, is_pill=True, pill_w=spacing_x)
 
-    # Bottom Dot button
-    dot_x = start_x + 2 * spacing_x
-    d.ellipse((dot_x - btn_radius, zero_y - btn_radius, dot_x + btn_radius, zero_y + btn_radius), fill=dark_fill)
+    # Bottom Dot button (.)
+    dot_x = margin_left + 2 * spacing_x
+    draw_button(dot_x, zero_y, btn_r, num_color)
 
     return img
 
-main_icon = create_calculator_icon(1024)
+main_icon = create_professional_calculator_icon(1024)
 
 # Save web PWA icon sizes
 sizes = {
@@ -108,26 +161,34 @@ for folder, sz in mipmap_sizes.items():
 
 # Generate public/icon.svg
 svg_content = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="28" fill="#18181c"/>
-  <rect x="16" y="14" width="96" height="24" rx="6" fill="#28282e" stroke="#3c3c46" stroke-width="1.5"/>
-  <circle cx="28" cy="52" r="9" fill="#a5a5a5"/>
-  <circle cx="52" cy="52" r="9" fill="#a5a5a5"/>
-  <circle cx="76" cy="52" r="9" fill="#a5a5a5"/>
-  <circle cx="100" cy="52" r="9" fill="#ff9f0a"/>
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e1e24"/>
+      <stop offset="100%" stop-color="#0c0c10"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bgGrad)"/>
+  <rect x="2" y="2" width="124" height="124" rx="26" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="1.5"/>
+  <rect x="12" y="11" width="104" height="24" rx="6" fill="#08080c" stroke="#2d2d38" stroke-width="1"/>
 
-  <circle cx="28" cy="72" r="9" fill="#3a3a3e"/>
-  <circle cx="52" cy="72" r="9" fill="#3a3a3e"/>
-  <circle cx="76" cy="72" r="9" fill="#3a3a3e"/>
-  <circle cx="100" cy="72" r="9" fill="#ff9f0a"/>
+  <circle cx="24" cy="48" r="9.5" fill="#a5a5aa"/>
+  <circle cx="52" cy="48" r="9.5" fill="#a5a5aa"/>
+  <circle cx="80" cy="48" r="9.5" fill="#a5a5aa"/>
+  <circle cx="108" cy="48" r="9.5" fill="#ff9f0a"/>
 
-  <circle cx="28" cy="92" r="9" fill="#3a3a3e"/>
-  <circle cx="52" cy="92" r="9" fill="#3a3a3e"/>
-  <circle cx="76" cy="92" r="9" fill="#3a3a3e"/>
-  <circle cx="100" cy="92" r="9" fill="#ff9f0a"/>
+  <circle cx="24" cy="68" r="9.5" fill="#333338"/>
+  <circle cx="52" cy="68" r="9.5" fill="#333338"/>
+  <circle cx="80" cy="68" r="9.5" fill="#333338"/>
+  <circle cx="108" cy="68" r="9.5" fill="#ff9f0a"/>
 
-  <rect x="19" y="103" width="42" height="18" rx="9" fill="#3a3a3e"/>
-  <circle cx="76" cy="112" r="9" fill="#3a3a3e"/>
-  <circle cx="100" cy="112" r="9" fill="#ff9f0a"/>
+  <circle cx="24" cy="88" r="9.5" fill="#333338"/>
+  <circle cx="52" cy="88" r="9.5" fill="#333338"/>
+  <circle cx="80" cy="88" r="9.5" fill="#333338"/>
+  <circle cx="108" cy="88" r="9.5" fill="#ff9f0a"/>
+
+  <rect x="14.5" y="98.5" width="47" height="19" rx="9.5" fill="#333338"/>
+  <circle cx="80" cy="108" r="9.5" fill="#333338"/>
+  <circle cx="108" cy="108" r="9.5" fill="#ff9f0a"/>
 </svg>'''
 
 with open(Path('public/icon.svg'), 'w', encoding='utf-8') as f:

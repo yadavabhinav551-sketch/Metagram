@@ -1,0 +1,193 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.calculator.app"
+4    android:versionCode="1"
+5    android:versionName="1.0.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="24"
+9        android:targetSdkVersion="34" />
+10
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:5:5-67
+11-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:5:22-64
+12    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+12-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:6:5-79
+12-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:6:22-76
+13    <uses-permission android:name="android.permission.CAMERA" />
+13-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:7:5-65
+13-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:7:22-62
+14    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+14-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:8:5-71
+14-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:8:22-68
+15    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+15-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:9:5-80
+15-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:9:22-77
+16    <uses-permission
+16-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:10:5-107
+17        android:name="android.permission.READ_EXTERNAL_STORAGE"
+17-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:10:22-77
+18        android:maxSdkVersion="32" />
+18-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:10:78-104
+19    <uses-permission
+19-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:11:5-108
+20        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+20-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:11:22-78
+21        android:maxSdkVersion="32" />
+21-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:11:79-105
+22    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+22-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:12:5-76
+22-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:12:22-73
+23    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+23-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:13:5-75
+23-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:13:22-72
+24    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+24-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:14:5-75
+24-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:14:22-72
+25
+26    <uses-feature
+26-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:16:5-85
+27        android:name="android.hardware.camera"
+27-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:16:19-57
+28        android:required="false" />
+28-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:16:58-82
+29    <uses-feature
+29-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:17:5-95
+30        android:name="android.hardware.camera.autofocus"
+30-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:17:19-67
+31        android:required="false" />
+31-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:17:68-92
+32    <uses-feature
+32-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:18:5-89
+33        android:name="android.hardware.microphone"
+33-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:18:19-61
+34        android:required="false" />
+34-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:18:62-86
+35
+36    <permission
+36-->[androidx.core:core:1.12.0] C:\Users\yadav\.gradle\caches\transforms-3\4dde0fce54f6341b6da19770f76a2130\transformed\core-1.12.0\AndroidManifest.xml:22:5-24:47
+37        android:name="com.calculator.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+37-->[androidx.core:core:1.12.0] C:\Users\yadav\.gradle\caches\transforms-3\4dde0fce54f6341b6da19770f76a2130\transformed\core-1.12.0\AndroidManifest.xml:23:9-81
+38        android:protectionLevel="signature" />
+38-->[androidx.core:core:1.12.0] C:\Users\yadav\.gradle\caches\transforms-3\4dde0fce54f6341b6da19770f76a2130\transformed\core-1.12.0\AndroidManifest.xml:24:9-44
+39
+40    <uses-permission android:name="com.calculator.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+40-->[androidx.core:core:1.12.0] C:\Users\yadav\.gradle\caches\transforms-3\4dde0fce54f6341b6da19770f76a2130\transformed\core-1.12.0\AndroidManifest.xml:26:5-97
+40-->[androidx.core:core:1.12.0] C:\Users\yadav\.gradle\caches\transforms-3\4dde0fce54f6341b6da19770f76a2130\transformed\core-1.12.0\AndroidManifest.xml:26:22-94
+41
+42    <application
+42-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:20:5-43:19
+43        android:allowBackup="true"
+43-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:21:9-35
+44        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+44-->[androidx.core:core:1.12.0] C:\Users\yadav\.gradle\caches\transforms-3\4dde0fce54f6341b6da19770f76a2130\transformed\core-1.12.0\AndroidManifest.xml:28:18-86
+45        android:dataExtractionRules="@xml/data_extraction_rules"
+45-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:22:9-65
+46        android:debuggable="true"
+47        android:extractNativeLibs="false"
+48        android:fullBackupContent="@xml/backup_rules"
+48-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:23:9-54
+49        android:icon="@mipmap/ic_launcher"
+49-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:24:9-43
+50        android:label="@string/app_name"
+50-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:25:9-41
+51        android:roundIcon="@mipmap/ic_launcher_round"
+51-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:26:9-54
+52        android:supportsRtl="true"
+52-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:27:9-35
+53        android:theme="@style/Theme.Calculator"
+53-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:28:9-48
+54        android:usesCleartextTraffic="true" >
+54-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:29:9-44
+55        <activity
+55-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:32:9-42:20
+56            android:name="com.calculator.app.MainActivity"
+56-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:33:13-41
+57            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+57-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:35:13-106
+58            android:exported="true"
+58-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:34:13-36
+59            android:hardwareAccelerated="true"
+59-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:36:13-47
+60            android:windowSoftInputMode="adjustResize" >
+60-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:37:13-55
+61            <intent-filter>
+61-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:38:13-41:29
+62                <action android:name="android.intent.action.MAIN" />
+62-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:39:17-69
+62-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:39:25-66
+63
+64                <category android:name="android.intent.category.LAUNCHER" />
+64-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:40:17-77
+64-->D:\Chat Website\android\app\src\main\AndroidManifest.xml:40:27-74
+65            </intent-filter>
+66        </activity>
+67
+68        <provider
+68-->[androidx.emoji2:emoji2:1.2.0] C:\Users\yadav\.gradle\caches\transforms-3\505b7080d3326db31ccc54c35d672fae\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:24:9-32:20
+69            android:name="androidx.startup.InitializationProvider"
+69-->[androidx.emoji2:emoji2:1.2.0] C:\Users\yadav\.gradle\caches\transforms-3\505b7080d3326db31ccc54c35d672fae\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:25:13-67
+70            android:authorities="com.calculator.app.androidx-startup"
+70-->[androidx.emoji2:emoji2:1.2.0] C:\Users\yadav\.gradle\caches\transforms-3\505b7080d3326db31ccc54c35d672fae\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:26:13-68
+71            android:exported="false" >
+71-->[androidx.emoji2:emoji2:1.2.0] C:\Users\yadav\.gradle\caches\transforms-3\505b7080d3326db31ccc54c35d672fae\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:27:13-37
+72            <meta-data
+72-->[androidx.emoji2:emoji2:1.2.0] C:\Users\yadav\.gradle\caches\transforms-3\505b7080d3326db31ccc54c35d672fae\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:29:13-31:52
+73                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+73-->[androidx.emoji2:emoji2:1.2.0] C:\Users\yadav\.gradle\caches\transforms-3\505b7080d3326db31ccc54c35d672fae\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:30:17-75
+74                android:value="androidx.startup" />
+74-->[androidx.emoji2:emoji2:1.2.0] C:\Users\yadav\.gradle\caches\transforms-3\505b7080d3326db31ccc54c35d672fae\transformed\jetified-emoji2-1.2.0\AndroidManifest.xml:31:17-49
+75            <meta-data
+75-->[androidx.lifecycle:lifecycle-process:2.6.1] C:\Users\yadav\.gradle\caches\transforms-3\04b9e2d6051da9202825d434acaa3ca4\transformed\jetified-lifecycle-process-2.6.1\AndroidManifest.xml:29:13-31:52
+76                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+76-->[androidx.lifecycle:lifecycle-process:2.6.1] C:\Users\yadav\.gradle\caches\transforms-3\04b9e2d6051da9202825d434acaa3ca4\transformed\jetified-lifecycle-process-2.6.1\AndroidManifest.xml:30:17-78
+77                android:value="androidx.startup" />
+77-->[androidx.lifecycle:lifecycle-process:2.6.1] C:\Users\yadav\.gradle\caches\transforms-3\04b9e2d6051da9202825d434acaa3ca4\transformed\jetified-lifecycle-process-2.6.1\AndroidManifest.xml:31:17-49
+78            <meta-data
+78-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:29:13-31:52
+79                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+79-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:30:17-85
+80                android:value="androidx.startup" />
+80-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:31:17-49
+81        </provider>
+82
+83        <receiver
+83-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:34:9-52:20
+84            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+84-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:35:13-76
+85            android:directBootAware="false"
+85-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:36:13-44
+86            android:enabled="true"
+86-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:37:13-35
+87            android:exported="true"
+87-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:38:13-36
+88            android:permission="android.permission.DUMP" >
+88-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:39:13-57
+89            <intent-filter>
+89-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:40:13-42:29
+90                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+90-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:41:17-91
+90-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:41:25-88
+91            </intent-filter>
+92            <intent-filter>
+92-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:43:13-45:29
+93                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+93-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:44:17-85
+93-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:44:25-82
+94            </intent-filter>
+95            <intent-filter>
+95-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:46:13-48:29
+96                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+96-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:47:17-88
+96-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:47:25-85
+97            </intent-filter>
+98            <intent-filter>
+98-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:49:13-51:29
+99                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+99-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:50:17-95
+99-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\yadav\.gradle\caches\transforms-3\a648c10143d2710c515970c288df9792\transformed\jetified-profileinstaller-1.3.0\AndroidManifest.xml:50:25-92
+100            </intent-filter>
+101        </receiver>
+102    </application>
+103
+104</manifest>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#000000</color>
+    <color name="primary">#05B88F</color>
+    <color name="status_bar">#000000</color>
+    <string name="app_name">Calculator</string>
+    <string name="server_url">http://192.168.16.94:3000</string>
+    <style name="Theme.Calculator" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="android:statusBarColor">@color/status_bar</item>
+        <item name="android:windowBackground">@color/black</item>
+    </style>
+</resources>
