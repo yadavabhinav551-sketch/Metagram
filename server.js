@@ -1004,7 +1004,11 @@ app.post("/api/signup", async (req, res) => {
   };
   db.users.push(user);
   saveDb();
-  res.json({ token: signUser(user), user: ownUser(user) });
+  res.json({
+    token: signUser(user),
+    privacyToken: user.privacyCodeHash ? signPrivacy(user) : null,
+    user: ownUser(user)
+  });
 });
 
 app.post("/api/login", async (req, res) => {
@@ -1028,7 +1032,11 @@ app.post("/api/login", async (req, res) => {
   );
   if (!user || (!passwordMatches && !secretCodeMatches)) return res.status(401).json({ error: "Invalid credentials." });
   if (user.blocked || user.suspended) return res.status(403).json({ error: "Account is blocked or suspended." });
-  res.json({ token: signUser(user), user: ownUser(user) });
+  res.json({
+    token: signUser(user),
+    privacyToken: user.privacyCodeHash ? signPrivacy(user) : null,
+    user: ownUser(user)
+  });
 });
 
 app.get("/api/me", authUser, (req, res) => {

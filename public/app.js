@@ -401,15 +401,8 @@ async function bootstrap() {
   showPendingShareError();
   const canContinue = await checkRequiredUpdate();
   if (!canContinue) return;
-  showCalculatorPrivacy();
   if (!state.token) {
-    const cachedUser = loadCachedUser();
-    if (cachedUser) {
-      state.user = cachedUser;
-      state.conversations = loadCachedConversations();
-    }
-    showPendingShareLoginHint();
-    setAppReady();
+    showAuth();
     return;
   }
   try {
@@ -434,6 +427,10 @@ async function bootstrap() {
       await openConversationById(conversationId).catch(() => {});
     }
   } catch (error) {
+    if (error.status === 423) {
+      showCalculatorPrivacy();
+      return;
+    }
     const cachedUser = loadCachedUser();
     if (!cachedUser || error.status === 401 || error.status === 403) {
       showAuth();
@@ -3224,16 +3221,15 @@ $("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const body = Object.fromEntries(new FormData(event.target));
-    const { token, user } = await api("/api/login", { method: "POST", body: JSON.stringify(body) });
+    const { token, privacyToken, user } = await api("/api/login", { method: "POST", body: JSON.stringify(body) });
     state.token = token;
     state.user = user;
+    if (privacyToken) {
+      state.privacyToken = privacyToken;
+      sessionStorage.setItem("privacyToken", privacyToken);
+    }
     localStorage.setItem("chatToken", token);
     cacheCurrentUser();
-    if (privacyEnabled()) {
-      showCalculatorPrivacy();
-      if ("Notification" in window) Notification.requestPermission();
-      return;
-    }
     showChat();
     connectSocket();
     await loadConversations();
@@ -3251,9 +3247,13 @@ $("signupForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const body = Object.fromEntries(new FormData(event.target));
-    const { token, user } = await api("/api/signup", { method: "POST", body: JSON.stringify(body) });
+    const { token, privacyToken, user } = await api("/api/signup", { method: "POST", body: JSON.stringify(body) });
     state.token = token;
     state.user = user;
+    if (privacyToken) {
+      state.privacyToken = privacyToken;
+      sessionStorage.setItem("privacyToken", privacyToken);
+    }
     localStorage.setItem("chatToken", token);
     cacheCurrentUser();
     showChat();
