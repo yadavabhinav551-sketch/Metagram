@@ -518,30 +518,32 @@ input:focus, select:focus {
 .conversation-list, .search-results {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px;
+  padding: 4px 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 
-.conversation-item {
+.conversation {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
+  gap: 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--wa-line);
+  background: transparent;
   transition: background 0.16s ease;
   user-select: none;
+  text-align: left;
 }
 
-.conversation-item:hover, .conversation-item.active {
+.conversation:hover, .conversation.active {
   background: var(--wa-card);
 }
 
 .avatar {
-  width: 48px;
-  height: 48px;
+  width: 50px;
+  height: 50px;
   border-radius: var(--radius-full);
   background: var(--wa-card-hover);
   color: var(--wa-emerald);
@@ -561,7 +563,7 @@ input:focus, select:focus {
   object-fit: cover;
 }
 
-.conversation-info {
+.conversation-main {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -569,50 +571,51 @@ input:focus, select:focus {
   gap: 3px;
 }
 
-.conversation-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.conversation-top strong {
+.conversation-main strong {
   font-size: 16px;
   font-weight: 600;
   color: var(--wa-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: block;
 }
 
-.conversation-time {
-  font-size: 12px;
-  color: var(--wa-text-muted);
-}
-
-.conversation-bottom {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.conversation-last-msg {
-  font-size: 13px;
+.conversation-main small {
+  font-size: 13.5px;
   color: var(--wa-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 210px;
+  display: block;
 }
 
 .unread-badge {
   background: var(--wa-emerald);
-  color: #ffffff;
-  font-size: 11px;
+  color: #111b21;
+  font-size: 12px;
   font-weight: 700;
   border-radius: var(--radius-full);
   padding: 2px 7px;
   min-width: 20px;
-  text-align: center;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.status-dot.online {
+  background: var(--wa-emerald);
+  box-shadow: 0 0 0 2px var(--wa-surface);
 }
 
 /* ==========================================================================
@@ -938,12 +941,12 @@ input:focus, select:focus {
     z-index: 30;
   }
 
-  .chat-view.chat-open .sidebar {
-    display: none;
+  .chat-view.conversation-open .sidebar {
+    display: none !important;
   }
 
-  .chat-view.chat-open .chat-panel {
-    display: flex;
+  .chat-view.conversation-open .chat-panel {
+    display: flex !important;
   }
 
   .mobile-only {
