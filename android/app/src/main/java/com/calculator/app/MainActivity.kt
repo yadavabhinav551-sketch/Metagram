@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -26,8 +27,8 @@ class MainActivity : AppCompatActivity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var currentUrlIndex = 0
     private var urlsToTry = arrayOf(
-        "http://127.0.0.1:3000",
-        "http://192.168.16.94:3000"
+        "http://192.168.16.94:3000",
+        "http://127.0.0.1:3000"
     )
 
     private val requestPermissionsLauncher = registerForActivityResult(
@@ -65,7 +66,7 @@ class MainActivity : AppCompatActivity() {
 
         val configuredUrl = getString(R.string.server_url)
         if (configuredUrl.isNotEmpty()) {
-            urlsToTry = arrayOf("http://127.0.0.1:3000", configuredUrl)
+            urlsToTry = arrayOf(configuredUrl, "http://127.0.0.1:3000")
         }
 
         loadCurrentUrl()
@@ -103,6 +104,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupWebView() {
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
+
         val settings = webView.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true

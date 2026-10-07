@@ -100,6 +100,7 @@ const api = async (url, options = {}) => {
   } catch (error) {
     if (error.status) throw error;
     error.offline = true;
+    error.message = error.message || "Network error. Check Wi-Fi connection.";
     throw error;
   }
 };
