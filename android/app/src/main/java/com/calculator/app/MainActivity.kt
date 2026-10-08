@@ -27,8 +27,8 @@ class MainActivity : AppCompatActivity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var currentUrlIndex = 0
     private var urlsToTry = arrayOf(
-        "http://192.168.16.94:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "http://192.168.16.94:3000"
     )
 
     private val requestPermissionsLauncher = registerForActivityResult(
@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
 
         val configuredUrl = getString(R.string.server_url)
         if (configuredUrl.isNotEmpty()) {
-            urlsToTry = arrayOf(configuredUrl, "http://127.0.0.1:3000")
+            urlsToTry = arrayOf("http://127.0.0.1:3000", configuredUrl)
         }
 
         loadCurrentUrl()
@@ -105,7 +105,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupWebView() {
         webView.setBackgroundColor(android.graphics.Color.BLACK)
-        webView.clearCache(true)
+        
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -117,7 +117,7 @@ class MainActivity : AppCompatActivity() {
         settings.allowFileAccess = true
         settings.allowContentAccess = true
         settings.mediaPlaybackRequiresUserGesture = false
-        settings.cacheMode = WebSettings.LOAD_NO_CACHE
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         settings.userAgentString = settings.userAgentString + " CalculatorAndroidApp"
 
@@ -132,17 +132,10 @@ class MainActivity : AppCompatActivity() {
                 error: WebResourceError?
             ) {
                 if (request?.isForMainFrame == true) {
-                    if (currentUrlIndex < urlsToTry.size - 1) {
-                        currentUrlIndex++
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            loadCurrentUrl()
-                        }, 1000)
-                    } else {
-                        // Retry current URL after 3 seconds
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            loadCurrentUrl()
-                        }, 3000)
-                    }
+                    currentUrlIndex = (currentUrlIndex + 1) % urlsToTry.size
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        loadCurrentUrl()
+                    }, 1000)
                 }
             }
         }
