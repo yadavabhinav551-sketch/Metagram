@@ -104,6 +104,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupWebView() {
+        webView.setBackgroundColor(android.graphics.Color.BLACK)
         webView.clearCache(true)
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)

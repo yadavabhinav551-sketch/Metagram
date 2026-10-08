@@ -397,13 +397,13 @@ function connectSocket() {
 }
 
 async function bootstrap() {
+  setAppReady();
   registerPwa();
   showPendingShareError();
   const canContinue = await checkRequiredUpdate();
   if (!canContinue) return;
   if (!state.token) {
     showCalculatorPrivacy();
-    setAppReady();
     return;
   }
   try {
