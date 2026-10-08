@@ -252,14 +252,6 @@ async function showAuth() {
   if (state.updateBlocked) return;
   $("updateRequiredView").classList.add("hidden");
   endCall(false);
-  await unregisterPushSubscription().catch(() => {});
-  localStorage.removeItem("chatToken");
-  sessionStorage.removeItem("privacyToken");
-  localStorage.removeItem("offlineOutbox");
-  state.token = null;
-  state.privacyToken = null;
-  state.user = null;
-  state.offlineOutbox = [];
   state.socket?.disconnect();
   clearTimeout(state.privacyAutoLockTimer);
   clearPrivacyAwayLock();
@@ -267,6 +259,17 @@ async function showAuth() {
   $("authView").classList.remove("hidden");
   $("chatView").classList.add("hidden");
   setAppReady();
+}
+
+async function logout() {
+  localStorage.removeItem("chatToken");
+  sessionStorage.removeItem("privacyToken");
+  localStorage.removeItem("offlineOutbox");
+  state.token = null;
+  state.privacyToken = null;
+  state.user = null;
+  state.offlineOutbox = [];
+  await showAuth();
 }
 
 function connectSocket() {
@@ -983,6 +986,7 @@ async function handleCalculatorEquals() {
   const unlockMatch = expression.match(/^(\d{6})$/);
   if (unlockMatch) {
     const code = unlockMatch[1];
+    state.token = state.token || localStorage.getItem("chatToken");
     if (state.token) {
       const unlocked = await tryPrivacyUnlock(code);
       if (unlocked) return;
