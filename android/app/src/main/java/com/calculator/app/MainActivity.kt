@@ -28,7 +28,7 @@ class MainActivity : AppCompatActivity() {
     private var currentUrlIndex = 0
     private var urlsToTry = arrayOf(
         "http://127.0.0.1:3000",
-        "http://192.168.16.94:3000"
+        "http://10.0.2.2:3000"
     )
 
     private val requestPermissionsLauncher = registerForActivityResult(
@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
 
         val configuredUrl = getString(R.string.server_url)
         if (configuredUrl.isNotEmpty()) {
-            urlsToTry = arrayOf("http://127.0.0.1:3000", configuredUrl)
+            urlsToTry = arrayOf("http://127.0.0.1:3000", "http://10.0.2.2:3000", configuredUrl)
         }
 
         loadCurrentUrl()

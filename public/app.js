@@ -2571,14 +2571,12 @@ $("logoutBtn").addEventListener("click", () => {
   closeTopbarMenu();
   showAuth();
 });
-$("calculatorPrivacyView").addEventListener("pointerdown", async (event) => {
-  const button = event.target.closest("button");
+async function handleCalculatorButtonInput(button) {
   if (!button) return;
-  const value = button.dataset.calcValue;
-  const action = button.dataset.calcAction;
-  const fn = button.dataset.calcFn;
+  const value = button.dataset.calcValue || button.getAttribute("data-calc-value");
+  const action = button.dataset.calcAction || button.getAttribute("data-calc-action");
+  const fn = button.dataset.calcFn || button.getAttribute("data-calc-fn");
   if (!value && !action && !fn) return;
-  event.preventDefault();
 
   if (value) appendCalculatorValue(value);
   if (action === "clear") {
@@ -2597,20 +2595,20 @@ $("calculatorPrivacyView").addEventListener("pointerdown", async (event) => {
     return;
   }
   if (action === "toggle-sign") {
-    const value = state.calculatorExpression.trim();
-    if (!value || value === "0") return;
-    if (value.startsWith("-")) {
-      state.calculatorExpression = value.slice(1);
+    const val = state.calculatorExpression.trim();
+    if (!val || val === "0") return;
+    if (val.startsWith("-")) {
+      state.calculatorExpression = val.slice(1);
     } else {
-      state.calculatorExpression = `-${value}`;
+      state.calculatorExpression = `-${val}`;
     }
     updateCalculatorDisplay();
     updateCalculatorHistory(getCalculatorPreview(state.calculatorExpression));
     return;
   }
   if (action === "percent") {
-    const value = Number(state.calculatorExpression) || 0;
-    state.calculatorExpression = String(value / 100);
+    const val = Number(state.calculatorExpression) || 0;
+    state.calculatorExpression = String(val / 100);
     updateCalculatorDisplay();
     updateCalculatorHistory(getCalculatorPreview(state.calculatorExpression));
     return;
@@ -2620,23 +2618,58 @@ $("calculatorPrivacyView").addEventListener("pointerdown", async (event) => {
     return;
   }
   if (fn) {
-    const value = Number(state.calculatorExpression) || 0;
-    let result = value;
+    const val = Number(state.calculatorExpression) || 0;
+    let result = val;
     switch (fn) {
-      case "sin": result = Math.sin(value); break;
-      case "cos": result = Math.cos(value); break;
-      case "tan": result = Math.tan(value); break;
-      case "log": result = value > 0 ? Math.log10(value) : NaN; break;
-      case "sqrt": result = value >= 0 ? Math.sqrt(value) : NaN; break;
-      case "square": result = value * value; break;
-      case "exp": result = Math.exp(value); break;
+      case "sin": result = Math.sin(val); break;
+      case "cos": result = Math.cos(val); break;
+      case "tan": result = Math.tan(val); break;
+      case "log": result = val > 0 ? Math.log10(val) : NaN; break;
+      case "sqrt": result = val >= 0 ? Math.sqrt(val) : NaN; break;
+      case "square": result = val * val; break;
+      case "exp": result = Math.exp(val); break;
       case "pi": result = Math.PI; break;
       default: return;
     }
     state.calculatorExpression = Number.isFinite(result) ? String(Number(result.toPrecision(12))) : "Error";
     updateCalculatorDisplay();
   }
+}
+
+let lastCalcTapTime = 0;
+async function handleCalcEvent(event) {
+  const button = event.target.closest("[data-calc-value], [data-calc-action], [data-calc-fn]");
+  if (!button) return;
+  const now = Date.now();
+  if (now - lastCalcTapTime < 80) return;
+  lastCalcTapTime = now;
+  if (event.cancelable) event.preventDefault();
+  await handleCalculatorButtonInput(button);
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("#calculatorPrivacyView")) {
+    handleCalcEvent(event);
+  }
 });
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#calculatorPrivacyView")) {
+    handleCalcEvent(event);
+  }
+});
+
+(function attachCalculatorHandlers(){
+  const buttons = document.querySelectorAll("[data-calc-value],[data-calc-action],[data-calc-fn]");
+  buttons.forEach((btn) => {
+    try {
+      btn.addEventListener("pointerdown", handleCalcEvent);
+      btn.addEventListener("click", handleCalcEvent);
+    } catch (e) {
+      // ignore
+    }
+  });
+})();
 $("calculatorModeToggle").addEventListener("click", () => {
   state.calculatorAdvancedMode = !state.calculatorAdvancedMode;
   $("calculatorModeToggle").setAttribute("aria-pressed", String(state.calculatorAdvancedMode));
