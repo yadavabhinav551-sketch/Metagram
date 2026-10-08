@@ -1006,7 +1006,7 @@ app.post("/api/signup", async (req, res) => {
   saveDb();
   res.json({
     token: signUser(user),
-    privacyToken: user.privacyCodeHash ? signPrivacy(user) : null,
+    privacyToken: signPrivacy(user),
     user: ownUser(user)
   });
 });
@@ -1034,7 +1034,7 @@ app.post("/api/login", async (req, res) => {
   if (user.blocked || user.suspended) return res.status(403).json({ error: "Account is blocked or suspended." });
   res.json({
     token: signUser(user),
-    privacyToken: user.privacyCodeHash ? signPrivacy(user) : null,
+    privacyToken: signPrivacy(user),
     user: ownUser(user)
   });
 });

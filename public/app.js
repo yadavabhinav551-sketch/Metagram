@@ -402,15 +402,7 @@ async function bootstrap() {
   const canContinue = await checkRequiredUpdate();
   if (!canContinue) return;
   if (!state.token) {
-    const cachedUser = loadCachedUser();
-    // Only force calculator lock for users who have enabled privacy mode.
-    if (cachedUser && cachedUser.privacyMode?.enabled && cachedUser.privacyMode.hasCode) {
-      state.user = cachedUser;
-      state.conversations = loadCachedConversations();
-      showCalculatorPrivacy();
-      return;
-    }
-    showPendingShareLoginHint();
+    showCalculatorPrivacy();
     setAppReady();
     return;
   }
@@ -436,18 +428,9 @@ async function bootstrap() {
       await openConversationById(conversationId).catch(() => {});
     }
   } catch (error) {
-    const cachedUser = loadCachedUser();
-    if (!cachedUser || error.status === 401 || error.status === 403) {
-      showAuth();
-      return;
-    }
-    state.user = cachedUser;
-    state.conversations = loadCachedConversations();
-    if (privacyEnabled()) {
-      showCalculatorPrivacy();
-      return;
-    }
-    showChat();
+    showAuth();
+  }
+}
     renderConversations();
     renderHeader();
     renderMessages();
@@ -1000,12 +983,12 @@ async function handleCalculatorEquals() {
   const unlockMatch = expression.match(/^(\d{6})$/);
   if (unlockMatch) {
     const code = unlockMatch[1];
-    const unlocked = await tryPrivacyUnlock(code);
-    if (unlocked) return;
-    if (!state.token && !loadCachedUser()) {
-      showAuth();
-      return;
+    if (state.token) {
+      const unlocked = await tryPrivacyUnlock(code);
+      if (unlocked) return;
     }
+    showAuth();
+    return;
   }
   const result = evaluateCalculator(expression || "0");
   updateCalculatorOutput(result, expression ? `${expression} =` : "");
