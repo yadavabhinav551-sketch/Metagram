@@ -331,67 +331,76 @@
 
       <section id="profileModal" class="modal-layer hidden">
         <form id="profileForm" class="modal-card profile-card">
-          <header>
-            <div>
-              <strong>Profile Settings</strong>
-              <p class="modal-description">Update your account, calculator privacy lock, and message retention settings.</p>
+          <header class="profile-settings-header">
+            <div class="profile-heading">
+              <span class="profile-heading-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c.6-3.4 3.2-5.5 7-5.5s6.4 2.1 7 5.5"></path></svg>
+              </span>
+              <div>
+                <small>ACCOUNT PREFERENCES</small>
+                <strong>Profile settings</strong>
+                <p class="modal-description">Manage your profile, privacy, and how Metagram works for you.</p>
+              </div>
             </div>
-            <button id="closeProfileBtn" class="icon-button" type="button" title="Close">✕</button>
+            <button id="closeProfileBtn" class="icon-button profile-close-button" type="button" title="Close" aria-label="Close profile settings">✕</button>
           </header>
-          <div class="profile-header">
-            <div class="profile-grid">
-              <label>
-                Name
-                <input name="displayName" id="profileName" autocomplete="name" required>
-              </label>
-              <label>
-                User ID
-                <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
-              </label>
-              <label>
-                Status
-                <input name="statusText" id="profileStatusInput" maxlength="140" placeholder="What are you up to?">
-              </label>
-            </div>
+          <section class="profile-header profile-settings-card" aria-label="Your profile">
             <div class="profile-avatar-block">
               <div class="profile-preview">
                 <span class="avatar profile-avatar" id="profileAvatarPreview">U</span>
               </div>
-              <label class="file-input-label">
-                Profile Photo
+              <label class="file-input-label profile-photo-button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3v12H4V7Z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
+                Change photo
                 <input name="avatar" id="profileAvatarInput" type="file" accept="image/*">
               </label>
             </div>
-          </div>
+            <div class="profile-grid">
+              <label>
+                <span>Display name</span>
+                <input name="displayName" id="profileName" autocomplete="name" required>
+              </label>
+              <label>
+                <span>User ID</span>
+                <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
+              </label>
+              <label>
+                <span>About</span>
+                <input name="statusText" id="profileStatusInput" maxlength="140" placeholder="What are you up to?">
+              </label>
+            </div>
+          </section>
 
-          <fieldset class="profile-section">
-            <legend>Security</legend>
+          <fieldset class="profile-section profile-settings-card">
+            <legend><span class="profile-section-icon" aria-hidden="true">01</span><span><strong>Password &amp; security</strong><small>Update your sign-in password</small></span></legend>
+            <div class="profile-password-grid">
             <label>
-              Old Password
+              <span>Current password</span>
               <input name="oldPassword" type="password" autocomplete="current-password" placeholder="Required to change password">
             </label>
             <label>
-              New Password
+              <span>New password</span>
               <input name="newPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep same">
             </label>
+            </div>
           </fieldset>
 
-          <fieldset class="profile-section">
-            <legend>Calculator Privacy</legend>
-            <label class="setting-toggle">
+          <fieldset class="profile-section profile-settings-card">
+            <legend><span class="profile-section-icon" aria-hidden="true">02</span><span><strong>Privacy &amp; access</strong><small>Choose how your account is protected</small></span></legend>
+            <label class="setting-toggle profile-setting-row">
               <input id="privacyModeToggle" type="checkbox">
               <span>
-                <strong>Calculator Privacy Mode</strong>
-                <small>Show calculator lock screen before opening chat</small>
+                <strong>Calculator privacy mode</strong>
+                <small>Show the calculator lock screen before opening your chats.</small>
               </span>
             </label>
             <div class="privacy-grid">
               <label>
-                6-digit Unlock Code
+                <span>6-digit unlock code</span>
                 <input id="privacyCodeInput" name="privacyCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" placeholder="Leave blank to keep current">
               </label>
               <label>
-                Auto-Lock
+                <span>Auto-lock</span>
                 <select id="privacyAutoLock" name="privacyAutoLock">
                   <option value="0">Off</option>
                   <option value="1">After 1 minute</option>
@@ -401,7 +410,7 @@
                 </select>
               </label>
               <label>
-                Panic Shortcut
+                <span>Panic shortcut</span>
                 <select id="privacyPanicShortcut" name="privacyPanicShortcut">
                   <option value="button">Hide button</option>
                   <option value="double-tap">Hide button + double tap</option>
@@ -410,28 +419,28 @@
             </div>
           </fieldset>
 
-          <fieldset class="profile-section">
-            <legend>Notifications</legend>
-            <label class="setting-toggle">
+          <fieldset class="profile-section profile-settings-card">
+            <legend><span class="profile-section-icon" aria-hidden="true">03</span><span><strong>Notifications</strong><small>Stay up to date with new messages</small></span></legend>
+            <label class="setting-toggle profile-setting-row">
               <input id="notificationToggle" type="checkbox">
               <span>
-                <strong>Enable Notifications</strong>
-                <small>Receive push message notifications when backgrounded.</small>
+                <strong>Push notifications</strong>
+                <small>Receive message notifications when Metagram is in the background.</small>
               </span>
             </label>
           </fieldset>
 
-          <fieldset class="profile-section">
-            <legend>Message Retention</legend>
-            <label class="setting-toggle">
+          <fieldset class="profile-section profile-settings-card">
+            <legend><span class="profile-section-icon" aria-hidden="true">04</span><span><strong>Message retention</strong><small>Automatically clear messages from your chats</small></span></legend>
+            <label class="setting-toggle profile-setting-row">
               <input id="messageAutoDeleteToggle" type="checkbox">
               <span>
-                <strong>Auto-Delete All Messages</strong>
-                <small>All messages will be automatically deleted after the set time.</small>
+                <strong>Auto-delete messages</strong>
+                <small>Delete messages automatically after your selected time.</small>
               </span>
             </label>
             <label>
-              Delete After
+              <span>Delete after</span>
               <select id="messageAutoDeleteTtl" name="messageAutoDeleteTtl">
                 <option value="1">1 hour</option>
                 <option value="6">6 hours</option>
@@ -445,8 +454,13 @@
             </label>
           </fieldset>
 
-          <button class="primary" type="submit">Save Changes</button>
-          <p id="profileMessage" class="error-text"></p>
+          <div class="profile-save-bar">
+            <p id="profileMessage" class="error-text" role="status" aria-live="polite"></p>
+            <button class="primary profile-save-button" type="submit">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h12l3 3v13H4V4h1Z"></path><path d="M8 4v6h8V4M8 20v-6h8v6"></path></svg>
+              Save changes
+            </button>
+          </div>
         </form>
       </section>
 
