@@ -174,6 +174,7 @@ const defaultDb = {
   conversations: [],
   groups: [],
   statuses: [],
+  calls: [],
   sharedItems: [],
   pushSubscriptions: [],
   admin: {
@@ -215,6 +216,7 @@ function normalizeDb(raw = {}) {
     })),
     groups: raw.groups || [],
     statuses: raw.statuses || [],
+    calls: Array.isArray(raw.calls) ? raw.calls : [],
     sharedItems: raw.sharedItems || [],
     pushSubscriptions: raw.pushSubscriptions || [],
     admin
@@ -1387,7 +1389,9 @@ app.get("/api/users/search", authUser, requirePrivacyUnlocked, (req, res) => {
   const users = db.users
     .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
     .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
-    .filter((user) => user.userId.toLowerCase().includes(q) || user.mobile.includes(q))
+    .filter((user) => String(user.displayName || "").toLowerCase().includes(q)
+      || user.userId.toLowerCase().includes(q)
+      || user.mobile.includes(q))
     .slice(0, 20)
     .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id), hidden: (req.user.hiddenUserIds || []).includes(user.id) }));
   res.json({ users });
@@ -1405,6 +1409,67 @@ app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
     .filter((conversation) => includeArchived ? conversation.archived : !conversation.archived)
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
   res.json({ conversations });
+});
+
+app.get("/api/calls", authUser, requirePrivacyUnlocked, (req, res) => {
+  const calls = (db.calls || [])
+    .filter((call) => call.userId === req.user.id)
+    .map((call) => ({
+      ...call,
+      peer: publicUser(db.users.find((user) => user.id === call.peerId))
+    }))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json({ calls });
+});
+
+app.post("/api/calls", authUser, requirePrivacyUnlocked, (req, res) => {
+  const { id, conversationId, peerId, type, direction, status } = req.body;
+  const conversation = db.conversations.find((item) => item.id === conversationId
+    && !item.groupId
+    && item.participants.includes(req.user.id)
+    && item.participants.includes(peerId));
+  if (!conversation) return res.status(404).json({ error: "Call conversation not found." });
+  if (!["voice", "video"].includes(type)) return res.status(400).json({ error: "Invalid call type." });
+  if (!["incoming", "outgoing"].includes(direction)) return res.status(400).json({ error: "Invalid call direction." });
+  if (!["calling", "connected", "completed", "missed", "no_answer", "declined", "cancelled"].includes(status)) {
+    return res.status(400).json({ error: "Invalid call status." });
+  }
+
+  db.calls ||= [];
+  let call = id ? db.calls.find((item) => item.id === id && item.userId === req.user.id) : null;
+  if (id && !call) return res.status(404).json({ error: "Call history entry not found." });
+  if (call) {
+    if (call.conversationId !== conversationId || call.peerId !== peerId || call.type !== type || call.direction !== direction) {
+      return res.status(400).json({ error: "Call history details cannot be changed." });
+    }
+    call.status = status;
+    if (["connected", "completed"].includes(status) && !call.connectedAt) call.connectedAt = new Date().toISOString();
+    if (status !== "calling") {
+      if (status === "connected") {
+        call.endedAt = null;
+      } else if (status !== "connected") {
+        call.endedAt = new Date().toISOString();
+        call.durationSeconds = Math.min(86400, Math.max(0, Number(req.body.durationSeconds) || 0));
+      }
+    }
+  } else {
+    call = {
+      id: crypto.randomUUID(),
+      userId: req.user.id,
+      conversationId,
+      peerId,
+      type,
+      direction,
+      status,
+      createdAt: new Date().toISOString(),
+      connectedAt: ["connected", "completed"].includes(status) ? new Date().toISOString() : null,
+      endedAt: ["calling", "connected"].includes(status) ? null : new Date().toISOString(),
+      durationSeconds: Math.min(86400, Math.max(0, Number(req.body.durationSeconds) || 0))
+    };
+    db.calls.push(call);
+  }
+  saveDb();
+  res.json({ call: { ...call, peer: publicUser(db.users.find((user) => user.id === call.peerId)) } });
 });
 
 app.get("/api/conversations/hidden", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -1728,6 +1793,38 @@ app.delete("/api/statuses/:id", authUser, requirePrivacyUnlocked, (req, res) => 
   io.emit("status:deleted", { statusId: status.id, userId: req.user.id });
   io.to("admins").emit("admin:status-deleted", { statusId: status.id });
   res.json({ ok: true });
+});
+
+app.post("/api/groups", authUser, requirePrivacyUnlocked, (req, res) => {
+  const name = String(req.body.name || "").trim().slice(0, 80);
+  const description = String(req.body.description || "").trim().slice(0, 280);
+  const requestedMembers = Array.isArray(req.body.memberIds)
+    ? [...new Set(req.body.memberIds.filter((id) => typeof id === "string" && id !== req.user.id))]
+    : [];
+  if (!name) return res.status(400).json({ error: "Group name is required." });
+  const memberIds = requestedMembers
+    .filter((id) => db.users.some((user) => user.id === id && !user.deleted && !user.blocked && !user.suspended));
+  if (memberIds.length !== requestedMembers.length) return res.status(400).json({ error: "One or more selected members are no longer available." });
+  if (!memberIds.length) return res.status(400).json({ error: "Add at least one active member to create a group." });
+
+  const group = {
+    id: crypto.randomUUID(),
+    name,
+    description,
+    ownerId: req.user.id,
+    adminIds: [req.user.id],
+    memberIds: [req.user.id, ...memberIds],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  db.groups.push(group);
+  const conversation = makeConversation(group.memberIds, group.id);
+  saveDb();
+  for (const id of group.memberIds) {
+    io.in(id).socketsJoin(conversation.id);
+    if (id !== req.user.id) io.to(id).emit("group:updated", { group });
+  }
+  res.status(201).json({ group, conversation: hydrateConversation(conversation, req.user) });
 });
 
 app.patch("/api/groups/:id", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -2599,9 +2696,10 @@ io.on("connection", (socket) => {
     io.to(targetUserId).emit("call:rejected", { conversationId, fromUserId: socket.user.id });
   });
 
-  socket.on("call:end", ({ conversationId, targetUserId }) => {
+  socket.on("call:end", ({ conversationId, targetUserId, callStatus }) => {
     if (!socket.user || !targetUserId) return;
-    io.to(targetUserId).emit("call:ended", { conversationId, fromUserId: socket.user.id });
+    const status = ["missed", "no_answer", "cancelled"].includes(callStatus) ? callStatus : "completed";
+    io.to(targetUserId).emit("call:ended", { conversationId, fromUserId: socket.user.id, callStatus: status });
   });
 
   socket.on("call:signal", ({ conversationId, targetUserId, signal }) => {

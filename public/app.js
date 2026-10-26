@@ -4,11 +4,16 @@ const state = {
   user: null,
   socket: null,
   conversations: [],
+  mainTab: "chats",
   conversationView: "active",
   activeConversation: null,
   messages: [],
   starredMessages: [],
   statuses: [],
+  callHistory: [],
+  createGroupMembers: [],
+  createGroupSearchResults: [],
+  createGroupSearchTimer: null,
   messageSearch: { open: false, query: "", date: "", matches: [], index: 0 },
   editingMessageId: null,
   statusPreviewUrl: null,
@@ -74,6 +79,11 @@ const state = {
     conversationId: null,
     peerId: null,
     type: "voice",
+    direction: "outgoing",
+    historyId: null,
+    historyState: null,
+    connectedAt: null,
+    ringTimeout: null,
     shouldRecord: false,
     incoming: false,
     active: false,
@@ -360,12 +370,12 @@ function connectSocket() {
     renderMessages();
   });
   state.socket.on("status:new", () => {
-    if (state.conversationView === "status") loadStatuses();
+    if (state.mainTab === "updates") loadStatuses();
   });
   state.socket.on("status:deleted", ({ statusId }) => {
     state.statuses = state.statuses.filter((status) => status.id !== statusId);
     if (!$("statusViewerModal").classList.contains("hidden")) $("statusViewerModal").classList.add("hidden");
-    if (state.conversationView === "status") renderConversations();
+    if (state.mainTab === "updates") renderSectionPanel();
   });
   state.socket.on("app:restore", () => {
     alert("Backup restore hua hai. App sync ke liye refresh hoga.");
@@ -384,7 +394,11 @@ function connectSocket() {
   });
   state.socket.on("call:accepted", async ({ conversationId, fromUserId }) => {
     if (state.call.conversationId !== conversationId || state.call.peerId !== fromUserId) return;
+    clearTimeout(state.call.ringTimeout);
+    state.call.ringTimeout = null;
     $("callStatus").textContent = "Connected. Starting audio...";
+    state.call.connectedAt = Date.now();
+    persistCallHistory(state.call, "connected");
     try {
       const offer = await state.call.peerConnection.createOffer();
       await state.call.peerConnection.setLocalDescription(offer);
@@ -396,12 +410,12 @@ function connectSocket() {
   });
   state.socket.on("call:rejected", ({ conversationId }) => {
     if (state.call.conversationId !== conversationId) return;
-    endCall(false);
+    endCall(false, "declined");
     alert("Call declined.");
   });
-  state.socket.on("call:ended", ({ conversationId }) => {
+  state.socket.on("call:ended", ({ conversationId, callStatus }) => {
     if (state.call.conversationId !== conversationId) return;
-    endCall(false);
+    endCall(false, state.call.direction === "outgoing" && callStatus === "missed" ? "no_answer" : null);
   });
   state.socket.on("call:signal", ({ conversationId, fromUserId, signal }) => {
     handleCallSignal({ conversationId, fromUserId, signal }).catch((error) => {
@@ -1108,7 +1122,181 @@ async function loadStarredMessages() {
 async function loadStatuses() {
   const { statuses } = await api("/api/statuses");
   state.statuses = statuses;
-  renderConversations();
+  if (state.mainTab === "updates") renderSectionPanel();
+}
+
+async function loadCallHistory() {
+  const { calls } = await api("/api/calls");
+  state.callHistory = calls;
+  if (state.mainTab === "calls") renderSectionPanel();
+}
+
+function formatCallDuration(seconds) {
+  const duration = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(duration / 60);
+  const remainingSeconds = duration % 60;
+  return minutes ? `${minutes}:${String(remainingSeconds).padStart(2, "0")}` : `${remainingSeconds}s`;
+}
+
+function callStatusLabel(call) {
+  if (call.status === "missed") return "Missed";
+  if (call.status === "no_answer") return "No answer";
+  if (call.status === "declined") return "Declined";
+  if (call.status === "cancelled") return "Cancelled";
+  if (call.status === "calling") return "No answer";
+  if (call.status === "completed") return `Completed · ${formatCallDuration(call.durationSeconds)}`;
+  return call.direction === "incoming" ? "Incoming" : "Outgoing";
+}
+
+function renderSectionPanel() {
+  const title = {
+    updates: ["Updates", "Share a status and catch up with your friends."],
+    communities: ["Communities", "Your group conversations, all in one place."],
+    calls: ["Calls", "Your recent voice and video call history."]
+  }[state.mainTab];
+  if (!title) return;
+
+  $("sectionPanelTitle").textContent = title[0];
+  $("sectionPanelSubtitle").textContent = title[1];
+  $("sectionPanelAction").classList.toggle("hidden", state.mainTab !== "communities");
+  $("sectionPanelAction").textContent = "New group";
+  $("sectionPanelAction").dataset.action = "create-group";
+  $("statusComposer").classList.toggle("hidden", state.mainTab !== "updates" || $("statusComposer").dataset.open !== "true");
+
+  if (state.mainTab === "updates") {
+    const myStatuses = state.statuses.filter((status) => status.userId === state.user.id);
+    const latestOwnStatus = myStatuses[0];
+    const byUser = new Map();
+    state.statuses
+      .filter((status) => status.userId !== state.user.id)
+      .forEach((status) => {
+        const group = byUser.get(status.userId) || { user: status.user, statuses: [] };
+        group.statuses.push(status);
+        byUser.set(status.userId, group);
+      });
+    const friends = [...byUser.values()].map((group) => {
+      const latest = group.statuses[0];
+      return `
+        <button class="section-list-row status-story-row ${group.statuses.some((status) => !status.viewedByMe) ? "unread" : ""}" type="button" data-section-status="${latest.id}">
+          <span class="story-avatar ${group.statuses.some((status) => !status.viewedByMe) ? "unread" : ""}">${avatarMarkup(group.user, "U")}</span>
+          <span class="section-list-main">
+            <strong>${escapeHtml(group.user?.displayName || group.user?.userId || "Friend")}</strong>
+            <small>${escapeHtml(statusPreviewText(latest))}</small>
+          </span>
+          <small class="section-list-meta">${new Date(latest.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small>
+        </button>`;
+    }).join("");
+    $("sectionPanelContent").innerHTML = `
+      <section class="updates-section">
+        <h2>My status</h2>
+        <div class="my-status-card">
+          <span class="story-avatar own-story">${avatarMarkup(state.user, "You")}</span>
+          <span class="section-list-main">
+            <strong>My status</strong>
+            <small>${latestOwnStatus ? `${escapeHtml(statusPreviewText(latestOwnStatus))} · ${latestOwnStatus.viewerCount || 0} views` : "Share a photo, video, or text"}</small>
+          </span>
+          <button class="icon-button add-status-button" type="button" data-action="add-status" title="Add status" aria-label="Add status">+</button>
+          ${latestOwnStatus ? `<button class="text-button own-status-open" type="button" data-section-status="${latestOwnStatus.id}">View</button>` : ""}
+        </div>
+      </section>
+      <section class="updates-section">
+        <h2>Recent updates</h2>
+        ${friends || `<p class="section-empty">When a friend shares a status, it will appear here.</p>`}
+      </section>`;
+    return;
+  }
+
+  if (state.mainTab === "communities") {
+    const groups = state.conversations.filter((conversation) => conversation.groupId);
+    $("sectionPanelContent").innerHTML = groups.length ? `
+      <section class="communities-section">
+        <h2>Your groups</h2>
+        ${groups.map((conversation) => {
+          const group = conversation.group || {};
+          const latest = conversation.lastMessage;
+          return `
+            <div class="section-list-row community-row">
+              <button class="community-open" type="button" data-community-conversation="${conversation.id}">
+                <span class="avatar">${avatarMarkup({ displayName: group.name }, "G")}</span>
+                <span class="section-list-main">
+                  <strong>${escapeHtml(group.name || "Group")}</strong>
+                  <small>${escapeHtml(latest ? messageSnippet(latest) : group.description || `${conversation.members?.length || 0} members`)}</small>
+                </span>
+              </button>
+              <small class="section-list-meta">${conversation.members?.length || 0} members</small>
+            </div>`;
+        }).join("")}
+      </section>` : `
+      <div class="section-empty-card">
+        <span class="section-empty-icon">✦</span>
+        <h2>Bring people together</h2>
+        <p>Create a group for friends, family, or a community you care about.</p>
+        <button class="primary" type="button" data-action="create-group">Create a group</button>
+      </div>`;
+    return;
+  }
+
+  const calls = state.callHistory;
+  $("sectionPanelContent").innerHTML = calls.length ? `
+    <section class="calls-section">
+      <h2>Recent</h2>
+      ${calls.map((call) => {
+        const peerName = call.peer?.displayName || call.peer?.userId || "Unknown contact";
+        const directionLabel = call.direction === "incoming" ? "Incoming" : "Outgoing";
+        const date = new Date(call.createdAt);
+        const dateLabel = date.toLocaleDateString([], { day: "numeric", month: "short" });
+        const timeLabel = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const missed = ["missed", "no_answer", "declined"].includes(call.status);
+        return `
+          <div class="section-list-row call-history-row">
+            <button class="call-history-open" type="button" data-call-conversation="${call.conversationId}">
+              <span class="avatar">${avatarMarkup(call.peer, "U")}</span>
+              <span class="section-list-main">
+                <strong class="${missed ? "call-missed" : ""}">${escapeHtml(peerName)}</strong>
+                <small class="call-history-meta">${call.type === "video" ? "Video" : "Voice"} · ${directionLabel} · ${callStatusLabel(call)}</small>
+              </span>
+              <small class="section-list-meta">${dateLabel} · ${timeLabel}</small>
+            </button>
+            <button class="icon-button call-again-button" type="button" data-call-again="${call.conversationId}" data-call-type="${call.type}" title="Call again" aria-label="Call ${escapeHtml(peerName)} again">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a14 14 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1C10 20 4 14 4 5a1 1 0 0 1 1-1Z"></path></svg>
+            </button>
+          </div>`;
+      }).join("")}
+    </section>` : `
+    <div class="section-empty-card">
+      <span class="section-empty-icon">⌕</span>
+      <h2>No calls yet</h2>
+      <p>Voice and video calls with your contacts will show up here.</p>
+    </div>`;
+}
+
+async function setMainTab(tab) {
+  if (!["chats", "updates", "communities", "calls"].includes(tab)) return;
+  state.mainTab = tab;
+  if (tab === "chats") state.conversationView = "active";
+  $("chatView").classList.toggle("section-mode", tab !== "chats");
+  $("sectionPanel").classList.toggle("hidden", tab === "chats");
+  $("chatView").classList.remove("conversation-open");
+  document.querySelectorAll("[data-main-tab]").forEach((button) => {
+    const active = button.dataset.mainTab === tab;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  $("statusComposer").classList.add("hidden");
+  $("statusComposer").dataset.open = "false";
+  if (tab === "updates") await loadStatuses();
+  else if (tab === "communities") {
+    state.conversationView = "active";
+    await loadConversations();
+    renderSectionPanel();
+  } else if (tab === "calls") {
+    await loadCallHistory();
+  } else {
+    state.conversationView = "active";
+    await loadConversations();
+  }
+  if (tab !== "chats") renderSectionPanel();
 }
 
 function getPendingShareId() {
@@ -1207,7 +1395,6 @@ function renderConversations() {
   $("archivedChatsBtn")?.classList.toggle("active", state.conversationView === "archived");
   $("statusViewBtn")?.classList.toggle("active", state.conversationView === "status");
   $("starredViewBtn")?.classList.toggle("active", state.conversationView === "starred");
-  $("statusComposer")?.classList.toggle("hidden", state.conversationView !== "status");
   if (state.conversationView === "starred") {
     $("conversationList").innerHTML = state.starredMessages.map((message) => {
       const conversation = state.conversations.find((item) => item.id === message.conversationId);
@@ -1261,6 +1448,7 @@ function renderConversations() {
       </button>`;
   }).join("") || `<div class="empty-list">No conversations found.</div>`;
   normalizeUiText();
+  if (state.mainTab === "communities") renderSectionPanel();
 }
 
 function renderHeader() {
@@ -1344,6 +1532,19 @@ function cancelUserActionLongPress() {
   clearTimeout(state.userActionLongPressTimer);
 }
 
+function formatMessageDateLabel(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" });
+}
+
 function renderMessages({ preserveScroll = true } = {}) {
   if (!state.activeConversation) {
     clearReplyComposer();
@@ -1357,7 +1558,14 @@ function renderMessages({ preserveScroll = true } = {}) {
   const previousScrollTop = messagesEl.scrollTop;
   const wasScrolledToBottom = previousScrollHeight - previousScrollTop - messagesEl.clientHeight <= 80;
   updateMessageSearchMatches();
+  let previousDateKey = "";
   $("messages").innerHTML = state.messages.map((message) => {
+    const messageDate = new Date(message.createdAt);
+    const dateKey = Number.isNaN(messageDate.getTime()) ? "" : messageDate.toDateString();
+    const dateDivider = dateKey && dateKey !== previousDateKey
+      ? `<div class="message-date-divider"><span>${escapeHtml(formatMessageDateLabel(message.createdAt))}</span></div>`
+      : "";
+    previousDateKey = dateKey;
     const own = message.senderId === state.user.id;
     const ticks = own ? tickLabel(message) : "";
     const selected = state.selectedMessageIds.has(message.id);
@@ -1365,6 +1573,7 @@ function renderMessages({ preserveScroll = true } = {}) {
     const currentHit = searchHit && state.messageSearch.matches[state.messageSearch.index] === message.id;
     const starred = (state.user.starredMessageIds || []).includes(message.id);
     return `
+      ${dateDivider}
       <article class="message ${own ? "own" : ""} ${selected ? "selected" : ""} ${searchHit ? "search-hit" : ""} ${currentHit ? "current-hit" : ""}" data-message="${message.id}">
         ${state.selectionMode ? `<label class="message-select"><input type="checkbox" data-select-message="${message.id}" ${selected ? "checked" : ""}> Select</label>` : ""}
         ${renderReplyPreview(message.replyTo)}
@@ -1974,6 +2183,15 @@ async function openConversationById(conversationId, messageId = null) {
     conversation = state.conversations.find((item) => item.id === conversationId);
   }
   if (!conversation) return;
+  state.mainTab = "chats";
+  $("chatView").classList.remove("section-mode");
+  $("sectionPanel").classList.add("hidden");
+  document.querySelectorAll("[data-main-tab]").forEach((button) => {
+    const active = button.dataset.mainTab === "chats";
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
   state.activeConversation = conversation;
   state.selectionMode = false;
   state.selectedMessageIds.clear();
@@ -2509,6 +2727,33 @@ function directPeer(conversation = state.activeConversation) {
   return getOtherMember(conversation);
 }
 
+async function persistCallHistory(call, status, durationSeconds = 0) {
+  if (!call?.conversationId || !call.peerId) return;
+  call.historyState ||= { id: call.historyId || null, promise: Promise.resolve() };
+  const historyState = call.historyState;
+  historyState.promise = historyState.promise.then(async () => {
+    const { call: savedCall } = await api("/api/calls", {
+      method: "POST",
+      body: JSON.stringify({
+        id: historyState.id,
+        conversationId: call.conversationId,
+        peerId: call.peerId,
+        type: call.type,
+        direction: call.direction,
+        status,
+        durationSeconds
+      })
+    });
+    historyState.id = savedCall.id;
+    call.historyId = savedCall.id;
+    if (state.mainTab === "calls") await loadCallHistory();
+  }).catch((error) => {
+    console.error("Could not save call history:", error);
+    if (state.mainTab === "calls") $("sectionPanelSubtitle").textContent = `Call history could not be saved: ${error.message}`;
+  });
+  return historyState.promise;
+}
+
 function callMediaConstraints(type = state.call.type) {
   const wantsVideo = type === "video";
   return {
@@ -2693,7 +2938,12 @@ function createPeerConnection() {
 }
 
 async function prepareCall({ conversationId, peerId, incoming = false, type = "voice", shouldRecord = false }) {
-  endCall(false);
+  const acceptingIncomingCall = state.call.active
+    && state.call.incoming
+    && state.call.conversationId === conversationId
+    && state.call.peerId === peerId
+    && !incoming;
+  if (!acceptingIncomingCall) endCall(false);
   state.call.conversationId = conversationId;
   state.call.peerId = peerId;
   state.call.incoming = incoming;
@@ -2724,7 +2974,23 @@ async function startCall(type = "voice") {
   $("callTitle").textContent = `Calling ${peer.displayName || "User"}`;
   $("callStatus").textContent = "Ringing...";
   await prepareCall({ conversationId: state.activeConversation.id, peerId: peer.id, type, shouldRecord: true });
+  state.call.direction = "outgoing";
+  state.call.historyId = null;
+  state.call.historyState = { id: null, promise: Promise.resolve() };
+  state.call.connectedAt = null;
+  await persistCallHistory(state.call, "calling");
   state.socket.emit("call:invite", { conversationId: state.activeConversation.id, callType: type });
+  armCallRingTimeout();
+}
+
+function armCallRingTimeout() {
+  clearTimeout(state.call.ringTimeout);
+  state.call.ringTimeout = setTimeout(() => {
+    if (!state.call.active || state.call.connectedAt) return;
+    const status = state.call.direction === "incoming" ? "missed" : "no_answer";
+    $("callStatus").textContent = status === "missed" ? "Missed call" : "No answer";
+    endCall(true, status);
+  }, 60000);
 }
 
 function showIncomingCall({ conversationId, fromUserId, fromName, callType = "voice" }) {
@@ -2736,6 +3002,10 @@ function showIncomingCall({ conversationId, fromUserId, fromName, callType = "vo
   state.call.peerId = fromUserId;
   state.call.incoming = true;
   state.call.type = callType;
+  state.call.direction = "incoming";
+  state.call.historyId = null;
+  state.call.historyState = { id: null, promise: Promise.resolve() };
+  state.call.connectedAt = null;
   state.call.active = true;
   $("callTitle").textContent = `${fromName || "User"} is calling`;
   $("callStatus").textContent = callType === "video" ? "Incoming video call" : "Incoming voice call";
@@ -2746,14 +3016,20 @@ function showIncomingCall({ conversationId, fromUserId, fromName, callType = "vo
   $("incomingCallActions").classList.remove("hidden");
   $("endCallBtn").classList.add("hidden");
   $("callModal").classList.remove("hidden");
+  persistCallHistory(state.call, "calling");
+  armCallRingTimeout();
 }
 
 async function acceptIncomingCall() {
   const { conversationId, peerId, type } = state.call;
+  clearTimeout(state.call.ringTimeout);
+  state.call.ringTimeout = null;
   $("incomingCallActions").classList.add("hidden");
   $("endCallBtn").classList.remove("hidden");
   $("callStatus").textContent = "Connecting...";
   await prepareCall({ conversationId, peerId, incoming: false, type, shouldRecord: false });
+  state.call.connectedAt = Date.now();
+  await persistCallHistory(state.call, "connected");
   state.socket.emit("call:accept", { conversationId, targetUserId: peerId });
 }
 
@@ -2789,10 +3065,19 @@ async function handleCallSignal({ conversationId, fromUserId, signal }) {
   }
 }
 
-function endCall(notifyPeer = true) {
-  const { conversationId, peerId } = state.call;
+function endCall(notifyPeer = true, status = null) {
+  const call = { ...state.call };
+  const { conversationId, peerId } = call;
+  const finalStatus = status || (call.connectedAt
+    ? "completed"
+    : call.direction === "incoming" ? "missed" : "cancelled");
   if (notifyPeer && conversationId && peerId) {
-    state.socket.emit("call:end", { conversationId, targetUserId: peerId });
+    state.socket.emit("call:end", { conversationId, targetUserId: peerId, callStatus: finalStatus });
+  }
+  clearTimeout(call.ringTimeout);
+  if (conversationId && peerId && (call.historyId || call.historyState)) {
+    const durationSeconds = call.connectedAt ? Math.floor((Date.now() - call.connectedAt) / 1000) : 0;
+    persistCallHistory(call, finalStatus, durationSeconds);
   }
   if (state.call.recorder?.state === "recording") state.call.recorder.stop();
   state.call.peerConnection?.close();
@@ -2811,6 +3096,11 @@ function endCall(notifyPeer = true) {
     conversationId: null,
     peerId: null,
     type: "voice",
+    direction: "outgoing",
+    historyId: null,
+    historyState: null,
+    connectedAt: null,
+    ringTimeout: null,
     shouldRecord: false,
     incoming: false,
     active: false,
@@ -3129,23 +3419,28 @@ document.addEventListener("click", (event) => {
   closeTopbarMenu();
 });
 $("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
+$("chatView").addEventListener("click", (event) => {
+  const tabButton = event.target.closest("[data-main-tab]");
+  if (tabButton) setMainTab(tabButton.dataset.mainTab).catch((error) => {
+    $("sectionPanelSubtitle").textContent = error.message;
+  });
+});
 $("activeChatsBtn").addEventListener("click", async () => {
   state.conversationView = "active";
-  await loadConversations();
+  await setMainTab("chats");
 });
 $("lockedChatsBtn").addEventListener("click", async () => {
+  if (state.mainTab !== "chats") await setMainTab("chats");
   state.conversationView = "locked";
   await loadConversations();
 });
 $("archivedChatsBtn").addEventListener("click", async () => {
+  if (state.mainTab !== "chats") await setMainTab("chats");
   state.conversationView = "archived";
   await loadConversations();
 });
-$("statusViewBtn").addEventListener("click", async () => {
-  state.conversationView = "status";
-  await loadStatuses();
-});
 $("starredViewBtn").addEventListener("click", async () => {
+  if (state.mainTab !== "chats") await setMainTab("chats");
   state.conversationView = "starred";
   await loadStarredMessages();
 });
@@ -3301,7 +3596,11 @@ $("deleteUserBtn").addEventListener("click", async () => {
   await loadConversations();
   $("chatView").classList.remove("conversation-open");
 });
-$("searchInput").addEventListener("input", () => searchUsers().catch((error) => $("authError").textContent = error.message));
+$("searchInput").addEventListener("input", () => {
+  const showChats = $("searchInput").value.trim() && state.mainTab !== "chats";
+  const switchTab = showChats ? setMainTab("chats") : Promise.resolve();
+  switchTab.then(() => searchUsers()).catch((error) => $("authError").textContent = error.message);
+});
 
 function getVideoDuration(file) {
   return new Promise((resolve, reject) => {
@@ -3449,6 +3748,8 @@ $("postStatusBtn").addEventListener("click", async () => {
     $("statusTextInput").value = "";
     $("statusImageInput").value = "";
     clearStatusFilePreview();
+    $("statusComposer").dataset.open = "false";
+    $("statusComposer").classList.add("hidden");
     await loadStatuses();
   } catch (error) {
     alert(error.message);
@@ -3638,7 +3939,7 @@ $("acceptCallBtn").addEventListener("click", () => {
 $("declineCallBtn").addEventListener("click", () => {
   const { conversationId, peerId } = state.call;
   if (conversationId && peerId) state.socket.emit("call:reject", { conversationId, targetUserId: peerId });
-  endCall(false);
+  endCall(false, "declined");
 });
 $("endCallBtn").addEventListener("click", () => endCall(true));
 $("messageInput").addEventListener("input", () => {
@@ -3783,6 +4084,141 @@ $("conversationList").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-id]");
   if (!button) return;
   await openConversationById(button.dataset.id);
+});
+
+$("sectionPanelAction").addEventListener("click", () => {
+  $("createGroupMessage").textContent = "";
+  $("createGroupModal").classList.remove("hidden");
+  $("createGroupName").focus();
+});
+$("sectionPanelContent").addEventListener("click", async (event) => {
+  const action = event.target.closest("[data-action]");
+  if (action?.dataset.action === "add-status") {
+    $("statusComposer").dataset.open = "true";
+    $("statusComposer").classList.remove("hidden");
+    $("statusTextInput").focus();
+    return;
+  }
+  if (action?.dataset.action === "create-group") {
+    $("createGroupMessage").textContent = "";
+    $("createGroupModal").classList.remove("hidden");
+    $("createGroupName").focus();
+    return;
+  }
+  const statusButton = event.target.closest("[data-section-status]");
+  if (statusButton) {
+    const status = state.statuses.find((item) => item.id === statusButton.dataset.sectionStatus);
+    if (!status) return;
+    try {
+      const result = await api(`/api/statuses/${status.id}/view`, { method: "POST" });
+      status.viewerCount = result.viewerCount || status.viewerCount || 0;
+      status.viewedByMe = true;
+      if (result.status) Object.assign(status, result.status);
+      openStatusViewer(status);
+      await loadStatuses();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
+  const community = event.target.closest("[data-community-conversation]");
+  if (community) {
+    await openConversationById(community.dataset.communityConversation);
+    $("chatView").classList.add("conversation-open");
+    return;
+  }
+  const callAgain = event.target.closest("[data-call-again]");
+  if (callAgain) {
+    const conversationId = callAgain.dataset.callAgain;
+    const type = callAgain.dataset.callType === "video" ? "video" : "voice";
+    await openConversationById(conversationId);
+    await startCall(type);
+    return;
+  }
+  const callHistory = event.target.closest("[data-call-conversation]");
+  if (callHistory) {
+    await openConversationById(callHistory.dataset.callConversation);
+  }
+});
+
+function renderCreateGroupMembers() {
+  $("createGroupSelectedMembers").innerHTML = state.createGroupMembers.map((user) => `
+    <button class="selected-group-member" type="button" data-remove-create-member="${user.id}">
+      <span class="avatar">${avatarMarkup(user, "U")}</span>
+      <span>${escapeHtml(user.displayName || user.userId)}</span>
+      <span aria-hidden="true">×</span>
+    </button>`).join("");
+}
+
+$("createGroupMemberSearch").addEventListener("input", () => {
+  clearTimeout(state.createGroupSearchTimer);
+  state.createGroupSearchTimer = setTimeout(async () => {
+    const query = $("createGroupMemberSearch").value.trim();
+    if (query.length < 2) {
+      $("createGroupSearchResults").innerHTML = "";
+      return;
+    }
+    try {
+      const { users } = await api(`/api/users/search?q=${encodeURIComponent(query)}`);
+      state.createGroupSearchResults = users
+        .filter((user) => user.id !== state.user.id && !state.createGroupMembers.some((member) => member.id === user.id));
+      $("createGroupSearchResults").innerHTML = state.createGroupSearchResults.map((user) => `<button class="create-group-result" type="button" data-add-create-member="${user.id}">
+          <span class="avatar">${avatarMarkup(user, "U")}</span>
+          <span><strong>${escapeHtml(user.displayName || user.userId)}</strong><small>@${escapeHtml(user.userId)}</small></span>
+          <span>+</span>
+        </button>`).join("") || `<p class="section-empty">No new people found.</p>`;
+    } catch (error) {
+      $("createGroupMessage").textContent = error.message;
+    }
+  }, 220);
+});
+$("createGroupSearchResults").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-add-create-member]");
+  if (!button) return;
+  const user = state.createGroupSearchResults?.find((item) => item.id === button.dataset.addCreateMember);
+  if (!user) return;
+  state.createGroupMembers.push(user);
+  $("createGroupSearchResults").innerHTML = "";
+  $("createGroupMemberSearch").value = "";
+  renderCreateGroupMembers();
+  state.createGroupSearchResults = [];
+});
+$("createGroupSelectedMembers").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-create-member]");
+  if (!button) return;
+  state.createGroupMembers = state.createGroupMembers.filter((user) => user.id !== button.dataset.removeCreateMember);
+  renderCreateGroupMembers();
+});
+$("closeCreateGroupBtn").addEventListener("click", () => $("createGroupModal").classList.add("hidden"));
+$("createGroupForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  if (!state.createGroupMembers.length) {
+    $("createGroupMessage").textContent = "Add at least one person to create a group.";
+    return;
+  }
+  button.disabled = true;
+  try {
+    const { conversation } = await api("/api/groups", {
+      method: "POST",
+      body: JSON.stringify({
+        name: $("createGroupName").value,
+        description: $("createGroupDescription").value,
+        memberIds: state.createGroupMembers.map((user) => user.id)
+      })
+    });
+    state.createGroupMembers = [];
+    event.currentTarget.reset();
+    renderCreateGroupMembers();
+    $("createGroupSearchResults").innerHTML = "";
+    $("createGroupModal").classList.add("hidden");
+    await setMainTab("chats");
+    await openConversationById(conversation.id);
+  } catch (error) {
+    $("createGroupMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 
 $("searchResults").addEventListener("click", async (event) => {

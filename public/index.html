@@ -13,10 +13,10 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v110-call-message-ui" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v110-call-message-ui">
+    <link rel="preload" href="/styles.css?v=v112-bottom-navigation" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v112-bottom-navigation">
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v110-call-message-ui" defer></script>
+    <script src="/app.js?v=v112-bottom-navigation" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -126,24 +126,30 @@
           </div>
           <div class="sidebar-tabs wa-tabs">
             <button id="activeChatsBtn" class="active" type="button">Chats</button>
-            <button id="statusViewBtn" type="button">Status</button>
             <button id="lockedChatsBtn" type="button">Locked</button>
             <button id="archivedChatsBtn" type="button">Archived</button>
             <button id="starredViewBtn" type="button">Starred</button>
           </div>
-          <div id="statusComposer" class="status-composer hidden">
-            <input id="statusTextInput" maxlength="500" placeholder="Post a 24h text status">
-            <input id="statusImageInput" class="hidden" type="file" accept="image/*,video/*">
-            <button id="statusImageBtn" type="button">Media</button>
-            <button id="postStatusBtn" class="primary" type="button">Post</button>
-            <div id="statusFilePreview" class="status-file-preview hidden"></div>
-            <div id="statusUploadProgressWrap" class="status-upload-progress hidden">
-              <progress id="statusUploadProgress" value="0" max="100"></progress>
-              <small id="statusUploadText">Ready</small>
-            </div>
-          </div>
           <div id="searchResults" class="search-results"></div>
           <div id="conversationList" class="conversation-list"></div>
+          <nav class="primary-bottom-nav" aria-label="Main sections">
+            <button class="bottom-nav-item active" type="button" data-main-tab="chats" aria-current="page">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H9l-5 4V5Z"></path><path d="M8 9h8M8 13h5"></path></svg>
+              <span>Chats</span>
+            </button>
+            <button class="bottom-nav-item" type="button" data-main-tab="updates">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+              <span>Updates</span>
+            </button>
+            <button class="bottom-nav-item" type="button" data-main-tab="communities">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><circle cx="17" cy="9" r="2.5"></circle><path d="M3 20c0-3.2 2.4-5.5 6-5.5s6 2.3 6 5.5m1-5c3 0 5 1.8 5 4.5"></path></svg>
+              <span>Communities</span>
+            </button>
+            <button class="bottom-nav-item" type="button" data-main-tab="calls">
+              <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a14 14 0 0 0 5 5L15 13l5 2v4a1 1 0 0 1-1 1C10 20 4 14 4 5a1 1 0 0 1 1-1Z"></path></svg>
+              <span>Calls</span>
+            </button>
+          </nav>
         </aside>
 
         <section class="chat-panel">
@@ -219,6 +225,28 @@
             <button class="send-button wa-send-btn" type="submit" title="Send"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-5 16-3-7-8-1Z"></path><path d="m12 13 8-9"></path></svg></button>
           </form>
         </section>
+
+        <section id="sectionPanel" class="section-panel hidden" aria-live="polite">
+          <header class="section-panel-header">
+            <div>
+              <h1 id="sectionPanelTitle">Updates</h1>
+              <p id="sectionPanelSubtitle"></p>
+            </div>
+            <button id="sectionPanelAction" class="primary hidden" type="button"></button>
+          </header>
+          <div id="statusComposer" class="status-composer hidden">
+            <input id="statusTextInput" maxlength="500" placeholder="Post a 24h text status">
+            <input id="statusImageInput" class="hidden" type="file" accept="image/*,video/*">
+            <button id="statusImageBtn" type="button">Media</button>
+            <button id="postStatusBtn" class="primary" type="button">Post status</button>
+            <div id="statusFilePreview" class="status-file-preview hidden"></div>
+            <div id="statusUploadProgressWrap" class="status-upload-progress hidden">
+              <progress id="statusUploadProgress" value="0" max="100"></progress>
+              <small id="statusUploadText">Ready</small>
+            </div>
+          </div>
+          <div id="sectionPanelContent" class="section-panel-content"></div>
+        </section>
       </section>
 
       <section id="voicePreviewModal" class="video-preview-modal voice-preview-modal hidden" aria-label="Voice recording controls">
@@ -273,6 +301,31 @@
           <button class="primary" type="submit">Save Group</button>
           <button id="leaveGroupBtn" class="text-button danger" type="button">Leave Group</button>
           <p id="groupMessage" class="error-text"></p>
+        </form>
+      </section>
+
+      <section id="createGroupModal" class="modal-layer hidden">
+        <form id="createGroupForm" class="modal-card create-group-card">
+          <header>
+            <strong>Create a community group</strong>
+            <button id="closeCreateGroupBtn" class="icon-button" type="button" title="Close">✕</button>
+          </header>
+          <label>
+            Group name
+            <input id="createGroupName" maxlength="80" required placeholder="Name your group">
+          </label>
+          <label>
+            Description
+            <input id="createGroupDescription" maxlength="280" placeholder="What is this group about?">
+          </label>
+          <label>
+            Add members
+            <input id="createGroupMemberSearch" autocomplete="off" placeholder="Search by name, user ID, or mobile">
+          </label>
+          <div id="createGroupSearchResults" class="create-group-search-results"></div>
+          <div id="createGroupSelectedMembers" class="create-group-selected-members"></div>
+          <button class="primary" type="submit">Create group</button>
+          <p id="createGroupMessage" class="error-text"></p>
         </form>
       </section>
 
