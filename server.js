@@ -20,6 +20,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret-before-production";
+const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+const GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const ADMIN_ENTRY = "/vault-6388391842";
 const IS_RENDER = Boolean(process.env.RENDER || process.env.RENDER_EXTERNAL_HOSTNAME || process.env.RENDER_SERVICE_ID);
 const PERSISTENT_ROOT = IS_RENDER ? "/tmp/metagram" : __dirname;
@@ -167,6 +169,8 @@ let adminMongoClient = null;
 let adminStateCollection = null;
 let adminMongoKeepaliveTimer = null;
 let selfPingTimer = null;
+let googleSigningKeys = null;
+let googleSigningKeysExpiresAt = 0;
 
 const defaultDb = {
   users: [],
@@ -422,7 +426,7 @@ function startSelfPing() {
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, hiddenChatSecret, privacyCodeHash, privacyCodeAdminValue, lockedChatPin, ...safe } = user;
+  const { passwordHash, hiddenChatSecret, privacyCodeHash, privacyCodeAdminValue, lockedChatPin, email, ...safe } = user;
   safe.hasLockedChatPin = Boolean(lockedChatPin);
   safe.privacyMode = {
     enabled: Boolean(user.privacyMode?.enabled),
@@ -442,6 +446,23 @@ function normalizeUserId(value = "") {
   return String(value).trim().toLowerCase();
 }
 
+function normalizeMobile(value = "") {
+  return String(value).replace(/\D/g, "");
+}
+
+function isAvailableUserId(userId, excludedUserId = null) {
+  return !db.users.some((user) => user.id !== excludedUserId && normalizeUserId(user.userId) === userId);
+}
+
+function isAvailableMobile(mobile, excludedUserId = null) {
+  const normalizedMobile = normalizeMobile(mobile);
+  return !db.users.some((user) => (
+    user.id !== excludedUserId
+      && normalizedMobile
+      && normalizeMobile(user.mobile) === normalizedMobile
+  ));
+}
+
 function validUserId(value = "") {
   return /^[a-z0-9](?:[a-z0-9._]{1,28}[a-z0-9])?$/.test(value) && !value.includes("..");
 }
@@ -457,6 +478,7 @@ function validateUserId(value = "") {
 function ownUser(user) {
   return {
     ...publicUser(user),
+    email: String(user.email || ""),
     hasHiddenChatSecret: Boolean(user.hiddenChatSecret)
   };
 }
@@ -476,6 +498,78 @@ function adminUser(user) {
 
 function signUser(user) {
   return jwt.sign({ id: user.id, role: "user" }, JWT_SECRET, { expiresIn: "7d" });
+}
+
+async function getGoogleSigningKeys(forceRefresh = false) {
+  if (!forceRefresh && googleSigningKeys && Date.now() < googleSigningKeysExpiresAt) return googleSigningKeys;
+  const response = await fetch(GOOGLE_JWKS_URL, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error(`Google signing keys request failed (${response.status}).`);
+  const payload = await response.json();
+  if (!Array.isArray(payload.keys)) throw new Error("Google signing keys response is invalid.");
+  const cacheControl = response.headers.get("cache-control") || "";
+  const maxAgeSeconds = Number(cacheControl.match(/max-age=(\d+)/i)?.[1] || 3600);
+  googleSigningKeys = payload.keys;
+  googleSigningKeysExpiresAt = Date.now() + Math.max(60, maxAgeSeconds) * 1000;
+  return googleSigningKeys;
+}
+
+async function verifyGoogleIdToken(idToken) {
+  if (!GOOGLE_CLIENT_ID) throw new Error("Google sign-in is not configured.");
+  if (typeof idToken !== "string" || idToken.length > 12000) throw new Error("Google credential is invalid.");
+  const parts = idToken.split(".");
+  if (parts.length !== 3) throw new Error("Google credential is invalid.");
+
+  let header;
+  let claims;
+  try {
+    header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+    claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    throw new Error("Google credential is invalid.");
+  }
+  if (header.alg !== "RS256" || typeof header.kid !== "string") throw new Error("Google credential is invalid.");
+
+  let keys = await getGoogleSigningKeys();
+  let signingKey = keys.find((key) => key.kid === header.kid && key.kty === "RSA");
+  if (!signingKey) {
+    keys = await getGoogleSigningKeys(true);
+    signingKey = keys.find((key) => key.kid === header.kid && key.kty === "RSA");
+    if (!signingKey) throw new Error("Google signing key is unavailable.");
+  }
+  const publicKey = crypto.createPublicKey({ key: signingKey, format: "jwk" });
+  const signatureIsValid = crypto.verify(
+    "RSA-SHA256",
+    Buffer.from(`${parts[0]}.${parts[1]}`),
+    publicKey,
+    Buffer.from(parts[2], "base64url")
+  );
+  const now = Math.floor(Date.now() / 1000);
+  const validIssuer = ["accounts.google.com", "https://accounts.google.com"].includes(claims.iss);
+  if (
+    !signatureIsValid
+    || !validIssuer
+    || claims.aud !== GOOGLE_CLIENT_ID
+    || (claims.azp && claims.azp !== GOOGLE_CLIENT_ID)
+    || !Number.isFinite(claims.exp)
+    || claims.exp <= now
+    || !Number.isFinite(claims.iat)
+    || claims.iat > now + 60
+    || claims.email_verified !== true
+    || typeof claims.email !== "string"
+    || typeof claims.sub !== "string"
+    || !claims.sub
+  ) {
+    throw new Error("Google account verification failed.");
+  }
+  return {
+    email: claims.email.trim().toLowerCase(),
+    googleSubject: claims.sub,
+    displayName: typeof claims.name === "string" ? claims.name.trim().slice(0, 80) : ""
+  };
+}
+
+function profileIsComplete(user) {
+  return Boolean(user?.displayName && user?.mobile && user?.userId && user?.passwordHash);
 }
 
 function signAdmin() {
@@ -1066,6 +1160,7 @@ app.get("/healthz", (_req, res) => {
 app.get("/api/app-config", (_req, res) => {
   const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
   res.json({
+    googleClientId: GOOGLE_CLIENT_ID,
     updateNotify: {
       enabled: Boolean(updateNotify.enabled),
       version: Number(updateNotify.version || 1),
@@ -1080,20 +1175,118 @@ app.get(ADMIN_ENTRY, (_req, res) => {
 });
 
 app.post("/api/signup", async (req, res) => {
-  const { mobile, password, displayName } = req.body;
+  res.status(410).json({ error: "Create your account with Google sign-in." });
+});
+
+app.post("/api/auth/google", async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({ error: "Google sign-in is not configured. Set GOOGLE_CLIENT_ID on the server." });
+  }
+  let identity;
+  try {
+    identity = await verifyGoogleIdToken(req.body.credential);
+  } catch (error) {
+    console.error("Google sign-in verification failed:", error.message || error);
+    return res.status(401).json({ error: "Could not verify this Google account. Please try again." });
+  }
+
+  const user = db.users.find((item) => (
+    item.googleSubject === identity.googleSubject
+    || String(item.email || "").trim().toLowerCase() === identity.email
+  ));
+  if (user && (user.deleted || user.blocked || user.suspended)) {
+    return res.status(403).json({ error: "Account is blocked or suspended." });
+  }
+
+  if (user && profileIsComplete(user)) {
+    if (!user.googleSubject || user.email !== identity.email) {
+      user.googleSubject = identity.googleSubject;
+      user.email = identity.email;
+      saveDb();
+    }
+    return res.json({
+      token: signUser(user),
+      privacyToken: signPrivacy(user),
+      user: ownUser(user)
+    });
+  }
+
+  const setupToken = jwt.sign({
+    role: "google-onboarding",
+    googleSubject: identity.googleSubject,
+    email: identity.email,
+    existingUserId: user?.id || null
+  }, JWT_SECRET, { expiresIn: "15m" });
+  res.json({ setupToken, email: identity.email, displayName: user?.displayName || identity.displayName });
+});
+
+app.post("/api/auth/google/complete-profile", async (req, res) => {
+  let setup;
+  try {
+    setup = jwt.verify(req.body.setupToken, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: "Google sign-in expired. Please choose your Google account again." });
+  }
+  if (setup.role !== "google-onboarding" || !setup.email || !setup.googleSubject) {
+    return res.status(401).json({ error: "Google sign-in is required to create an account." });
+  }
+
+  const displayName = String(req.body.displayName || "").trim();
+  const mobile = String(req.body.mobile || "").trim();
+  const password = String(req.body.password || "");
+  const calculatorLockPassword = String(req.body.calculatorLockPassword || "").trim();
   const userIdResult = validateUserId(req.body.userId);
   if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
-  const { userId } = userIdResult;
-  if (!userId || !mobile || !password || !displayName) return res.status(400).json({ error: "All fields are required." });
-  if (db.users.some((user) => user.userId === userId || user.mobile === mobile)) {
-    return res.status(409).json({ error: "User ID or mobile number already exists." });
+  if (!displayName || displayName.length > 80) {
+    return res.status(400).json({ error: "Name is required and must be 80 characters or fewer." });
   }
-  const user = {
+  if (normalizeMobile(mobile).length < 7 || normalizeMobile(mobile).length > 15) {
+    return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+  }
+  if (password.length < 8 || password.length > 128) {
+    return res.status(400).json({ error: "Login password must be between 8 and 128 characters." });
+  }
+  if (calculatorLockPassword && !validPrivacyCode(calculatorLockPassword)) {
+    return res.status(400).json({ error: "Optional calculator lock password must be exactly 6 digits." });
+  }
+
+  const userId = userIdResult.userId;
+  const linkedUser = db.users.find((item) => (
+    item.googleSubject === setup.googleSubject
+    || String(item.email || "").trim().toLowerCase() === String(setup.email).toLowerCase()
+  ));
+  const user = setup.existingUserId
+    ? db.users.find((item) => item.id === setup.existingUserId)
+    : linkedUser;
+  if (setup.existingUserId && (!user || user.deleted || user.blocked || user.suspended)) {
+    return res.status(403).json({ error: "Account is not active." });
+  }
+  if (!setup.existingUserId && user && profileIsComplete(user)) {
+    return res.status(409).json({ error: "This Google account already has a profile. Sign in with Google." });
+  }
+  if (!isAvailableUserId(userId, user?.id) || !isAvailableMobile(mobile, user?.id)) {
+    return res.status(409).json({ error: "User ID or phone number already exists. Choose a different one." });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  const privacyCodeHash = calculatorLockPassword
+    ? await bcrypt.hash(calculatorLockPassword, 10)
+    : null;
+  const accountCreatedDuringSetup = db.users.some((item) => (
+    item.id !== user?.id
+      && (
+        item.googleSubject === setup.googleSubject
+        || String(item.email || "").trim().toLowerCase() === String(setup.email).toLowerCase()
+      )
+  ));
+  if (accountCreatedDuringSetup) {
+    return res.status(409).json({ error: "This Google account already has a profile. Sign in with Google." });
+  }
+  if (!isAvailableUserId(userId, user?.id) || !isAvailableMobile(mobile, user?.id)) {
+    return res.status(409).json({ error: "User ID or phone number already exists. Choose a different one." });
+  }
+  const updatedUser = user || {
     id: crypto.randomUUID(),
-    userId,
-    mobile,
-    displayName,
-    passwordHash: await bcrypt.hash(password, 10),
     blocked: false,
     suspended: false,
     deleted: false,
@@ -1110,22 +1303,31 @@ app.post("/api/signup", async (req, res) => {
     avatarUrl: null,
     hiddenChatSecret: null,
     notificationEnabled: true,
-    privacyMode: {
-      enabled: false,
-      autoLockMinutes: 0,
-      panicShortcut: "button"
-    },
-    privacyCodeHash: null,
     lockedChatPin: null,
     createdAt: new Date().toISOString(),
     lastSeenAt: null
   };
-  db.users.push(user);
+  Object.assign(updatedUser, {
+    displayName,
+    mobile,
+    userId,
+    email: setup.email,
+    googleSubject: setup.googleSubject,
+    passwordHash,
+    privacyMode: {
+      enabled: Boolean(calculatorLockPassword),
+      autoLockMinutes: 0,
+      panicShortcut: "button"
+    },
+    privacyCodeHash,
+    privacyCodeAdminValue: null
+  });
+  if (!user) db.users.push(updatedUser);
   saveDb();
   res.json({
-    token: signUser(user),
-    privacyToken: signPrivacy(user),
-    user: ownUser(user)
+    token: signUser(updatedUser),
+    privacyToken: signPrivacy(updatedUser),
+    user: ownUser(updatedUser)
   });
 });
 
@@ -1190,7 +1392,7 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
     const userIdResult = validateUserId(req.body.userId);
     if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
     nextUserId = userIdResult.userId;
-    if (db.users.some((user) => user.id !== req.user.id && user.userId === nextUserId)) {
+    if (!isAvailableUserId(nextUserId, req.user.id)) {
       return res.status(409).json({ error: "User ID already exists." });
     }
   }
@@ -1391,10 +1593,102 @@ app.get("/api/users/search", authUser, requirePrivacyUnlocked, (req, res) => {
     .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
     .filter((user) => String(user.displayName || "").toLowerCase().includes(q)
       || user.userId.toLowerCase().includes(q)
-      || user.mobile.includes(q))
+      || user.mobile.includes(q)
+      || String(user.email || "").trim().toLowerCase().includes(q))
     .slice(0, 20)
     .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id), hidden: (req.user.hiddenUserIds || []).includes(user.id) }));
   res.json({ users });
+});
+
+app.post("/api/users/match-contacts", authUser, requirePrivacyUnlocked, (req, res) => {
+  const contacts = Array.isArray(req.body.contacts) ? req.body.contacts : [];
+  if (contacts.length > 200) return res.status(400).json({ error: "Check contacts in groups of 200 or fewer." });
+  const emailToNames = new Map();
+  for (const contact of contacts) {
+    const name = String(contact?.name || "").trim().slice(0, 120);
+    const emails = Array.isArray(contact?.emails) ? contact.emails : [];
+    for (const value of emails.slice(0, 10)) {
+      const email = String(value || "").trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+      if (!emailToNames.has(email)) emailToNames.set(email, name);
+    }
+  }
+  if (!emailToNames.size) return res.json({ users: [] });
+
+  const blockedIds = new Set(req.user.blockedUserIds || []);
+  const deletedIds = new Set(req.user.deletedUserIds || []);
+  const users = db.users
+    .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
+    .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
+    .map((user) => {
+      const email = String(user.email || "").trim().toLowerCase();
+      return emailToNames.has(email)
+        ? { ...publicUser(user), matchedContactName: emailToNames.get(email), hidden: (req.user.hiddenUserIds || []).includes(user.id) }
+        : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.matchedContactName || a.displayName).localeCompare(String(b.matchedContactName || b.displayName)));
+  res.json({ users });
+});
+
+app.get("/api/search", authUser, requirePrivacyUnlocked, (req, res) => {
+  const rawQuery = String(req.query.q || "").trim();
+  const q = rawQuery.toLowerCase();
+  if (q.length < 2) return res.json({ users: [], conversations: [], messages: [] });
+
+  ensureUserCollections(req.user);
+  const blockedIds = new Set(req.user.blockedUserIds || []);
+  const deletedIds = new Set(req.user.deletedUserIds || []);
+  const hiddenUnlocked = Boolean(req.user.hiddenChatSecret) && rawQuery === req.user.hiddenChatSecret;
+  const canSearchHidden = hiddenUnlocked || (Boolean(req.user.hiddenChatSecret)
+    && String(req.query.hiddenCode || "") === req.user.hiddenChatSecret);
+  const users = db.users
+    .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
+    .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
+    .filter((user) => String(user.displayName || "").toLowerCase().includes(q)
+      || String(user.userId || "").toLowerCase().includes(q)
+      || String(user.mobile || "").includes(q)
+      || String(user.email || "").trim().toLowerCase().includes(q))
+    .slice(0, 20)
+    .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id), hidden: (req.user.hiddenUserIds || []).includes(user.id) }));
+
+  const conversations = db.conversations
+    .filter((conversation) => conversation.participants.includes(req.user.id))
+    .filter((conversation) => !isDeletedConversation(conversation, req.user))
+    .filter((conversation) => !conversationLockedForUser(conversation, req.user))
+    .filter((conversation) => canSearchHidden || !isHiddenConversation(conversation, req.user))
+    .map((conversation) => hydrateConversation(conversation, req.user));
+  const matchingConversations = conversations.filter((conversation) => {
+    const other = conversation.members.find((member) => member.id !== req.user.id);
+    return String(conversation.group?.name || "").toLowerCase().includes(q)
+      || String(other?.displayName || "").toLowerCase().includes(q)
+      || String(other?.userId || "").toLowerCase().includes(q)
+      || String(other?.mobile || "").includes(q)
+      || String(conversation.lastMessage?.text || "").toLowerCase().includes(q);
+  }).slice(0, 20);
+
+  const matchingMessages = conversations.flatMap((conversation) => {
+    const memberNames = new Map(conversation.members.map((member) => [member.id, member.displayName || "User"]));
+    return visibleMessages(conversation.id, req.user)
+      .filter((message) => String(message.text || "").toLowerCase().includes(q))
+      .map((message) => ({
+        id: message.id,
+        conversationId: conversation.id,
+        text: message.text,
+        createdAt: message.createdAt,
+        senderName: memberNames.get(message.senderId) || "User",
+        conversation
+      }));
+  }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 30);
+
+  const hiddenConversations = hiddenUnlocked
+    ? db.conversations
+      .filter((conversation) => conversation.participants.includes(req.user.id) && !conversation.groupId)
+      .filter((conversation) => (req.user.hiddenUserIds || []).includes(otherParticipant(conversation, req.user.id)))
+      .map((conversation) => hydrateConversation(conversation, req.user))
+      .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt))
+    : [];
+  res.json({ users, conversations: matchingConversations, messages: matchingMessages, hiddenUnlocked, hiddenConversations });
 });
 
 app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -2321,11 +2615,14 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
     const userIdResult = validateUserId(userId);
     if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
     nextUserId = userIdResult.userId;
-    if (db.users.some((item) => item.id !== user.id && item.userId === nextUserId)) {
+    if (!isAvailableUserId(nextUserId, user.id)) {
       return res.status(409).json({ error: "User ID already exists." });
     }
   }
-  if (mobile && db.users.some((item) => item.id !== user.id && item.mobile === mobile)) {
+  if (mobile && (normalizeMobile(mobile).length < 7 || normalizeMobile(mobile).length > 15)) {
+    return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+  }
+  if (mobile && !isAvailableMobile(mobile, user.id)) {
     return res.status(409).json({ error: "Mobile number already exists." });
   }
   if (nextUserId) user.userId = nextUserId;

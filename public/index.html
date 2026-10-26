@@ -15,6 +15,7 @@
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
     <link rel="preload" href="/styles.css?v=v112-bottom-navigation" as="style">
     <link rel="stylesheet" href="/styles.css?v=v112-bottom-navigation">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
     <script src="/app.js?v=v112-bottom-navigation" defer></script>
   </head>
@@ -92,14 +93,48 @@
             <button class="primary" type="submit">Login</button>
           </form>
           <form id="signupForm" class="stack hidden">
-            <input name="displayName" autocomplete="name" placeholder="Full Name" required>
-            <input name="userId" autocomplete="username" placeholder="username.like_instagram" pattern="[a-z0-9._]{3,30}" required>
-            <input name="mobile" autocomplete="tel" placeholder="Mobile Number" required>
-            <input name="password" autocomplete="new-password" type="password" placeholder="Password" required>
-            <button class="primary" type="submit">Create Account</button>
+            <p class="auth-google-intro">Create your account securely with your Google account. You will set your profile and login password next.</p>
           </form>
+          <div class="auth-google-section">
+            <div id="googleSignInButton" class="google-signin-button"></div>
+            <p id="googleSignInUnavailable" class="auth-google-unavailable hidden">Google sign-in is not configured yet.</p>
+          </div>
           <button class="install-button install-control hidden" type="button">Install Calculator App</button>
           <p id="authError" class="error-text"></p>
+        </div>
+        <div id="googleOnboardingOverlay" class="google-onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="googleOnboardingTitle">
+          <section class="google-onboarding-card">
+            <div class="google-onboarding-heading">
+              <span class="google-onboarding-step">ACCOUNT SETUP</span>
+              <h2 id="googleOnboardingTitle">Complete your profile</h2>
+              <p>Your Google email is verified. Fill in every required detail to finish creating your account.</p>
+            </div>
+            <p id="googleOnboardingEmail" class="google-onboarding-email"></p>
+            <form id="googleOnboardingForm" class="stack">
+              <label>
+                <span>Full name</span>
+                <input name="displayName" autocomplete="name" maxlength="80" required>
+              </label>
+              <label>
+                <span>Phone number</span>
+                <input name="mobile" type="tel" autocomplete="tel" inputmode="tel" placeholder="+91 98765 43210" required>
+              </label>
+              <label>
+                <span>Username</span>
+                <input name="userId" autocomplete="username" placeholder="username.like_instagram" pattern="[a-z0-9._]{3,30}" minlength="3" maxlength="30" required>
+              </label>
+              <label>
+                <span>Login password</span>
+                <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+              </label>
+              <label>
+                <span>Calculator lock password <small>(optional, 6 digits)</small></span>
+                <input name="calculatorLockPassword" type="password" autocomplete="new-password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
+              </label>
+              <p id="googleOnboardingError" class="error-text" aria-live="polite"></p>
+              <button id="googleOnboardingSubmit" class="primary" type="submit">Save details and open account</button>
+            </form>
+          </section>
         </div>
       </section>
 
@@ -122,7 +157,7 @@
             </div>
           </header>
           <div class="search-row wa-search-row">
-            <input id="searchInput" placeholder="Search or start new chat">
+            <input id="searchInput" placeholder="Search contacts, chats, messages, or email">
           </div>
           <div class="sidebar-tabs wa-tabs">
             <button id="activeChatsBtn" class="active" type="button">Chats</button>
@@ -132,6 +167,9 @@
           </div>
           <div id="searchResults" class="search-results"></div>
           <div id="conversationList" class="conversation-list"></div>
+          <button id="newChatFab" class="new-chat-fab" type="button" aria-label="New chat" title="New chat">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14m-7-7h14"></path></svg>
+          </button>
           <nav class="primary-bottom-nav" aria-label="Main sections">
             <button class="bottom-nav-item active" type="button" data-main-tab="chats" aria-current="page">
               <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H9l-5 4V5Z"></path><path d="M8 9h8M8 13h5"></path></svg>
@@ -327,6 +365,30 @@
           <button class="primary" type="submit">Create group</button>
           <p id="createGroupMessage" class="error-text"></p>
         </form>
+      </section>
+
+      <section id="newChatModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="newChatTitle">
+        <div class="modal-card new-chat-card">
+          <header>
+            <div>
+              <strong id="newChatTitle">New chat</strong>
+              <small>Choose a contact or search for a user</small>
+            </div>
+            <button id="closeNewChatBtn" class="icon-button" type="button" title="Close" aria-label="Close new chat">✕</button>
+          </header>
+          <label class="new-chat-search">
+            <span class="sr-only">Search contacts</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 4 4"></path></svg>
+            <input id="newChatSearchInput" type="search" autocomplete="off" placeholder="Search name, user ID, mobile, or email">
+          </label>
+          <button id="deviceContactsBtn" class="device-contacts-button hidden" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><path d="M3 20c0-3.2 2.4-5.5 6-5.5 1.3 0 2.4.3 3.3.8M16 11v8m-4-4h8m-1-10h2a1 1 0 0 1 1 1v16H4v-2"></path></svg>
+            Match selected device contacts
+          </button>
+          <small class="device-contacts-hint">Only contacts you select are sent temporarily for matching. They are not saved, and your full address book is never uploaded.</small>
+          <p id="newChatMessage" class="new-chat-message" role="status" aria-live="polite"></p>
+          <div id="newChatContacts" class="new-chat-contacts"></div>
+        </div>
       </section>
 
       <section id="profileModal" class="modal-layer hidden">

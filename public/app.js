@@ -1,6 +1,9 @@
 const state = {
   token: localStorage.getItem("chatToken"),
   privacyToken: sessionStorage.getItem("privacyToken"),
+  googleClientId: "",
+  googleInitialized: false,
+  googleSetupToken: "",
   user: null,
   socket: null,
   conversations: [],
@@ -44,6 +47,11 @@ const state = {
   shareRecipients: new Map(),
   hiddenConversations: [],
   unlockedHiddenCode: "",
+  searchRequestId: 0,
+  searchTimer: null,
+  searchConversationMap: new Map(),
+  newChatContacts: [],
+  newChatSearchRequestId: 0,
   lockedConversations: [],
   lockedChatCode: "",
   calculatorExpression: "",
@@ -244,6 +252,85 @@ function setAuthMode(mode) {
   $("loginForm").classList.toggle("hidden", mode !== "login");
   $("signupForm").classList.toggle("hidden", mode !== "signup");
   $("authError").textContent = "";
+  renderGoogleSignInButton(mode);
+}
+
+function renderGoogleSignInButton(mode = ($("signupTab")?.classList.contains("active") ? "signup" : "login")) {
+  const button = $("googleSignInButton");
+  const unavailable = $("googleSignInUnavailable");
+  button.replaceChildren();
+  if (!state.googleClientId) {
+    unavailable.textContent = "Google sign-in is not configured yet. Set GOOGLE_CLIENT_ID on the server.";
+    unavailable.classList.remove("hidden");
+    return;
+  }
+  if (!window.google?.accounts?.id) {
+    unavailable.textContent = "Google sign-in could not load. Check your internet connection and try again.";
+    unavailable.classList.remove("hidden");
+    return;
+  }
+  unavailable.classList.add("hidden");
+  if (!state.googleInitialized) {
+    window.google.accounts.id.initialize({
+      client_id: state.googleClientId,
+      callback: handleGoogleCredential,
+      auto_select: false
+    });
+    state.googleInitialized = true;
+  }
+  window.google.accounts.id.renderButton(button, {
+    theme: "outline",
+    size: "large",
+    shape: "rectangular",
+    text: mode === "signup" ? "signup_with" : "signin_with",
+    width: Math.max(220, Math.min(360, Math.floor($("authView").clientWidth - 64)))
+  });
+}
+
+const googleIdentityScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+googleIdentityScript?.addEventListener("load", () => renderGoogleSignInButton());
+googleIdentityScript?.addEventListener("error", () => {
+  $("googleSignInUnavailable").textContent = "Google sign-in could not load. Check your internet connection and try again.";
+  $("googleSignInUnavailable").classList.remove("hidden");
+});
+
+async function handleGoogleCredential(response) {
+  $("authError").textContent = "";
+  try {
+    const result = await api("/api/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ credential: response.credential })
+    });
+    if (result.setupToken) {
+      state.googleSetupToken = result.setupToken;
+      $("googleOnboardingEmail").textContent = `Verified Google account: ${result.email}`;
+      $("googleOnboardingForm").elements.displayName.value = result.displayName || "";
+      $("googleOnboardingOverlay").classList.remove("hidden");
+      return;
+    }
+    await establishSession(result);
+  } catch (error) {
+    $("authError").textContent = error.message;
+  }
+}
+
+async function establishSession({ token, privacyToken, user }) {
+  state.token = token;
+  state.user = user;
+  if (privacyToken) {
+    state.privacyToken = privacyToken;
+    sessionStorage.setItem("privacyToken", privacyToken);
+  }
+  localStorage.setItem("chatToken", token);
+  cacheCurrentUser();
+  showChat();
+  connectSocket();
+  await loadConversations();
+  await loadPendingShare();
+  if ("Notification" in window) {
+    await requestNotificationPermission();
+    if (Notification.permission === "granted") await ensurePushSubscription();
+  }
 }
 
 function showChat() {
@@ -467,6 +554,10 @@ async function bootstrap() {
 async function checkRequiredUpdate(updateNotify = null) {
   try {
     const config = updateNotify ? { updateNotify } : await api("/api/app-config");
+    if (config.googleClientId !== undefined) {
+      state.googleClientId = config.googleClientId;
+      renderGoogleSignInButton();
+    }
     const notify = config.updateNotify || {};
     state.updateNotify = notify;
     const serverVersion = Number(notify.version || 1);
@@ -2170,8 +2261,10 @@ async function requestNotificationPermission() {
   }
 }
 
-async function openConversationById(conversationId, messageId = null) {
-  let conversation = state.conversations.find((item) => item.id === conversationId);
+async function openConversationById(conversationId, messageId = null, knownConversation = null) {
+  let conversation = knownConversation?.id === conversationId
+    ? knownConversation
+    : state.conversations.find((item) => item.id === conversationId);
   if (!conversation) {
     state.conversationView = "active";
     await loadConversations();
@@ -2210,35 +2303,230 @@ async function openConversationById(conversationId, messageId = null) {
 
 async function searchUsers() {
   const q = $("searchInput").value.trim();
+  const requestId = ++state.searchRequestId;
+  $("searchResults").setAttribute("aria-busy", q.length >= 2 ? "true" : "false");
+  document.querySelector(".sidebar")?.classList.toggle("searching", q.length >= 2);
   if (q.length < 2) {
     $("searchResults").innerHTML = "";
+    $("searchResults").setAttribute("aria-busy", "false");
     state.hiddenConversations = [];
     state.unlockedHiddenCode = "";
+    state.searchConversationMap.clear();
     return;
   }
-  if (await tryUnlockHiddenChats(q)) return;
-  const { users } = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
-  $("searchResults").innerHTML = users.map((user) => `
-    <button class="search-result" data-user="${user.id}" type="button">
-      <span class="avatar">${avatarMarkup(user, user.displayName)}</span>
-      <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · hidden" : ""}</small></span>
-    </button>
-  `).join("");
+  $("searchResults").innerHTML = `<p class="search-feedback">Searching contacts, chats, and messages...</p>`;
+  const url = `/api/search?q=${encodeURIComponent(q)}&hiddenCode=${encodeURIComponent(state.unlockedHiddenCode)}`;
+  const results = await api(url);
+  if (requestId !== state.searchRequestId) return;
+  if (results.hiddenUnlocked) {
+    state.searchConversationMap.clear();
+    state.hiddenConversations = results.hiddenConversations;
+    state.unlockedHiddenCode = q;
+    $("searchResults").innerHTML = renderHiddenVault(results.hiddenConversations);
+    $("searchResults").setAttribute("aria-busy", "false");
+    return;
+  }
+  state.searchConversationMap = new Map();
+  [...results.conversations, ...results.messages.map((item) => item.conversation)].forEach((conversation) => {
+    if (conversation?.id) state.searchConversationMap.set(conversation.id, conversation);
+  });
+  $("searchResults").innerHTML = renderSearchResults(results, q);
+  $("searchResults").setAttribute("aria-busy", "false");
 }
 
-async function tryUnlockHiddenChats(code) {
-  if (!state.user?.hasHiddenChatSecret) return false;
+async function openNewChatModal() {
+  const requestId = ++state.newChatSearchRequestId;
+  $("newChatModal").classList.remove("hidden");
+  $("newChatSearchInput").value = "";
+  $("newChatMessage").textContent = "";
+  $("deviceContactsBtn").classList.toggle("hidden", typeof navigator.contacts?.select !== "function"
+    && typeof window.AndroidContacts?.postMessage !== "function");
+  $("newChatContacts").innerHTML = `<p class="search-feedback">Loading your contacts...</p>`;
+  $("newChatSearchInput").focus();
   try {
-    const { conversations } = await api(`/api/conversations/hidden?code=${encodeURIComponent(code)}`);
-    state.hiddenConversations = conversations;
-    state.unlockedHiddenCode = code;
-    $("searchResults").innerHTML = renderHiddenVault(conversations);
-    return true;
-  } catch {
-    state.hiddenConversations = [];
-    state.unlockedHiddenCode = "";
-    return false;
+    const { conversations } = await api("/api/conversations");
+    state.newChatContacts = [...new Map(conversations
+      .filter((conversation) => !conversation.groupId && !conversation.hidden && !conversation.locked)
+      .map((conversation) => getOtherMember(conversation))
+      .filter(Boolean)
+      .map((user) => [user.id, user])).values()]
+      .sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)));
+    if (requestId === state.newChatSearchRequestId && !$("newChatSearchInput").value.trim()) {
+      renderNewChatContacts(state.newChatContacts, "contacts");
+    }
+  } catch (error) {
+    $("newChatMessage").textContent = error.message;
+    $("newChatContacts").innerHTML = "";
   }
+}
+
+function renderNewChatContacts(users, view) {
+  if (!users.length) {
+    $("newChatContacts").innerHTML = `<p class="search-feedback">${view === "contacts"
+      ? "No contacts yet. Search by name, user ID, or mobile to start a chat."
+      : "No matching contacts found."}</p>`;
+    return;
+  }
+  const sectionTitle = view === "contacts" ? "Your contacts" : view === "matches" ? "On Metagram" : "Search results";
+  $("newChatContacts").innerHTML = `<div class="new-chat-section-title">${sectionTitle}</div>${users.map((user) => `
+    <button class="search-result new-chat-contact" data-new-chat-user="${escapeHtml(user.id)}" type="button">
+      <span class="avatar">${avatarMarkup(user, user.displayName)}</span>
+      <span><strong>${escapeHtml(user.displayName)}</strong><small>${user.matchedContactName ? `Saved as ${escapeHtml(user.matchedContactName)} · ` : ""}${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · Hidden chat" : ""}</small></span>
+      <svg class="new-chat-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"></path></svg>
+    </button>`).join("")}`;
+}
+
+async function matchDeviceContacts() {
+  const nativeContacts = window.AndroidContacts;
+  if (typeof nativeContacts?.postMessage === "function") {
+    $("newChatMessage").textContent = "";
+    nativeContacts.onmessage = (event) => {
+      let result;
+      try {
+        result = JSON.parse(event.data);
+      } catch {
+        $("newChatMessage").textContent = "Could not read the selected contacts.";
+        return;
+      }
+      if (result.type === "picked") {
+        matchSelectedDeviceContacts(result.contacts || []).catch((error) => {
+          $("newChatMessage").textContent = error.message;
+        });
+      } else if (result.type === "error") {
+        $("newChatMessage").textContent = result.message || "Could not access device contacts.";
+      }
+    };
+    nativeContacts.postMessage("pick-contacts");
+    return;
+  }
+  if (typeof navigator.contacts?.select !== "function") {
+    $("newChatMessage").textContent = "This browser cannot open device contacts. Search by email, name, user ID, or mobile instead.";
+    return;
+  }
+  $("newChatMessage").textContent = "";
+  try {
+    const contacts = await navigator.contacts.select(["name", "email"], { multiple: true });
+    await matchSelectedDeviceContacts(contacts.map((contact) => ({
+      name: Array.isArray(contact.name) ? contact.name[0] : contact.name || "",
+      emails: Array.isArray(contact.email) ? contact.email : contact.email ? [contact.email] : []
+    })));
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    $("newChatMessage").textContent = error.message;
+  }
+}
+
+async function matchSelectedDeviceContacts(contacts) {
+  const selected = contacts.map((contact) => ({
+    name: Array.isArray(contact.name) ? contact.name[0] : contact.name || "",
+    emails: Array.isArray(contact.emails) ? contact.emails : Array.isArray(contact.email) ? contact.email : contact.email ? [contact.email] : []
+  })).filter((contact) => contact.emails.length);
+  if (!selected.length) {
+    $("newChatMessage").textContent = "The selected contacts do not have email addresses.";
+    return;
+  }
+  $("newChatMessage").textContent = "";
+  $("newChatContacts").innerHTML = `<p class="search-feedback">Matching selected email contacts...</p>`;
+  const matchedUsers = new Map();
+  for (let offset = 0; offset < selected.length; offset += 200) {
+    const { users } = await api("/api/users/match-contacts", {
+      method: "POST",
+      body: JSON.stringify({ contacts: selected.slice(offset, offset + 200) })
+    });
+    users.forEach((user) => matchedUsers.set(user.id, user));
+  }
+  const users = [...matchedUsers.values()];
+  renderNewChatContacts(users, "matches");
+  if (!users.length) {
+    $("newChatMessage").textContent = "No selected contact emails match a Metagram account yet. You can still search by email or username.";
+  }
+}
+
+async function searchNewChatContacts() {
+  const q = $("newChatSearchInput").value.trim();
+  const requestId = ++state.newChatSearchRequestId;
+  $("newChatMessage").textContent = "";
+  if (!q) {
+    renderNewChatContacts(state.newChatContacts, "contacts");
+    return;
+  }
+  if (q.length < 2) {
+    $("newChatContacts").innerHTML = `<p class="search-feedback">Enter at least 2 characters to search all users.</p>`;
+    return;
+  }
+  $("newChatContacts").innerHTML = `<p class="search-feedback">Searching contacts...</p>`;
+  try {
+    const { users } = await api(`/api/users/search?q=${encodeURIComponent(q)}`);
+    if (requestId !== state.newChatSearchRequestId) return;
+    renderNewChatContacts(users, "search");
+  } catch (error) {
+    if (requestId !== state.newChatSearchRequestId) return;
+    $("newChatMessage").textContent = error.message;
+    $("newChatContacts").innerHTML = "";
+  }
+}
+
+async function startConversationWithUser(userId) {
+  const { conversation } = await api("/api/conversations", {
+    method: "POST",
+    body: JSON.stringify({ userId })
+  });
+  state.conversationView = "active";
+  if (!conversation.hidden && !conversation.archived && !conversation.locked) {
+    const index = state.conversations.findIndex((item) => item.id === conversation.id);
+    if (index >= 0) state.conversations[index] = conversation;
+    else state.conversations.unshift(conversation);
+    cacheConversations();
+    renderConversations();
+  }
+  $("newChatModal").classList.add("hidden");
+  await openConversationById(conversation.id, null, conversation);
+}
+
+function renderSearchResults({ users, conversations, messages }, query) {
+  const sections = [];
+  if (users.length) {
+    sections.push(`<div class="search-result-section"><h2>Contacts</h2>${users.map((user) => `
+      <button class="search-result" data-user="${escapeHtml(user.id)}" type="button">
+        <span class="avatar">${avatarMarkup(user, user.displayName)}</span>
+        <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · Hidden chat" : ""}</small></span>
+      </button>`).join("")}</div>`);
+  }
+  if (conversations.length) {
+    sections.push(`<div class="search-result-section"><h2>Chats</h2>${conversations.map((conversation) => {
+      const other = getOtherMember(conversation);
+      const title = conversation.group?.name || other?.displayName || "Chat";
+      const last = conversation.lastMessage?.media
+        ? `[${conversation.lastMessage.media.kind}]`
+        : conversation.lastMessage?.text || "No messages yet";
+      return `<button class="search-result" data-search-conversation="${escapeHtml(conversation.id)}" type="button">
+        <span class="avatar">${avatarMarkup(other, title)}</span>
+        <span><strong>${escapeHtml(title)}${conversation.hidden ? " · Hidden" : ""}</strong><small>${escapeHtml(last)}</small></span>
+      </button>`;
+    }).join("")}</div>`);
+  }
+  if (messages.length) {
+    sections.push(`<div class="search-result-section"><h2>Messages</h2>${messages.map((item) => {
+      const conversation = item.conversation;
+      const other = getOtherMember(conversation);
+      const title = conversation.group?.name || other?.displayName || "Chat";
+      return `<button class="search-result message-search-result" data-search-message="${escapeHtml(item.id)}" data-search-conversation="${escapeHtml(item.conversationId)}" type="button">
+        <span class="avatar">${avatarMarkup(other, title)}</span>
+        <span><strong>${escapeHtml(title)} · ${escapeHtml(item.senderName)}</strong><small>${highlightSearchText(item.text, query)}</small></span>
+      </button>`;
+    }).join("")}</div>`);
+  }
+  return sections.join("") || `<p class="search-feedback">No contacts, chats, or messages found.</p>`;
+}
+
+function clearSidebarSearch() {
+  clearTimeout(state.searchTimer);
+  state.searchRequestId += 1;
+  $("searchInput").value = "";
+  $("searchResults").innerHTML = "";
+  $("searchResults").setAttribute("aria-busy", "false");
+  document.querySelector(".sidebar")?.classList.remove("searching");
+  state.searchConversationMap.clear();
 }
 
 function renderHiddenVault(conversations) {
@@ -3599,7 +3887,13 @@ $("deleteUserBtn").addEventListener("click", async () => {
 $("searchInput").addEventListener("input", () => {
   const showChats = $("searchInput").value.trim() && state.mainTab !== "chats";
   const switchTab = showChats ? setMainTab("chats") : Promise.resolve();
-  switchTab.then(() => searchUsers()).catch((error) => $("authError").textContent = error.message);
+  clearTimeout(state.searchTimer);
+  state.searchTimer = setTimeout(() => {
+    switchTab.then(() => searchUsers()).catch((error) => {
+      $("searchResults").setAttribute("aria-busy", "false");
+      $("searchResults").innerHTML = `<p class="search-feedback">Search failed: ${escapeHtml(error.message)}</p>`;
+    });
+  }, 180);
 });
 
 function getVideoDuration(file) {
@@ -3950,49 +4244,43 @@ $("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const body = Object.fromEntries(new FormData(event.target));
-    const { token, privacyToken, user } = await api("/api/login", { method: "POST", body: JSON.stringify(body) });
-    state.token = token;
-    state.user = user;
-    if (privacyToken) {
-      state.privacyToken = privacyToken;
-      sessionStorage.setItem("privacyToken", privacyToken);
-    }
-    localStorage.setItem("chatToken", token);
-    cacheCurrentUser();
-    showChat();
-    connectSocket();
-    await loadConversations();
-    await loadPendingShare();
-    if ("Notification" in window) {
-      await requestNotificationPermission();
-      if (Notification.permission === "granted") await ensurePushSubscription();
-    }
+    await establishSession(await api("/api/login", { method: "POST", body: JSON.stringify(body) }));
   } catch (error) {
     $("authError").textContent = error.message;
   }
 });
 
-$("signupForm").addEventListener("submit", async (event) => {
+$("googleOnboardingForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!event.currentTarget.reportValidity()) return;
+  const submitButton = $("googleOnboardingSubmit");
+  submitButton.disabled = true;
+  $("googleOnboardingError").textContent = "";
   try {
-    const body = Object.fromEntries(new FormData(event.target));
-    const { token, privacyToken, user } = await api("/api/signup", { method: "POST", body: JSON.stringify(body) });
-    state.token = token;
-    state.user = user;
-    if (privacyToken) {
-      state.privacyToken = privacyToken;
-      sessionStorage.setItem("privacyToken", privacyToken);
-    }
-    localStorage.setItem("chatToken", token);
-    cacheCurrentUser();
-    showChat();
-    connectSocket();
-    await loadConversations();
-    await loadPendingShare();
+    const body = Object.fromEntries(new FormData(event.currentTarget));
+    const result = await api("/api/auth/google/complete-profile", {
+      method: "POST",
+      body: JSON.stringify({ ...body, setupToken: state.googleSetupToken })
+    });
+    state.googleSetupToken = "";
+    $("googleOnboardingOverlay").classList.add("hidden");
+    await establishSession(result);
   } catch (error) {
-    $("authError").textContent = error.message;
+    $("googleOnboardingError").textContent = error.message;
+  } finally {
+    submitButton.disabled = false;
   }
 });
+
+$("googleOnboardingOverlay").addEventListener("click", (event) => {
+  if (event.target === $("googleOnboardingOverlay")) event.preventDefault();
+});
+document.addEventListener("keydown", (event) => {
+  if (!$("googleOnboardingOverlay").classList.contains("hidden") && event.key === "Escape") {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+}, true);
 
 $("profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -4259,33 +4547,45 @@ $("searchResults").addEventListener("click", async (event) => {
   }
   const hiddenButton = event.target.closest("[data-hidden-conversation]");
   if (hiddenButton) {
-    state.activeConversation = state.hiddenConversations.find((item) => item.id === hiddenButton.dataset.hiddenConversation);
-    if (!state.activeConversation) return;
-    state.selectionMode = false;
-    state.selectedMessageIds.clear();
-    clearReplyComposer();
-    if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: state.activeConversation.id });
-    renderHeader();
-    await loadMessages(state.activeConversation.id);
-    $("searchResults").innerHTML = "";
-    $("searchInput").value = "";
-    $("chatView").classList.add("conversation-open");
+    const conversation = state.hiddenConversations.find((item) => item.id === hiddenButton.dataset.hiddenConversation);
+    if (conversation) {
+      await openConversationById(conversation.id, null, conversation);
+      clearSidebarSearch();
+    }
+    return;
+  }
+  const searchConversationButton = event.target.closest("[data-search-conversation]");
+  if (searchConversationButton) {
+    const conversationId = searchConversationButton.dataset.searchConversation;
+    const conversation = state.searchConversationMap.get(conversationId);
+    const messageId = searchConversationButton.dataset.searchMessage || null;
+    if (conversation) await openConversationById(conversationId, messageId, conversation);
+    clearSidebarSearch();
     return;
   }
   const button = event.target.closest("[data-user]");
   if (!button) return;
-  const { conversation } = await api("/api/conversations", { method: "POST", body: JSON.stringify({ userId: button.dataset.user }) });
-  await loadConversations();
-  state.activeConversation = state.conversations.find((item) => item.id === conversation.id) || conversation;
-  state.selectionMode = false;
-  state.selectedMessageIds.clear();
-  clearReplyComposer();
-  if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId: conversation.id });
-  renderHeader();
-  await loadMessages(conversation.id);
-  $("searchResults").innerHTML = "";
-  $("searchInput").value = "";
-  $("chatView").classList.add("conversation-open");
+  await startConversationWithUser(button.dataset.user);
+  clearSidebarSearch();
+});
+
+$("newChatFab").addEventListener("click", () => openNewChatModal());
+$("closeNewChatBtn").addEventListener("click", () => $("newChatModal").classList.add("hidden"));
+$("newChatModal").addEventListener("click", (event) => {
+  if (event.target === $("newChatModal")) $("newChatModal").classList.add("hidden");
+});
+$("newChatSearchInput").addEventListener("input", () => searchNewChatContacts());
+$("deviceContactsBtn").addEventListener("click", () => matchDeviceContacts());
+$("newChatContacts").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-new-chat-user]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await startConversationWithUser(button.dataset.newChatUser);
+  } catch (error) {
+    $("newChatMessage").textContent = error.message;
+    button.disabled = false;
+  }
 });
 
 $("messages").addEventListener("click", async (event) => {
