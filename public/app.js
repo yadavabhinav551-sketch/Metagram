@@ -15,10 +15,22 @@ const state = {
   presence: [],
   recorder: null,
   audioChunks: [],
+  audioStream: null,
+  audioRecordingCancelled: false,
+  audioRecordingRequestId: 0,
   videoRecorder: null,
   videoChunks: [],
   videoTimer: null,
   videoStream: null,
+  videoAudioStream: null,
+  videoCanvas: null,
+  videoCanvasStream: null,
+  videoCanvasAnimation: null,
+  videoCameraFacingMode: "environment",
+  videoRecordingCancelled: false,
+  videoAudioPaused: false,
+  recordingIndicatorTimer: null,
+  recordingStartedAt: 0,
   cameraFacingMode: localStorage.getItem("cameraFacingMode") || "user",
   installPrompt: null,
   selectionMode: false,
@@ -172,10 +184,10 @@ function ensureTopbarControlsVisible() {
         <button id="panicHideBtn" class="icon-button" type="button" title="Hide">H</button>
         <button id="topbarMenuBtn" class="icon-button" type="button" title="More options">&#8942;</button>
         <div id="topbarActionMenu" class="topbar-action-menu hidden" role="menu" aria-label="More options">
-          <button id="profileBtn" type="button" role="menuitem"><span>&#9881;</span> Profile</button>
-          <button id="sidebarInstallBtn" type="button" role="menuitem"><span>&#8595;</span> Install app</button>
-          <button id="shareAppBtn" type="button" role="menuitem"><span>&#8593;</span> Share app</button>
-          <button id="logoutBtn" type="button" role="menuitem"><span>&#8856;</span> Logout</button>
+          <button id="profileBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c.6-3.4 3.2-5.5 7-5.5s6.4 2.1 7 5.5"></path></svg></span> Profile</button>
+          <button id="sidebarInstallBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5"></path><path d="M5 17v3h14v-3"></path></svg></span> Install app</button>
+          <button id="shareAppBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"></circle><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="19" r="2.5"></circle><path d="m8.3 10.8 7.4-4.5m-7.4 6.9 7.4 4.5"></path></svg></span> Share app</button>
+          <button id="logoutBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 5H5v14h5"></path><path d="M13 8l4 4-4 4m4-4H9"></path></svg></span> Logout</button>
         </div>
       </div>
     `);
@@ -289,7 +301,7 @@ function connectSocket() {
   });
   state.socket.on("message:new", (message) => {
     if (message.conversationId === state.activeConversation?.id) {
-      loadMessages(state.activeConversation.id, false);
+      loadMessages(state.activeConversation.id, message.senderId !== state.user.id);
     }
     loadConversations();
     notifyNewMessage(message);
@@ -302,7 +314,7 @@ function connectSocket() {
       message.deliveredTo = deliveredTo || message.deliveredTo;
       message.deliveredDetails = deliveredDetails || message.deliveredDetails;
     }
-    renderMessages();
+    renderMessages({ preserveScroll: true });
   });
   state.socket.on("message:edited", ({ message }) => {
     const index = state.messages.findIndex((item) => item.id === message?.id);
@@ -314,7 +326,7 @@ function connectSocket() {
     const message = state.messages.find((item) => item.id === messageId);
     if (message) {
       message.reactions = reactions;
-      renderMessages();
+      renderMessages({ preserveScroll: true });
     }
     loadConversations();
   });
@@ -409,6 +421,9 @@ async function bootstrap() {
     showCalculatorPrivacy();
     return;
   }
+  state.audioStream?.getTracks().forEach((track) => track.stop());
+  state.audioStream = null;
+  state.recorder = null;
   try {
     const { user } = await api("/api/me");
     state.user = user;
@@ -432,15 +447,6 @@ async function bootstrap() {
     }
   } catch (error) {
     showAuth();
-  }
-}
-    renderConversations();
-    renderHeader();
-    renderMessages();
-    const conversationId = new URLSearchParams(location.search).get("conversationId");
-    if (conversationId) {
-      await openConversationById(conversationId).catch(() => {});
-    }
   }
 }
 
@@ -1338,7 +1344,7 @@ function cancelUserActionLongPress() {
   clearTimeout(state.userActionLongPressTimer);
 }
 
-function renderMessages({ preserveScroll = false } = {}) {
+function renderMessages({ preserveScroll = true } = {}) {
   if (!state.activeConversation) {
     clearReplyComposer();
     $("messages").className = "messages empty-state";
@@ -1566,6 +1572,12 @@ function searchableMessageText(message) {
 function updateMessageSearchMatches() {
   const query = state.messageSearch.query.trim().toLowerCase();
   const date = state.messageSearch.date;
+  if (!query && !date) {
+    state.messageSearch.matches = [];
+    state.messageSearch.index = 0;
+    $("messageSearchCount").textContent = "0/0";
+    return;
+  }
   state.messageSearch.matches = state.messages
     .filter((message) => !query || searchableMessageText(message).includes(query))
     .filter((message) => !date || message.createdAt?.slice(0, 10) === date)
@@ -1577,6 +1589,7 @@ function updateMessageSearchMatches() {
 }
 
 function scrollToCurrentSearchHit() {
+  if (!state.messageSearch.open || (!state.messageSearch.query.trim() && !state.messageSearch.date)) return;
   const id = state.messageSearch.matches[state.messageSearch.index];
   if (!id) return;
   const element = $ ("messages").querySelector(`[data-message="${CSS.escape(id)}"]`);
@@ -1636,9 +1649,17 @@ function renderGroupMembersList() {
 
 function openReactionPicker(messageId, { toggle = true } = {}) {
   if (!messageId || state.selectionMode) return;
-  state.reactionPickerMessageId = toggle && state.reactionPickerMessageId === messageId ? null : messageId;
+  const previousMessageId = state.reactionPickerMessageId;
+  state.reactionPickerMessageId = toggle && previousMessageId === messageId ? null : messageId;
   state.deleteOptionsMessageId = null;
-  renderMessages({ preserveScroll: true });
+  if (previousMessageId) {
+    $ ("messages").querySelector(`[data-message="${CSS.escape(previousMessageId)}"] .reaction-picker`)?.remove();
+  }
+  if (state.reactionPickerMessageId) {
+    const message = state.messages.find((item) => item.id === state.reactionPickerMessageId);
+    const article = $ ("messages").querySelector(`[data-message="${CSS.escape(state.reactionPickerMessageId)}"]`);
+    if (message && article) article.insertAdjacentHTML("beforeend", renderReactionPicker(message));
+  }
 }
 
 function clearReactionLongPress() {
@@ -1707,18 +1728,20 @@ function renderMedia(media) {
     `;
   }
   if (media.kind === "audio" || media.kind === "voice") {
+    const mimeType = escapeHtml(mediaSourceMimeType(media, "audio"));
     return `
       <div class="media-card">
-        <audio controls preload="metadata" src="${media.url}"></audio>
+        <audio controls preload="metadata"><source src="${media.url}" type="${mimeType}"></audio>
         <a href="${media.url}" download="${escapeHtml(media.originalName)}">${escapeHtml(media.originalName)}</a>
         ${meta}
       </div>
     `;
   }
   if (media.kind === "video") {
+    const mimeType = escapeHtml(mediaSourceMimeType(media, "video"));
     return `
       <div class="media-card">
-        <video class="message-video" controls preload="metadata" src="${media.url}"></video>
+        <video class="message-video" controls preload="metadata"><source src="${media.url}" type="${mimeType}"></video>
         <a href="${media.url}" download="${escapeHtml(media.originalName)}">${escapeHtml(media.originalName)}</a>
         ${meta}
       </div>
@@ -1871,7 +1894,7 @@ function addLocalOutgoingMessage({ conversationId, text, replyToId }) {
   state.messages.push(message);
   cacheMessages(conversationId);
   updateCachedConversationPreview(conversationId, message);
-  renderMessages();
+  renderMessages({ preserveScroll: false });
   return message;
 }
 
@@ -2091,58 +2114,316 @@ async function uploadCallRecording(file, conversationId, callType = "voice") {
   return data.recording;
 }
 
-async function toggleRecording() {
-  if (state.recorder?.state === "recording") {
-    state.recorder.stop();
-    $("voiceBtn").classList.remove("recording");
-    return;
-  }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  state.audioChunks = [];
-  state.recorder = new MediaRecorder(stream);
-  state.recorder.ondataavailable = (event) => state.audioChunks.push(event.data);
-  state.recorder.onstop = async () => {
-    stream.getTracks().forEach((track) => track.stop());
-    const blob = new Blob(state.audioChunks, { type: "audio/webm" });
-    await sendMediaFile(new File([blob], `voice-${Date.now()}.webm`, { type: "audio/webm" }));
-  };
-  state.recorder.start();
-  $("voiceBtn").classList.add("recording");
+function formatRecordingDuration(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
-async function toggleVideoRecording() {
+function updateRecordingIndicator(type) {
+  const elapsedSeconds = Math.floor((Date.now() - state.recordingStartedAt) / 1000);
+  const label = type === "video" ? "Video recording" : "Voice recording";
+  const audioStatus = type === "video" && state.videoAudioPaused ? " • Audio paused" : "";
+  const paused = type === "voice" && state.recorder?.state === "paused";
+  const pauseStatus = paused ? " • Paused" : "";
+  $("recordingIndicatorText").textContent = `${label} • ${formatRecordingDuration(elapsedSeconds)}${type === "video" ? " / 01:00" : ""}${audioStatus}${pauseStatus}`;
+  if (type === "video") $("videoRecordStatus").textContent = `Recording • ${formatRecordingDuration(elapsedSeconds)} / 01:00${audioStatus}`;
+  if (type === "voice") $("voiceRecordStatus").textContent = `${paused ? "Paused" : "Recording"} • ${formatRecordingDuration(elapsedSeconds)}`;
+}
+
+function startRecordingIndicator(type) {
+  stopRecordingIndicator();
+  state.recordingStartedAt = Date.now();
+  $("recordingIndicator").classList.remove("hidden");
+  $("recordingIndicator").dataset.type = type;
+  updateRecordingIndicator(type);
+  state.recordingIndicatorTimer = setInterval(() => updateRecordingIndicator(type), 1000);
+}
+
+function stopRecordingIndicator() {
+  clearInterval(state.recordingIndicatorTimer);
+  state.recordingIndicatorTimer = null;
+  state.recordingStartedAt = 0;
+  $("recordingIndicator").classList.add("hidden");
+  delete $("recordingIndicator").dataset.type;
+}
+
+function setVideoRecordingAudioPaused(paused) {
+  const audioTrack = state.videoAudioStream?.getAudioTracks().find((track) => track.readyState === "live");
+  if (!audioTrack) throw new Error("Microphone is not available for this recording.");
+  state.videoAudioPaused = paused;
+  audioTrack.enabled = !paused;
+  const button = $("toggleVideoAudioBtn");
+  button.textContent = paused ? "Resume audio" : "Pause audio";
+  button.title = paused ? "Resume microphone audio" : "Pause microphone audio";
+  button.setAttribute("aria-label", button.title);
+  button.setAttribute("aria-pressed", String(paused));
+  updateRecordingIndicator("video");
+}
+
+function createRecordingFile(chunks, recorder, kind) {
+  const mimeType = recorder.mimeType || chunks.find((chunk) => chunk.type)?.type || "";
+  const normalizedMimeType = mimeType.split(";")[0].toLowerCase();
+  const extensions = kind === "video"
+    ? { "video/webm": ".webm", "video/mp4": ".mp4", "video/quicktime": ".mov", "video/ogg": ".ogv" }
+    : { "audio/webm": ".weba", "audio/mp4": ".m4a", "audio/ogg": ".ogg", "audio/aac": ".aac", "audio/wav": ".wav" };
+  if (!extensions[normalizedMimeType]) {
+    throw new Error(`This browser recorded an unsupported ${kind} format${mimeType ? ` (${mimeType})` : ""}.`);
+  }
+  const blob = new Blob(chunks, { type: mimeType });
+  if (!blob.size) throw new Error(`No ${kind} data was captured. Please try recording again.`);
+  return new File([blob], `${kind}-${Date.now()}${extensions[normalizedMimeType]}`, { type: mimeType });
+}
+
+function mediaSourceMimeType(media, kind) {
+  const mimeType = String(media.mimeType || "").split(";")[0].trim().toLowerCase();
+  if (mimeType.startsWith(`${kind}/`)) return mimeType;
+  const filename = `${media.originalName || ""} ${media.url || ""}`.toLowerCase();
+  if (filename.includes(".webm") || filename.includes(".weba")) return `${kind}/webm`;
+  if (kind === "audio") {
+    if (/\.(m4a|mp4)(?:\?|$)/.test(filename)) return "audio/mp4";
+    if (/\.(ogg|opus)(?:\?|$)/.test(filename)) return "audio/ogg";
+    if (/\.mp3(?:\?|$)/.test(filename)) return "audio/mpeg";
+    if (/\.wav(?:\?|$)/.test(filename)) return "audio/wav";
+  } else {
+    if (/\.(mp4|m4v)(?:\?|$)/.test(filename)) return "video/mp4";
+    if (/\.mov(?:\?|$)/.test(filename)) return "video/quicktime";
+    if (/\.(ogv|ogg)(?:\?|$)/.test(filename)) return "video/ogg";
+  }
+  return `${kind}/webm`;
+}
+
+function openVoiceRecordingPreview() {
+  if (state.recorder?.state === "recording" || state.recorder?.state === "paused") return;
+  $("voiceRecordStatus").textContent = "Ready to record. Tap Start when you are ready.";
+  $("startVoiceRecordBtn").classList.remove("hidden");
+  $("startVoiceRecordBtn").disabled = false;
+  $("toggleVoicePauseBtn").classList.add("hidden");
+  $("stopVoiceRecordBtn").classList.add("hidden");
+  $("voicePreviewModal").classList.remove("hidden");
+}
+
+async function startVoiceRecording() {
+  if (state.recorder?.state === "recording" || state.recorder?.state === "paused") return;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) throw new Error("Voice recording is not supported in this browser.");
+  $("startVoiceRecordBtn").disabled = true;
+  state.audioRecordingCancelled = false;
+  const requestId = ++state.audioRecordingRequestId;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  if (requestId !== state.audioRecordingRequestId || state.audioRecordingCancelled) {
+    stream.getTracks().forEach((track) => track.stop());
+    $("startVoiceRecordBtn").disabled = false;
+    return;
+  }
+  state.audioStream = stream;
+  state.audioChunks = [];
+  const audioTypes = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus", "audio/aac"];
+  const mimeType = audioTypes.find((type) => MediaRecorder.isTypeSupported(type));
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  state.recorder = recorder;
+  recorder.ondataavailable = (event) => {
+    if (event.data.size) state.audioChunks.push(event.data);
+  };
+  recorder.onstop = async () => {
+    const chunks = state.audioChunks;
+    state.audioChunks = [];
+    const cancelled = state.audioRecordingCancelled;
+    state.audioRecordingCancelled = false;
+    $("voiceBtn").classList.remove("recording");
+    $("voiceBtn").setAttribute("aria-pressed", "false");
+    $("voiceBtn").setAttribute("aria-label", "Record voice");
+    $("voiceBtn").title = "Record voice";
+    stopRecordingIndicator();
+    stream.getTracks().forEach((track) => track.stop());
+    state.audioStream = null;
+    $("voicePreviewModal").classList.add("hidden");
+    $("startVoiceRecordBtn").disabled = false;
+    $("toggleVoicePauseBtn").classList.add("hidden");
+    $("toggleVoicePauseBtn").textContent = "Pause";
+    $("toggleVoicePauseBtn").setAttribute("aria-label", "Pause voice recording");
+    $("toggleVoicePauseBtn").setAttribute("aria-pressed", "false");
+    $("stopVoiceRecordBtn").classList.add("hidden");
+    if (state.recorder === recorder) state.recorder = null;
+    if (cancelled) return;
+    try {
+      setUploadStatus("Sending voice message...");
+      await sendMediaFile(createRecordingFile(chunks, recorder, "audio"));
+      setUploadStatus("Voice message sent.");
+      setTimeout(() => setUploadStatus(""), 1600);
+    } catch (error) {
+      setUploadStatus("");
+      alert(error.message);
+    }
+  };
+  try {
+    recorder.start();
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    state.recorder = null;
+    throw error;
+  }
+  $("startVoiceRecordBtn").classList.add("hidden");
+  $("toggleVoicePauseBtn").classList.remove("hidden");
+  $("stopVoiceRecordBtn").classList.remove("hidden");
+  $("voiceBtn").classList.add("recording");
+  $("voiceBtn").setAttribute("aria-pressed", "true");
+  $("voiceBtn").setAttribute("aria-label", "Stop voice recording");
+  $("voiceBtn").title = "Stop voice recording";
+  startRecordingIndicator("voice");
+}
+
+function toggleVoiceRecordingPause() {
+  const recorder = state.recorder;
+  if (!recorder || !["recording", "paused"].includes(recorder.state)) return;
+  if (recorder.state === "recording") {
+    recorder.pause();
+    $("toggleVoicePauseBtn").textContent = "Resume";
+    $("toggleVoicePauseBtn").setAttribute("aria-label", "Resume voice recording");
+    $("toggleVoicePauseBtn").setAttribute("aria-pressed", "true");
+  } else {
+    recorder.resume();
+    $("toggleVoicePauseBtn").textContent = "Pause";
+    $("toggleVoicePauseBtn").setAttribute("aria-label", "Pause voice recording");
+    $("toggleVoicePauseBtn").setAttribute("aria-pressed", "false");
+  }
+  updateRecordingIndicator("voice");
+}
+
+function cancelVoiceRecording() {
+  state.audioRecordingCancelled = true;
+  state.audioRecordingRequestId += 1;
+  const recorder = state.recorder;
+  if (recorder?.state === "recording" || recorder?.state === "paused") {
+    recorder.stop();
+    return;
+  }
+  $("startVoiceRecordBtn").disabled = false;
+  $("voicePreviewModal").classList.add("hidden");
+}
+
+async function openVideoRecordingPreview() {
   if (state.videoRecorder?.state === "recording") {
     state.videoRecorder.stop();
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera recording is not supported in this browser.");
   if (!window.MediaRecorder) throw new Error("Video recording is not supported in this browser.");
-  const facingMode = $("cameraSelect")?.value || state.cameraFacingMode || "user";
-  state.cameraFacingMode = facingMode;
-  localStorage.setItem("cameraFacingMode", facingMode);
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode } });
+  $("videoCameraSelect").value = "environment";
+  state.videoCameraFacingMode = "environment";
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: state.videoCameraFacingMode } }
+  });
   state.videoStream = stream;
+  const actualFacingMode = stream.getVideoTracks()[0]?.getSettings().facingMode;
+  if (actualFacingMode === "user" || actualFacingMode === "environment") {
+    state.videoCameraFacingMode = actualFacingMode;
+    $("videoCameraSelect").value = actualFacingMode;
+  }
   $("videoRecordPreview").srcObject = stream;
   $("videoPreviewModal").classList.remove("hidden");
+  $("videoRecordStatus").textContent = "Set your camera, then tap Start recording.";
+  $("startVideoRecordBtn").classList.remove("hidden");
+  $("stopVideoRecordBtn").classList.add("hidden");
+  $("startVideoRecordBtn").disabled = false;
+}
+
+async function startVideoRecording() {
+  if (!state.videoStream?.getVideoTracks().some((track) => track.readyState === "live")) {
+    throw new Error("Camera preview is not ready. Please choose a camera again.");
+  }
+  $("startVideoRecordBtn").disabled = true;
+  state.videoAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const audioTrack = state.videoAudioStream.getAudioTracks().find((track) => track.readyState === "live");
+  if (!audioTrack) {
+    state.videoAudioStream.getTracks().forEach((track) => track.stop());
+    state.videoAudioStream = null;
+    throw new Error("No active microphone was found. Check microphone permission and try again.");
+  }
+  audioTrack.enabled = true;
+  state.videoAudioPaused = false;
   state.videoChunks = [];
-  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm";
-  state.videoRecorder = new MediaRecorder(stream, { mimeType });
-  state.videoRecorder.ondataavailable = (event) => {
+  state.videoRecordingCancelled = false;
+  const video = $("videoRecordPreview");
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280;
+  canvas.height = 720;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Video recording is not supported in this browser.");
+  state.videoCanvas = canvas;
+  state.videoCanvasStream = canvas.captureStream(24);
+  const recordingStream = new MediaStream([
+    ...state.videoCanvasStream.getVideoTracks(),
+    audioTrack
+  ]);
+  const drawPreviewFrame = () => {
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth && video.videoHeight) {
+      const scale = Math.max(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+      const width = video.videoWidth * scale;
+      const height = video.videoHeight * scale;
+      context.fillStyle = "#000";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(video, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+    }
+    state.videoCanvasAnimation = requestAnimationFrame(drawPreviewFrame);
+  };
+  drawPreviewFrame();
+  const supportedTypes = [
+    "video/webm;codecs=vp8,opus",
+    "video/webm;codecs=vp9,opus",
+    "video/webm",
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+    "video/mp4"
+  ];
+  const mimeType = supportedTypes.find((type) => MediaRecorder.isTypeSupported(type));
+  const recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
+  if (!recordingStream.getAudioTracks().some((track) => track.enabled && track.readyState === "live")) {
+    throw new Error("Microphone audio could not be added to the video recording.");
+  }
+  state.videoRecorder = recorder;
+  recorder.ondataavailable = (event) => {
     if (event.data.size) state.videoChunks.push(event.data);
   };
-  state.videoRecorder.onstop = async () => {
+  recorder.onstop = async () => {
+    const chunks = state.videoChunks;
+    state.videoChunks = [];
+    const cancelled = state.videoRecordingCancelled;
+    state.videoRecordingCancelled = false;
     clearTimeout(state.videoTimer);
     state.videoTimer = null;
     $("videoRecordBtn").classList.remove("recording");
-    $("videoPreviewModal").classList.add("hidden");
-    $("videoRecordPreview").srcObject = null;
-    stream.getTracks().forEach((track) => track.stop());
+    $("videoRecordBtn").setAttribute("aria-pressed", "false");
+    $("videoRecordBtn").setAttribute("aria-label", "Record video");
+    $("videoRecordBtn").title = "Record video";
+    stopRecordingIndicator();
+    $("recordingIndicator").classList.add("hidden");
+    $("startVideoRecordBtn").disabled = false;
+    $("startVideoRecordBtn").classList.remove("hidden");
+    $("stopVideoRecordBtn").classList.add("hidden");
+    $("toggleVideoAudioBtn").classList.add("hidden");
+    $("toggleVideoAudioBtn").disabled = false;
+    $("toggleVideoAudioBtn").textContent = "Pause audio";
+    $("toggleVideoAudioBtn").setAttribute("aria-pressed", "false");
+    state.videoAudioPaused = false;
+    if (state.videoCanvasAnimation) cancelAnimationFrame(state.videoCanvasAnimation);
+    state.videoCanvasAnimation = null;
+    state.videoCanvasStream?.getTracks().forEach((track) => track.stop());
+    state.videoCanvasStream = null;
+    state.videoCanvas = null;
+    state.videoAudioStream?.getTracks().forEach((track) => track.stop());
+    state.videoAudioStream = null;
+    state.videoStream?.getTracks().forEach((track) => track.stop());
     state.videoStream = null;
-    if (!state.videoChunks.length) return;
-    const blob = new Blob(state.videoChunks, { type: "video/webm" });
-    setUploadStatus("Uploading recorded video...");
+    $("videoRecordPreview").srcObject = null;
+    $("videoPreviewModal").classList.add("hidden");
+    if (cancelled) {
+      setUploadStatus("");
+      return;
+    }
     try {
-      await sendMediaFile(new File([blob], `video-${Date.now()}.webm`, { type: "video/webm" }));
+      const file = createRecordingFile(chunks, recorder, "video");
+      setUploadStatus("Uploading recorded video...");
+      await sendMediaFile(file);
       setUploadStatus("Video sent.");
       setTimeout(() => setUploadStatus(""), 1600);
     } catch (error) {
@@ -2151,12 +2432,76 @@ async function toggleVideoRecording() {
     }
   };
   state.videoRecorder.start();
+  $("startVideoRecordBtn").classList.add("hidden");
+  $("stopVideoRecordBtn").classList.remove("hidden");
+  $("toggleVideoAudioBtn").classList.remove("hidden");
+  $("toggleVideoAudioBtn").disabled = false;
+  $("toggleVideoAudioBtn").textContent = "Pause audio";
+  $("toggleVideoAudioBtn").setAttribute("aria-label", "Pause microphone audio");
+  $("toggleVideoAudioBtn").title = "Pause microphone audio";
+  $("toggleVideoAudioBtn").setAttribute("aria-pressed", "false");
   $("videoRecordBtn").classList.add("recording");
-  $("videoRecordStatus").textContent = "Recording... max 1 minute.";
+  $("videoRecordBtn").setAttribute("aria-pressed", "true");
+  $("videoRecordBtn").setAttribute("aria-label", "Stop video recording");
+  $("videoRecordBtn").title = "Stop video recording";
+  startRecordingIndicator("video");
   setUploadStatus("Recording video... max 1 minute.");
   state.videoTimer = setTimeout(() => {
     if (state.videoRecorder?.state === "recording") state.videoRecorder.stop();
   }, 60 * 1000);
+}
+
+async function changeVideoRecordingCamera() {
+  const facingMode = $("videoCameraSelect").value || "environment";
+  if (facingMode === state.videoCameraFacingMode && state.videoStream) return;
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: facingMode } }
+  });
+  const previousStream = state.videoStream;
+  state.videoStream = stream;
+  const actualFacingMode = stream.getVideoTracks()[0]?.getSettings().facingMode;
+  state.videoCameraFacingMode = actualFacingMode === "user" || actualFacingMode === "environment" ? actualFacingMode : facingMode;
+  $("videoCameraSelect").value = state.videoCameraFacingMode;
+  $("videoRecordPreview").srcObject = stream;
+  previousStream?.getTracks().forEach((track) => track.stop());
+}
+
+function cancelVideoRecording() {
+  if (state.videoRecorder?.state === "recording") {
+    state.videoRecordingCancelled = true;
+    state.videoRecorder.stop();
+    return;
+  }
+  clearTimeout(state.videoTimer);
+  state.videoTimer = null;
+  state.videoChunks = [];
+  if (state.videoCanvasAnimation) cancelAnimationFrame(state.videoCanvasAnimation);
+  state.videoCanvasAnimation = null;
+  state.videoCanvasStream?.getTracks().forEach((track) => track.stop());
+  state.videoCanvasStream = null;
+  state.videoAudioStream?.getTracks().forEach((track) => track.stop());
+  state.videoAudioStream = null;
+  state.videoStream?.getTracks().forEach((track) => track.stop());
+  state.videoStream = null;
+  state.videoRecordingCancelled = false;
+  $("videoRecordPreview").srcObject = null;
+  $("videoPreviewModal").classList.add("hidden");
+  $("startVideoRecordBtn").classList.remove("hidden");
+  $("startVideoRecordBtn").disabled = false;
+  $("stopVideoRecordBtn").classList.add("hidden");
+  $("toggleVideoAudioBtn").classList.add("hidden");
+  $("toggleVideoAudioBtn").disabled = false;
+  $("toggleVideoAudioBtn").textContent = "Pause audio";
+  $("toggleVideoAudioBtn").setAttribute("aria-pressed", "false");
+  state.videoAudioPaused = false;
+  $("videoRecordStatus").textContent = "Set your camera, then tap Start recording.";
+  $("videoRecordBtn").classList.remove("recording");
+  $("videoRecordBtn").setAttribute("aria-pressed", "false");
+  $("videoRecordBtn").setAttribute("aria-label", "Record video");
+  $("videoRecordBtn").title = "Record video";
+  stopRecordingIndicator();
+  setUploadStatus("");
 }
 
 function directPeer(conversation = state.activeConversation) {
@@ -2636,22 +2981,12 @@ async function handleCalculatorButtonInput(button) {
   }
 }
 
-let lastCalcTapTime = 0;
 async function handleCalcEvent(event) {
   const button = event.target.closest("[data-calc-value], [data-calc-action], [data-calc-fn]");
   if (!button) return;
-  const now = Date.now();
-  if (now - lastCalcTapTime < 80) return;
-  lastCalcTapTime = now;
   if (event.cancelable) event.preventDefault();
   await handleCalculatorButtonInput(button);
 }
-
-document.addEventListener("pointerdown", (event) => {
-  if (event.target.closest("#calculatorPrivacyView")) {
-    handleCalcEvent(event);
-  }
-});
 
 document.addEventListener("click", (event) => {
   if (event.target.closest("#calculatorPrivacyView")) {
@@ -2659,17 +2994,6 @@ document.addEventListener("click", (event) => {
   }
 });
 
-(function attachCalculatorHandlers(){
-  const buttons = document.querySelectorAll("[data-calc-value],[data-calc-action],[data-calc-fn]");
-  buttons.forEach((btn) => {
-    try {
-      btn.addEventListener("pointerdown", handleCalcEvent);
-      btn.addEventListener("click", handleCalcEvent);
-    } catch (e) {
-      // ignore
-    }
-  });
-})();
 $("calculatorModeToggle").addEventListener("click", () => {
   state.calculatorAdvancedMode = !state.calculatorAdvancedMode;
   $("calculatorModeToggle").setAttribute("aria-pressed", String(state.calculatorAdvancedMode));
@@ -3182,22 +3506,100 @@ $("closeShareBtn").addEventListener("click", () => {
 });
 $("voiceBtn").addEventListener("click", () => {
   if (!state.activeConversation) return;
-  toggleRecording().catch((error) => alert(error.message));
+  if (state.recorder?.state === "recording" || state.recorder?.state === "paused") {
+    state.recorder.stop();
+    return;
+  }
+  openVoiceRecordingPreview();
+});
+$("startVoiceRecordBtn").addEventListener("click", () => {
+  startVoiceRecording().catch((error) => {
+    $("startVoiceRecordBtn").disabled = false;
+    state.audioStream?.getTracks().forEach((track) => track.stop());
+    state.audioStream = null;
+    state.recorder = null;
+    $("voiceRecordStatus").textContent = error.message;
+  });
+});
+$("toggleVoicePauseBtn").addEventListener("click", () => {
+  try {
+    toggleVoiceRecordingPause();
+  } catch (error) {
+    $("voiceRecordStatus").textContent = error.message;
+  }
+});
+$("stopVoiceRecordBtn").addEventListener("click", () => {
+  if (state.recorder?.state === "recording" || state.recorder?.state === "paused") {
+    state.audioRecordingCancelled = false;
+    state.recorder.stop();
+  }
+});
+$("cancelVoiceRecordBtn").addEventListener("click", cancelVoiceRecording);
+$("closeVoicePreviewBtn").addEventListener("click", cancelVoiceRecording);
+$("voicePreviewModal").addEventListener("click", (event) => {
+  if (event.target === $("voicePreviewModal")) cancelVoiceRecording();
 });
 $("videoRecordBtn").addEventListener("click", () => {
   if (!state.activeConversation) return;
-  toggleVideoRecording().catch((error) => {
+  openVideoRecordingPreview().catch((error) => {
+    state.videoRecordingCancelled = false;
+    state.videoStream?.getTracks().forEach((track) => track.stop());
+    state.videoStream = null;
+    $("videoRecordPreview").srcObject = null;
     $("videoRecordBtn").classList.remove("recording");
+    $("videoRecordBtn").setAttribute("aria-pressed", "false");
+    $("videoRecordBtn").setAttribute("aria-label", "Record video");
+    $("videoRecordBtn").title = "Record video";
+    stopRecordingIndicator();
     $("videoPreviewModal").classList.add("hidden");
     setUploadStatus("");
+    alert(error.message);
+  });
+});
+$("startVideoRecordBtn").addEventListener("click", () => {
+  startVideoRecording().catch((error) => {
+    state.videoAudioStream?.getTracks().forEach((track) => track.stop());
+    state.videoAudioStream = null;
+    if (state.videoCanvasAnimation) cancelAnimationFrame(state.videoCanvasAnimation);
+    state.videoCanvasAnimation = null;
+    state.videoCanvasStream?.getTracks().forEach((track) => track.stop());
+    state.videoCanvasStream = null;
+    state.videoCanvas = null;
+    state.videoRecorder = null;
+    state.videoChunks = [];
+    $("startVideoRecordBtn").disabled = false;
     alert(error.message);
   });
 });
 $("stopVideoRecordBtn").addEventListener("click", () => {
   if (state.videoRecorder?.state === "recording") state.videoRecorder.stop();
 });
+$("toggleVideoAudioBtn").addEventListener("click", () => {
+  if (state.videoRecorder?.state !== "recording") return;
+  try {
+    setVideoRecordingAudioPaused(!state.videoAudioPaused);
+  } catch (error) {
+    $("videoRecordStatus").textContent = error.message;
+    $("toggleVideoAudioBtn").disabled = true;
+  }
+});
 $("closeVideoPreviewBtn").addEventListener("click", () => {
-  if (state.videoRecorder?.state === "recording") state.videoRecorder.stop();
+  cancelVideoRecording();
+});
+$("cancelVideoRecordBtn").addEventListener("click", () => {
+  cancelVideoRecording();
+});
+$("videoCameraSelect").addEventListener("change", async () => {
+  const selector = $("videoCameraSelect");
+  selector.disabled = true;
+  try {
+    await changeVideoRecordingCamera();
+  } catch (error) {
+    selector.value = state.videoCameraFacingMode;
+    alert(error.message);
+  } finally {
+    selector.disabled = false;
+  }
 });
 $("cameraSelect").addEventListener("change", () => {
   state.cameraFacingMode = $("cameraSelect").value;
@@ -3239,7 +3641,6 @@ $("declineCallBtn").addEventListener("click", () => {
   endCall(false);
 });
 $("endCallBtn").addEventListener("click", () => endCall(true));
-$("closeCallBtn").addEventListener("click", () => endCall(true));
 $("messageInput").addEventListener("input", () => {
   if (state.activeConversation && state.socket?.connected) state.socket.emit("typing", { conversationId: state.activeConversation.id, typing: true });
 });

@@ -60,45 +60,77 @@ function execFilePromise(command, args) {
   });
 }
 
-async function compressCallRecording(filePath) {
-  if (!ffmpegPath || !fs.existsSync(filePath)) return false;
-  const extension = path.extname(filePath).toLowerCase();
-  if (![".mp4", ".mov", ".webm", ".mkv", ".avi", ".mpeg", ".mpg"].includes(extension)) return false;
-  const compressedPath = `${filePath}.compressed.webm`;
-  try {
-    await execFilePromise(ffmpegPath, [
-      "-y",
-      "-i",
-      filePath,
-      "-c:v",
-      "libvpx-vp9",
-      "-b:v",
-      "0",
-      "-crf",
-      "30",
-      "-c:a",
-      "libopus",
-      "-b:a",
-      "64k",
-      "-threads",
-      "1",
-      compressedPath
-    ]);
-    if (!fs.existsSync(compressedPath)) return false;
-    const originalSize = fs.statSync(filePath).size;
-    const compressedSize = fs.statSync(compressedPath).size;
-    if (compressedSize > 0 && compressedSize < originalSize) {
-      fs.unlinkSync(filePath);
-      fs.renameSync(compressedPath, filePath);
-      return true;
-    }
-    fs.unlinkSync(compressedPath);
-  } catch (error) {
-    console.error("Video compression failed:", error.message || error);
-    try { if (fs.existsSync(compressedPath)) fs.unlinkSync(compressedPath); } catch {}
+const pendingRecordingTranscodes = new Map();
+
+async function prepareRecordingFileForPlayback(file) {
+  const normalizedMimeType = normalizeUploadedMediaMimeType(file).split(";")[0].trim().toLowerCase();
+  const target = normalizedMimeType === "video/webm"
+    ? { extension: ".mp4", mimeType: "video/mp4" }
+    : ["audio/webm", "audio/mp4"].includes(normalizedMimeType)
+      ? { extension: ".mp3", mimeType: "audio/mpeg" }
+      : null;
+  if (!target) {
+    file.mimetype = normalizedMimeType;
+    return;
   }
-  return false;
+  if (!ffmpegPath) throw new Error("Recording conversion is unavailable because FFmpeg is not installed.");
+
+  const inputPath = path.resolve(file.path);
+  let conversion = pendingRecordingTranscodes.get(inputPath);
+  if (!conversion) {
+    const parsedPath = path.parse(inputPath);
+    const outputPath = path.join(parsedPath.dir, `${parsedPath.name}${target.extension}`);
+    const temporaryPath = path.join(parsedPath.dir, `${parsedPath.name}.converting${target.extension}`);
+    conversion = (async () => {
+      try {
+        const args = [
+          "-y", "-hide_banner", "-loglevel", "error",
+          "-i", inputPath
+        ];
+        if (target.mimeType === "video/mp4") {
+          args.push(
+            "-map", "0:v:0", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
+            temporaryPath
+          );
+        } else {
+          args.push("-map", "0:a:0", "-vn", "-c:a", "libmp3lame", "-b:a", "96k", temporaryPath);
+        }
+        await execFilePromise(ffmpegPath, args);
+        if (!fs.existsSync(temporaryPath) || fs.statSync(temporaryPath).size === 0) {
+          throw new Error("FFmpeg produced an empty recording.");
+        }
+        fs.renameSync(temporaryPath, outputPath);
+        fs.unlinkSync(inputPath);
+        const originalPath = path.parse(file.originalname || path.basename(inputPath));
+        return {
+          filename: path.basename(outputPath),
+          path: outputPath,
+          originalname: `${originalPath.name}${target.extension}`,
+          mimetype: target.mimeType,
+          size: fs.statSync(outputPath).size
+        };
+      } catch (error) {
+        try {
+          if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+        } catch (cleanupError) {
+          console.error("Could not clean up incomplete recording conversion:", cleanupError.message || cleanupError);
+        }
+        throw error;
+      }
+    })();
+    pendingRecordingTranscodes.set(inputPath, conversion);
+  }
+  try {
+    Object.assign(file, await conversion);
+  } finally {
+    if (pendingRecordingTranscodes.get(inputPath) === conversion) {
+      pendingRecordingTranscodes.delete(inputPath);
+    }
+  }
 }
+
 const MONGODB_DNS_SERVERS = process.env.MONGODB_DNS_SERVERS?.split(",").map((server) => server.trim()).filter(Boolean);
 const SELF_PING_ENABLED = String(process.env.SELF_PING_ENABLED ?? (IS_RENDER ? "true" : "false")).toLowerCase() === "true";
 const SELF_PING_INTERVAL_MS = Number(process.env.SELF_PING_INTERVAL_MS || 12 * 60 * 1000);
@@ -714,12 +746,25 @@ function mediaKindFromMime(mimeType = "") {
         : "document";
 }
 
+function normalizeUploadedMediaMimeType(file) {
+  const mimeType = String(file.mimetype || "").split(";")[0].trim().toLowerCase();
+  if (mimeType && !["application/octet-stream", "binary/octet-stream", "text/plain"].includes(mimeType)) {
+    return file.mimetype;
+  }
+
+  const extension = path.extname(file.originalname || "").toLowerCase();
+  if (extension === ".weba" || /^(audio|voice)-/i.test(file.originalname || "")) return "audio/webm";
+  if (extension === ".webm") return "video/webm";
+  return file.mimetype || "application/octet-stream";
+}
+
 function mediaFromFile(file) {
   const extension = path.extname(file.originalname || "").toLowerCase();
-  const audioExtensions = new Set([".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".flac"]);
+  const audioExtensions = new Set([".mp3", ".m4a", ".aac", ".wav", ".ogg", ".opus", ".flac", ".weba"]);
   const videoExtensions = new Set([".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".3gp", ".mpeg", ".mpg"]);
   const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif"]);
-  let kind = mediaKindFromMime(file.mimetype);
+  const mimeType = normalizeUploadedMediaMimeType(file);
+  let kind = mediaKindFromMime(mimeType);
 
   if (kind === "document") {
     if (audioExtensions.has(extension)) kind = "audio";
@@ -731,9 +776,54 @@ function mediaFromFile(file) {
     kind,
     url: `/uploads/${file.filename}`,
     originalName: file.originalname,
-    mimeType: file.mimetype,
+    mimeType,
     size: file.size
   };
+}
+
+function findStoredMediaForUpload(filename) {
+  const url = `/uploads/${filename}`;
+  const messageMedia = db.messages.find((message) => message.media?.url === url)?.media;
+  if (messageMedia) return messageMedia;
+  const statusMedia = db.statuses.find((status) => status.media?.url === url)?.media;
+  if (statusMedia) return statusMedia;
+  for (const item of db.sharedItems || []) {
+    const mediaItems = Array.isArray(item.media) ? item.media : [item.media];
+    const found = mediaItems.find((media) => media?.url === url);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function migrateStoredMediaForPlayback(media) {
+  if (!media?.url?.startsWith("/uploads/")) return false;
+  const originalUrl = media.url;
+  const filename = path.basename(originalUrl);
+  const filePath = path.join(activeUploadDir, filename);
+  if (!fs.existsSync(filePath)) return false;
+
+  const file = {
+    filename,
+    path: filePath,
+    originalname: media.originalName || filename,
+    mimetype: media.mimeType || "",
+    size: fs.statSync(filePath).size
+  };
+  const normalizedMimeType = normalizeUploadedMediaMimeType(file).split(";")[0].trim().toLowerCase();
+  if (!["video/webm", "audio/webm", "audio/mp4"].includes(normalizedMimeType)) return false;
+
+  await prepareRecordingFileForPlayback(file);
+  const replacement = mediaFromFile(file);
+  const replaceMedia = (storedMedia) => {
+    if (storedMedia?.url !== originalUrl) return;
+    Object.assign(storedMedia, replacement);
+  };
+  for (const message of db.messages) replaceMedia(message.media);
+  for (const status of db.statuses || []) replaceMedia(status.media);
+  for (const item of db.sharedItems || []) {
+    for (const sharedMedia of Array.isArray(item.media) ? item.media : [item.media]) replaceMedia(sharedMedia);
+  }
+  return true;
 }
 
 function userLabel(userId) {
@@ -933,6 +1023,32 @@ function handleMulterUpload(uploadHandler, { redirectOnError = false } = {}) {
 
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
+app.get("/uploads/:filename", async (req, res, next) => {
+  const filename = path.basename(req.params.filename);
+  const media = findStoredMediaForUpload(filename);
+  const filePath = path.join(activeUploadDir, filename);
+  if (!fs.existsSync(filePath)) {
+    if (media) return res.status(404).json({ error: "Media file not found." });
+    return next();
+  }
+  const mimeType = media
+    ? normalizeUploadedMediaMimeType({ mimetype: media.mimeType, originalname: media.originalName || filename })
+    : normalizeUploadedMediaMimeType({ mimetype: "", originalname: filename });
+  if (media && ["video/webm", "audio/webm", "audio/mp4"].includes(mimeType.split(";")[0].trim().toLowerCase())) {
+    try {
+      await migrateStoredMediaForPlayback(media);
+      if (media.url !== `/uploads/${filename}`) return res.redirect(302, media.url);
+    } catch (error) {
+      console.error("Stored recording conversion failed:", error.message || error);
+      return res.status(500).json({ error: "Recording could not be prepared for playback." });
+    }
+  }
+  if (!/^(audio|video)\//.test(mimeType)) return next();
+  res.setHeader("Content-Type", mimeType.split(";")[0]);
+  res.sendFile(filePath, (error) => {
+    if (error && !res.headersSent) next(error);
+  });
+});
 app.use("/uploads", express.static(activeUploadDir));
 app.get("/uploads/:filename", (req, res) => {
   const label = (req.params.filename || "U").slice(0, 1).toUpperCase();
@@ -1317,10 +1433,15 @@ app.post("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
   res.json({ conversation: hydrateConversation(conversation, req.user) });
 });
 
-app.get("/api/conversations/:id/messages", authUser, requirePrivacyUnlocked, (req, res) => {
+app.get("/api/conversations/:id/messages", authUser, requirePrivacyUnlocked, async (req, res) => {
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
   const messages = visibleMessages(conversation.id, req.user.id);
+  let mediaMigrated = false;
+  for (const message of messages) {
+    if (message.media && await migrateStoredMediaForPlayback(message.media)) mediaMigrated = true;
+  }
+  if (mediaMigrated) saveDb();
   markMessagesRead(conversation.id, req.user.id);
   res.json({ messages });
 });
@@ -1524,8 +1645,21 @@ app.post("/api/conversations/:id/unhide-user", authUser, requirePrivacyUnlocked,
   res.json({ ok: true, user: ownUser(req.user) });
 });
 
-app.post("/api/upload", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("file")), (req, res) => {
+app.post("/api/upload", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("file")), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "File is required." });
+  try {
+    req.file.mimetype = normalizeUploadedMediaMimeType(req.file);
+    await prepareRecordingFileForPlayback(req.file);
+  } catch (error) {
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (cleanupError) {
+      console.error("Could not remove failed audio upload:", cleanupError.message || cleanupError);
+    }
+    console.error("WebM recording finalization failed:", error.message || error);
+    return res.status(500).json({ error: "Could not finalize the recording. Please record again." });
+  }
+  req.file.size = fs.statSync(req.file.path).size;
   res.json({
     media: mediaFromFile(req.file)
   });
@@ -1661,12 +1795,18 @@ app.post("/api/call-recordings", authUser, requirePrivacyUnlocked, handleMulterU
   const conversation = db.conversations.find((item) => item.id === req.body.conversationId && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
   const callType = req.body.callType === "video" ? "Video" : "Voice";
-  if (req.file.mimetype.startsWith("video/")) {
-    const filePath = path.join(activeUploadDir, req.file.filename);
-    await compressCallRecording(filePath);
-    const stats = fs.statSync(path.join(activeUploadDir, req.file.filename));
-    req.file.size = stats.size;
-    req.file.mimetype = "video/webm";
+  try {
+    req.file.mimetype = normalizeUploadedMediaMimeType(req.file);
+    await prepareRecordingFileForPlayback(req.file);
+    req.file.size = fs.statSync(req.file.path).size;
+  } catch (error) {
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (cleanupError) {
+      console.error("Could not remove failed call recording upload:", cleanupError.message || cleanupError);
+    }
+    console.error("Call recording finalization failed:", error.message || error);
+    return res.status(500).json({ error: "Could not finalize the recording. Please record again." });
   }
   const recordingOwnerId = req.body.recordingForUserId || req.user.id;
   const recordingOwner = db.users.find((user) => user.id === recordingOwnerId);
@@ -1970,10 +2110,15 @@ app.post("/api/admin/cleanup", authAdmin, (req, res) => {
   res.json({ ok: true, cluster, preservedUserCount: db.users.length });
 });
 
-app.get("/api/admin/conversations/:id/messages", authAdmin, (req, res) => {
+app.get("/api/admin/conversations/:id/messages", authAdmin, async (req, res) => {
   const messages = db.messages
     .filter((message) => message.conversationId === req.params.id)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  let mediaMigrated = false;
+  for (const message of messages) {
+    if (message.media && await migrateStoredMediaForPlayback(message.media)) mediaMigrated = true;
+  }
+  if (mediaMigrated) saveDb();
   res.json({ messages });
 });
 

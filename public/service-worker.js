@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v100";
+const CACHE_VERSION = "calculator-pwa-v109-video-audio-capture";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -55,6 +55,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (url.pathname.startsWith("/uploads/")) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   if (request.mode === "navigate") {
     event.respondWith(networkFirst(request, "/offline.html"));
     return;
@@ -81,7 +86,6 @@ function isStaticAsset(request) {
   const url = new URL(request.url);
   return ["style", "script", "image", "font"].includes(request.destination)
     || url.pathname.startsWith("/icons/")
-    || url.pathname.startsWith("/uploads/")
     || url.pathname.endsWith(".json")
     || url.pathname.endsWith(".svg");
 }

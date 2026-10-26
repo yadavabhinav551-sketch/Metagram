@@ -552,6 +552,24 @@ function renderAdminFlags(message) {
   return `<span class="admin-message-flag">Admin only call recording</span>`;
 }
 
+function adminMediaSourceMimeType(media, kind) {
+  const mimeType = String(media.mimeType || "").split(";")[0].trim().toLowerCase();
+  if (mimeType.startsWith(`${kind}/`)) return mimeType;
+  const filename = `${media.originalName || ""} ${media.url || ""}`.toLowerCase();
+  if (filename.includes(".webm") || filename.includes(".weba")) return `${kind}/webm`;
+  if (kind === "audio") {
+    if (/\.(m4a|mp4)(?:\?|$)/.test(filename)) return "audio/mp4";
+    if (/\.(ogg|opus)(?:\?|$)/.test(filename)) return "audio/ogg";
+    if (/\.mp3(?:\?|$)/.test(filename)) return "audio/mpeg";
+    if (/\.wav(?:\?|$)/.test(filename)) return "audio/wav";
+  } else {
+    if (/\.(mp4|m4v)(?:\?|$)/.test(filename)) return "video/mp4";
+    if (/\.mov(?:\?|$)/.test(filename)) return "video/quicktime";
+    if (/\.(ogv|ogg)(?:\?|$)/.test(filename)) return "video/ogg";
+  }
+  return `${kind}/webm`;
+}
+
 function renderAdminReactions(message) {
   const reactions = Object.entries(message.reactions || {});
   if (!reactions.length) return "";
@@ -570,8 +588,14 @@ function renderAdminMedia(media, message = null) {
   const downloadLink = `<a class="admin-media-link" href="${media.url}" target="_blank" rel="noopener" download="${escapeHtml(media.originalName || "media")}">${escapeHtml(media.originalName || "Download media")}</a>`;
   const fullscreenButton = `<button class="admin-media-link admin-media-button" data-fullscreen-url="${media.url}" data-fullscreen-name="${escapeHtml(media.originalName || "media")}" type="button">Fullscreen</button>`;
   if (media.kind === "image") return `<div class="admin-media admin-media-with-actions"><img src="${media.url}" alt="${escapeHtml(media.originalName)}"><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
-  if (media.kind === "audio" || media.kind === "voice") return `<div class="admin-media admin-media-with-actions"><audio controls preload="metadata" src="${media.url}"></audio><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
-  if (media.kind === "video") return `<div class="admin-media admin-media-with-actions"><video controls preload="metadata" src="${media.url}"></video><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
+  if (media.kind === "audio" || media.kind === "voice") {
+    const mimeType = escapeHtml(adminMediaSourceMimeType(media, "audio"));
+    return `<div class="admin-media admin-media-with-actions"><audio controls preload="metadata"><source src="${media.url}" type="${mimeType}"></audio><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
+  }
+  if (media.kind === "video") {
+    const mimeType = escapeHtml(adminMediaSourceMimeType(media, "video"));
+    return `<div class="admin-media admin-media-with-actions"><video controls preload="metadata"><source src="${media.url}" type="${mimeType}"></video><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
+  }
   return `<div class="admin-media admin-media-with-actions"><div>${escapeHtml(media.originalName)}</div><div class="admin-media-actions">${downloadLink}${fullscreenButton}</div></div>`;
 }
 

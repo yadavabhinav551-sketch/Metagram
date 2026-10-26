@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -25,6 +24,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingWebPermissionRequest: PermissionRequest? = null
     private var currentUrlIndex = 0
     private var urlsToTry = arrayOf(
         "http://127.0.0.1:3000",
@@ -33,8 +33,23 @@ class MainActivity : AppCompatActivity() {
 
     private val requestPermissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        // Permissions handled
+    ) { _ ->
+        val request = pendingWebPermissionRequest ?: return@registerForActivityResult
+        pendingWebPermissionRequest = null
+        val allGranted = request.resources.all { resource ->
+            val permission = when (resource) {
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> Manifest.permission.CAMERA
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> Manifest.permission.RECORD_AUDIO
+                else -> null
+            }
+            permission != null &&
+                ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        if (allGranted) {
+            request.grant(request.resources)
+        } else {
+            request.deny()
+        }
     }
 
     private val fileChooserLauncher = registerForActivityResult(
@@ -61,7 +76,6 @@ class MainActivity : AppCompatActivity() {
         webView = WebView(this)
         setContentView(webView)
 
-        checkAndRequestPermissions()
         setupWebView()
 
         val configuredUrl = getString(R.string.server_url)
@@ -75,31 +89,6 @@ class MainActivity : AppCompatActivity() {
     private fun loadCurrentUrl() {
         if (currentUrlIndex < urlsToTry.size) {
             webView.loadUrl(urlsToTry[currentUrlIndex])
-        }
-    }
-
-    private fun checkAndRequestPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.MODIFY_AUDIO_SETTINGS
-        )
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
-            permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
-            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
-        } else {
-            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        }
-
-        val needed = permissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (needed.isNotEmpty()) {
-            requestPermissionsLauncher.launch(needed.toTypedArray())
         }
     }
 
@@ -142,7 +131,34 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.grant(request.resources)
+                if (request == null) return
+                val requiredPermissions = request.resources.mapNotNull { resource ->
+                    when (resource) {
+                        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> Manifest.permission.CAMERA
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> Manifest.permission.RECORD_AUDIO
+                        else -> null
+                    }
+                }
+                if (requiredPermissions.size != request.resources.size) {
+                    request.deny()
+                    return
+                }
+                val missingPermissions = requiredPermissions.distinct().filter {
+                    ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
+                }
+                if (missingPermissions.isEmpty()) {
+                    request.grant(request.resources)
+                    return
+                }
+                pendingWebPermissionRequest?.deny()
+                pendingWebPermissionRequest = request
+                requestPermissionsLauncher.launch(missingPermissions.toTypedArray())
+            }
+
+            override fun onPermissionRequestCanceled(request: PermissionRequest?) {
+                if (pendingWebPermissionRequest == request) {
+                    pendingWebPermissionRequest = null
+                }
             }
 
             override fun onShowFileChooser(
