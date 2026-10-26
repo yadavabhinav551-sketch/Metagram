@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v109-video-audio-capture";
+const CACHE_VERSION = "calculator-pwa-v110-call-message-ui";
 const APP_SHELL = [
   "/",
   "/offline.html",
