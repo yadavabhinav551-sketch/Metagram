@@ -4,6 +4,9 @@ const state = {
   googleClientId: "",
   googleInitialized: false,
   googleSetupToken: "",
+  googleFlow: null,
+  emailVerificationToken: "",
+  emailVerificationExpiresAt: 0,
   user: null,
   socket: null,
   conversations: [],
@@ -145,6 +148,7 @@ if (typeof themeMediaQuery.addEventListener === "function") {
 } else {
   themeMediaQuery.addListener(handleSystemThemeChange);
 }
+
 const EMOJI_OPTIONS = [
   "\u{1F600}", "\u{1F602}", "\u{1F60A}", "\u{1F60D}", "\u{1F618}", "\u{1F60E}",
   "\u{1F973}", "\u{1F622}", "\u{1F621}", "\u{1F64F}", "\u{1F44D}", "\u{1F44E}",
@@ -161,6 +165,7 @@ const api = async (url, options = {}) => {
         "Content-Type": "application/json",
         ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
         ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
+        ...(state.emailVerificationToken ? { "X-Email-Verification": state.emailVerificationToken } : {}),
         ...(options.headers || {})
       }
     });
@@ -300,6 +305,7 @@ function setAuthMode(mode) {
 }
 
 function renderGoogleSignInButton(mode = ($("signupTab")?.classList.contains("active") ? "signup" : "login")) {
+  state.googleFlow = "auth";
   const button = $("googleSignInButton");
   const unavailable = $("googleSignInUnavailable");
   button.replaceChildren();
@@ -331,14 +337,85 @@ function renderGoogleSignInButton(mode = ($("signupTab")?.classList.contains("ac
   });
 }
 
+function renderProfileGoogleVerifyButton() {
+  const button = $("profileGoogleVerifyButton");
+  if (!button) return;
+  state.googleFlow = "email-verify";
+  button.replaceChildren();
+  if (!state.googleClientId) {
+    $("profileEmailVerificationStatus").textContent = "Google email verification is not configured on this server.";
+    return;
+  }
+  if (!window.google?.accounts?.id) {
+    $("profileEmailVerificationStatus").textContent = "Google sign-in is loading. Try again in a moment.";
+    return;
+  }
+  if (!state.googleInitialized) {
+    window.google.accounts.id.initialize({
+      client_id: state.googleClientId,
+      callback: handleGoogleCredential,
+      auto_select: false
+    });
+    state.googleInitialized = true;
+  }
+  window.google.accounts.id.renderButton(button, {
+    theme: "outline",
+    size: "large",
+    shape: "rectangular",
+    text: "continue_with",
+    width: Math.max(220, Math.min(360, Math.floor($("profileModal").clientWidth - 64)))
+  });
+  const authorizedOriginHint = ` This site's origin (${window.location.origin}) must be authorized in Google Cloud.`;
+  $("profileEmailVerificationStatus").textContent = state.user.email
+    ? `Continue with the Google account linked to this email before saving changes.${authorizedOriginHint}`
+    : `Verify the Google email you want to link to this account before saving changes.${authorizedOriginHint}`;
+}
+
 const googleIdentityScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
 googleIdentityScript?.addEventListener("load", () => renderGoogleSignInButton());
+googleIdentityScript?.addEventListener("load", () => {
+  if (!$("profileModal").classList.contains("hidden")) renderProfileGoogleVerifyButton();
+});
 googleIdentityScript?.addEventListener("error", () => {
   $("googleSignInUnavailable").textContent = "Google sign-in could not load. Check your internet connection and try again.";
   $("googleSignInUnavailable").classList.remove("hidden");
+  if (!$("profileModal").classList.contains("hidden")) {
+    $("profileEmailVerificationStatus").textContent = "Google sign-in could not load. Check your internet connection and try again.";
+  }
 });
 
 async function handleGoogleCredential(response) {
+  const isProfileEmailVerification = Boolean(
+    state.token && !$("profileModal").classList.contains("hidden")
+  );
+  if (isProfileEmailVerification) {
+    state.googleFlow = null;
+    $("profileEmailVerificationStatus").textContent = "Verifying your Google email...";
+    let verificationMessage = "";
+    try {
+      const result = await api("/api/me/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ credential: response.credential })
+      });
+      state.emailVerificationToken = result.emailVerificationToken;
+      state.emailVerificationExpiresAt = Date.parse(result.expiresAt);
+      state.user.email = result.email;
+      $("profileEmail").value = result.email;
+      verificationMessage = "Email verified. Save your changes within 10 minutes.";
+      $("profileMessage").textContent = "";
+      $("profileMessage").classList.remove("success-text");
+    } catch (error) {
+      state.emailVerificationToken = "";
+      state.emailVerificationExpiresAt = 0;
+      verificationMessage = error.message;
+    }
+    if (!$("profileModal").classList.contains("hidden")) {
+      renderProfileGoogleVerifyButton();
+      $("profileEmailVerificationStatus").textContent = verificationMessage;
+    }
+    return;
+  }
+  if (state.googleFlow !== "auth") return;
   $("authError").textContent = "";
   try {
     const result = await api("/api/auth/google", {
@@ -361,6 +438,9 @@ async function handleGoogleCredential(response) {
 async function establishSession({ token, privacyToken, user }) {
   state.token = token;
   state.user = user;
+  state.emailVerificationToken = "";
+  state.emailVerificationExpiresAt = 0;
+  state.googleFlow = null;
   if (privacyToken) {
     state.privacyToken = privacyToken;
     sessionStorage.setItem("privacyToken", privacyToken);
@@ -390,6 +470,8 @@ function showChat() {
   ensureTopbarControlsVisible();
   $("profileName").value = state.user.displayName;
   $("profileUserId").value = state.user.userId || "";
+  $("profileMobile").value = state.user.mobile || "";
+  $("profileEmail").value = state.user.email || "";
   $("profileStatusInput").value = state.user.statusText || "";
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   syncPrivacySettings();
@@ -420,6 +502,9 @@ async function logout() {
   localStorage.removeItem("offlineOutbox");
   state.token = null;
   state.privacyToken = null;
+  state.emailVerificationToken = "";
+  state.emailVerificationExpiresAt = 0;
+  state.googleFlow = null;
   state.user = null;
   state.offlineOutbox = [];
   await showAuth();
@@ -601,6 +686,9 @@ async function checkRequiredUpdate(updateNotify = null) {
     if (config.googleClientId !== undefined) {
       state.googleClientId = config.googleClientId;
       renderGoogleSignInButton();
+      if (!$("profileModal").classList.contains("hidden")) {
+        renderProfileGoogleVerifyButton();
+      }
     }
     const notify = config.updateNotify || {};
     state.updateNotify = notify;
@@ -3667,18 +3755,29 @@ $("profileBtn").addEventListener("click", () => {
   $("themePreference").value = getThemePreference();
   $("profileName").value = state.user.displayName;
   $("profileUserId").value = state.user.userId || "";
+  $("profileMobile").value = state.user.mobile || "";
+  $("profileEmail").value = state.user.email || "";
   $("profileStatusInput").value = state.user.statusText || "";
   $("profileAvatarInput").value = "";
   renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   $("privacyCodeInput").value = "";
+  state.emailVerificationToken = "";
+  state.emailVerificationExpiresAt = 0;
+  $("profileEmailVerificationStatus").textContent = "";
   syncPrivacySettings();
   syncNotificationSettings();
   syncMessageAutoDeleteSettings();
   $("profileMessage").textContent = "";
   $("profileMessage").classList.remove("success-text");
   $("profileModal").classList.remove("hidden");
+  renderProfileGoogleVerifyButton();
 });
-$("closeProfileBtn").addEventListener("click", () => $("profileModal").classList.add("hidden"));
+$("closeProfileBtn").addEventListener("click", () => {
+  state.emailVerificationToken = "";
+  state.emailVerificationExpiresAt = 0;
+  if (state.googleFlow === "email-verify") state.googleFlow = null;
+  $("profileModal").classList.add("hidden");
+});
 $("themePreference").addEventListener("change", (event) => {
   saveThemePreference(event.currentTarget.value);
 });
@@ -4336,6 +4435,7 @@ $("profileForm").addEventListener("submit", async (event) => {
   const body = {
     displayName: form.get("displayName"),
     userId: form.get("userId"),
+    mobile: form.get("mobile"),
     statusText: form.get("statusText"),
     oldPassword: form.get("oldPassword"),
     newPassword: form.get("newPassword"),
@@ -4356,6 +4456,15 @@ $("profileForm").addEventListener("submit", async (event) => {
     delete body.newPassword;
   }
   try {
+    if (
+      !state.emailVerificationToken
+      || !Number.isFinite(state.emailVerificationExpiresAt)
+      || state.emailVerificationExpiresAt <= Date.now()
+    ) {
+      state.emailVerificationToken = "";
+      state.emailVerificationExpiresAt = 0;
+      throw new Error("Verify your Google email using the button above before saving changes.");
+    }
     const profileResult = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
     state.user = profileResult.user;
     const avatarFile = $("profileAvatarInput").files?.[0];
@@ -4366,7 +4475,8 @@ $("profileForm").addEventListener("submit", async (event) => {
         method: "POST",
         headers: {
           ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-          ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {})
+          ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
+          ...(state.emailVerificationToken ? { "X-Email-Verification": state.emailVerificationToken } : {})
         },
         body: avatarBody
       });
@@ -4393,6 +4503,10 @@ $("profileForm").addEventListener("submit", async (event) => {
     $("privacyCodeInput").value = "";
     $("profileMessage").textContent = "Profile updated.";
     $("profileMessage").classList.add("success-text");
+    state.emailVerificationToken = "";
+    state.emailVerificationExpiresAt = 0;
+    state.googleFlow = null;
+    $("profileEmailVerificationStatus").textContent = "Changes saved. Verify again before your next account update.";
   } catch (error) {
     $("profileMessage").textContent = error.message;
     $("profileMessage").classList.remove("success-text");

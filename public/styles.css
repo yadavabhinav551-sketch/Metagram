@@ -40,6 +40,7 @@
   --wa-line: rgba(17, 27, 33, 0.12);
   --shadow-lg: 0 16px 40px rgba(17, 27, 33, 0.16);
 }
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -313,6 +314,38 @@ body.app-booting #updateRequiredView {
   gap: 14px;
 }
 
+.profile-email-verification {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--wa-line);
+  border-radius: 12px;
+  background: rgba(11, 20, 26, 0.48);
+}
+
+.profile-email-verification > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.profile-email-verification strong {
+  color: var(--wa-text-primary);
+  font-size: 13px;
+}
+
+.profile-email-verification small {
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.profile-email-verification .google-signin-button {
+  min-width: 220px;
+}
+
 .theme-preference-hint {
   display: block;
   margin-top: 8px;
@@ -320,6 +353,7 @@ body.app-booting #updateRequiredView {
   font-size: 12px;
   line-height: 1.45;
 }
+
 .profile-grid label,
 .profile-section label:not(.setting-toggle) {
   display: grid;
@@ -2552,6 +2586,14 @@ input:focus, select:focus {
     border-radius: 14px;
   }
 
+  .profile-email-verification {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-email-verification .google-signin-button {
+    min-width: 0;
+  }
+
   .profile-save-bar {
     bottom: -16px;
     margin: 0 -16px -16px;
@@ -2661,6 +2703,7 @@ input:focus, select:focus {
     display: none !important;
   }
 }
+
 :root[data-theme="light"] .modal-layer {
   background: rgba(17, 27, 33, 0.3);
 }
@@ -2674,6 +2717,7 @@ input:focus, select:focus {
   background: rgba(255, 255, 255, 0.84);
 }
 
+:root[data-theme="light"] .profile-email-verification,
 :root[data-theme="light"] .setting-toggle {
   background: rgba(241, 245, 246, 0.9);
 }

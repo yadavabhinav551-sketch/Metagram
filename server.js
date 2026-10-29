@@ -513,7 +513,7 @@ async function getGoogleSigningKeys(forceRefresh = false) {
   return googleSigningKeys;
 }
 
-async function verifyGoogleIdToken(idToken) {
+async function verifyGoogleIdToken(idToken, { maxAgeSeconds = null } = {}) {
   if (!GOOGLE_CLIENT_ID) throw new Error("Google sign-in is not configured.");
   if (typeof idToken !== "string" || idToken.length > 12000) throw new Error("Google credential is invalid.");
   const parts = idToken.split(".");
@@ -554,6 +554,7 @@ async function verifyGoogleIdToken(idToken) {
     || claims.exp <= now
     || !Number.isFinite(claims.iat)
     || claims.iat > now + 60
+    || (maxAgeSeconds !== null && now - claims.iat > maxAgeSeconds)
     || claims.email_verified !== true
     || typeof claims.email !== "string"
     || typeof claims.sub !== "string"
@@ -673,6 +674,18 @@ function verifyPrivacyToken(user, token) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     return payload.role === "privacy" && payload.id === user.id;
+  } catch {
+    return false;
+  }
+}
+
+function emailVerificationTokenIsValid(user, token) {
+  if (!user?.email || !token) return false;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return payload.role === "email-verification"
+      && payload.id === user.id
+      && payload.email === String(user.email).trim().toLowerCase();
   } catch {
     return false;
   }
@@ -1385,8 +1398,65 @@ app.post("/api/push/unsubscribe", authUser, (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/api/me/verify-email", authUser, async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({ error: "Email verification is unavailable. Google sign-in is not configured on the server." });
+  }
+
+  let identity;
+  try {
+    identity = await verifyGoogleIdToken(req.body.credential, { maxAgeSeconds: 5 * 60 });
+  } catch (error) {
+    console.error("Profile email verification failed:", error.message || error);
+    return res.status(401).json({ error: "Google could not verify this email. Please try again." });
+  }
+
+  const currentEmail = String(req.user.email || "").trim().toLowerCase();
+  if (currentEmail && currentEmail !== identity.email) {
+    return res.status(403).json({ error: "Sign in with the Google account linked to this profile's email address." });
+  }
+  if (req.user.googleSubject && req.user.googleSubject !== identity.googleSubject) {
+    return res.status(403).json({ error: "This profile is linked to a different Google account." });
+  }
+  if (db.users.some((user) => (
+    user.id !== req.user.id
+      && String(user.email || "").trim().toLowerCase() === identity.email
+  ))) {
+    return res.status(409).json({ error: "This verified email is already linked to another account." });
+  }
+
+  req.user.email = identity.email;
+  req.user.googleSubject = identity.googleSubject;
+  saveDb();
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const emailVerificationToken = jwt.sign({
+    role: "email-verification",
+    id: req.user.id,
+    email: identity.email,
+    iat: issuedAt
+  }, JWT_SECRET, { expiresIn: "10m" });
+  res.json({
+    email: identity.email,
+    emailVerificationToken,
+    expiresAt: new Date((issuedAt + 10 * 60) * 1000).toISOString()
+  });
+});
+
 app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
-  const { displayName, oldPassword, newPassword, reactionEmojis, statusText, messageAutoDelete } = req.body;
+  const { displayName, mobile, oldPassword, newPassword, reactionEmojis, statusText, messageAutoDelete } = req.body;
+  const requiresEmailVerification = [
+    "displayName",
+    "userId",
+    "mobile",
+    "statusText",
+    "newPassword",
+    "notificationEnabled",
+    "messageAutoDelete"
+  ]
+    .some((key) => req.body[key] !== undefined);
+  if (requiresEmailVerification && !emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])) {
+    return res.status(403).json({ error: "Verify your account email with Google before saving profile or password changes." });
+  }
   let nextUserId = null;
   if (req.body.userId !== undefined) {
     const userIdResult = validateUserId(req.body.userId);
@@ -1397,6 +1467,13 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
     }
   }
   if (displayName && displayName.trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
+  if (displayName && displayName.trim().length > 80) return res.status(400).json({ error: "Name must be 80 characters or fewer." });
+  if (mobile !== undefined && (normalizeMobile(mobile).length < 7 || normalizeMobile(mobile).length > 15)) {
+    return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+  }
+  if (mobile && !isAvailableMobile(mobile, req.user.id)) {
+    return res.status(409).json({ error: "Mobile number already exists." });
+  }
   if (reactionEmojis !== undefined && !Array.isArray(reactionEmojis)) return res.status(400).json({ error: "Reaction emojis must be a list." });
   if (statusText !== undefined && String(statusText).trim().length > 140) return res.status(400).json({ error: "Status must be 140 characters or less." });
   if (messageAutoDelete !== undefined && (!messageAutoDelete || typeof messageAutoDelete !== "object")) {
@@ -1404,12 +1481,13 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   }
   if (newPassword) {
     if (!oldPassword) return res.status(400).json({ error: "Old password is required." });
-    if (newPassword.length < 6) return res.status(400).json({ error: "New password must be at least 6 characters." });
+    if (newPassword.length < 8 || newPassword.length > 128) return res.status(400).json({ error: "New password must be between 8 and 128 characters." });
     if (!(await bcrypt.compare(oldPassword, req.user.passwordHash))) return res.status(403).json({ error: "Old password is incorrect." });
     req.user.passwordHash = await bcrypt.hash(newPassword, 10);
   }
   if (nextUserId) req.user.userId = nextUserId;
   if (displayName) req.user.displayName = displayName.trim();
+  if (mobile !== undefined) req.user.mobile = String(mobile).trim();
   if (statusText !== undefined) {
     req.user.statusText = String(statusText || "").trim();
     req.user.statusUpdatedAt = req.user.statusText ? new Date().toISOString() : null;
@@ -1436,7 +1514,12 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   res.json({ user: ownUser(req.user) });
 });
 
-app.post("/api/me/avatar", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("avatar")), (req, res) => {
+app.post("/api/me/avatar", authUser, requirePrivacyUnlocked, (req, res, next) => {
+  if (!emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])) {
+    return res.status(403).json({ error: "Verify your account email with Google before changing your profile photo." });
+  }
+  next();
+}, handleMulterUpload(upload.single("avatar")), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Profile photo is required." });
   if (!req.file.mimetype?.startsWith("image/")) {
     fs.unlink(req.file.path, () => {});
@@ -1453,6 +1536,9 @@ app.patch("/api/privacy/settings", authUser, async (req, res) => {
   }
   const enabled = Boolean(req.body.enabled);
   const code = String(req.body.code || "").trim();
+  if (code && !emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])) {
+    return res.status(403).json({ error: "Verify your account email with Google before changing your calculator lock password." });
+  }
   const autoLockMinutes = Number(req.body.autoLockMinutes || 0);
   const panicShortcut = ["button", "double-tap"].includes(req.body.panicShortcut) ? req.body.panicShortcut : "button";
   if (!Number.isFinite(autoLockMinutes) || autoLockMinutes < 0 || autoLockMinutes > 120) {

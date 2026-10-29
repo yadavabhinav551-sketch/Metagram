@@ -442,6 +442,14 @@
                 <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
               </label>
               <label>
+                <span>Phone number</span>
+                <input name="mobile" id="profileMobile" type="tel" autocomplete="tel" inputmode="tel" required>
+              </label>
+              <label>
+                <span>Verified email</span>
+                <input id="profileEmail" type="email" autocomplete="email" readonly>
+              </label>
+              <label>
                 <span>About</span>
                 <input name="statusText" id="profileStatusInput" maxlength="140" placeholder="What are you up to?">
               </label>
@@ -460,8 +468,16 @@
             </label>
             <small class="theme-preference-hint">This preference is saved on this device and does not change your account settings.</small>
           </fieldset>
+
           <fieldset class="profile-section profile-settings-card">
             <legend><span class="profile-section-icon" aria-hidden="true">01</span><span><strong>Password &amp; security</strong><small>Update your sign-in password</small></span></legend>
+            <div class="profile-email-verification">
+              <div>
+                <strong>Verify your email to save account changes</strong>
+                <small id="profileEmailVerificationStatus" role="status" aria-live="polite">Google verification is required before changing your profile, password, photo, or calculator lock password.</small>
+              </div>
+              <div id="profileGoogleVerifyButton" class="google-signin-button"></div>
+            </div>
             <div class="profile-password-grid">
             <label>
               <span>Current password</span>
