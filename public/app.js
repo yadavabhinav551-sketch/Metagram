@@ -101,6 +101,50 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 const APP_VERSION_STORAGE_KEY = "calculatorInstalledVersion";
+const THEME_PREFERENCE_KEY = "metagramThemePreference";
+const themeMediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+
+function applyThemePreference(preference) {
+  const resolvedTheme = preference === "system"
+    ? (themeMediaQuery.matches ? "light" : "dark")
+    : preference;
+  document.documentElement.dataset.theme = resolvedTheme;
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor) themeColor.content = resolvedTheme === "light" ? "#f0f2f5" : "#000000";
+}
+
+function getThemePreference() {
+  try {
+    return localStorage.getItem(THEME_PREFERENCE_KEY) || "light";
+  } catch {
+    return "light";
+  }
+}
+
+function saveThemePreference(preference) {
+  if (!["system", "light", "dark"].includes(preference)) return;
+  try {
+    localStorage.setItem(THEME_PREFERENCE_KEY, preference);
+    applyThemePreference(preference);
+    $("profileMessage").textContent = "Theme preference saved on this device.";
+    $("profileMessage").classList.add("success-text");
+  } catch (error) {
+    applyThemePreference(preference);
+    $("profileMessage").textContent = `Theme changed, but could not be saved on this device: ${error.message}`;
+    $("profileMessage").classList.remove("success-text");
+  }
+}
+
+const handleSystemThemeChange = () => {
+  if (getThemePreference() === "system") {
+    applyThemePreference("system");
+  }
+};
+if (typeof themeMediaQuery.addEventListener === "function") {
+  themeMediaQuery.addEventListener("change", handleSystemThemeChange);
+} else {
+  themeMediaQuery.addListener(handleSystemThemeChange);
+}
 const EMOJI_OPTIONS = [
   "\u{1F600}", "\u{1F602}", "\u{1F60A}", "\u{1F60D}", "\u{1F618}", "\u{1F60E}",
   "\u{1F973}", "\u{1F622}", "\u{1F621}", "\u{1F64F}", "\u{1F44D}", "\u{1F44E}",
@@ -3620,6 +3664,7 @@ document.addEventListener("keydown", (event) => {
 });
 $("profileBtn").addEventListener("click", () => {
   closeTopbarMenu();
+  $("themePreference").value = getThemePreference();
   $("profileName").value = state.user.displayName;
   $("profileUserId").value = state.user.userId || "";
   $("profileStatusInput").value = state.user.statusText || "";
@@ -3634,6 +3679,9 @@ $("profileBtn").addEventListener("click", () => {
   $("profileModal").classList.remove("hidden");
 });
 $("closeProfileBtn").addEventListener("click", () => $("profileModal").classList.add("hidden"));
+$("themePreference").addEventListener("change", (event) => {
+  saveThemePreference(event.currentTarget.value);
+});
 $("lockChatBtn").addEventListener("click", async () => {
   try {
     await toggleConversationLock();

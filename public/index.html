@@ -9,6 +9,21 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Calculator">
+    <script>
+      (() => {
+        let preference = "light";
+        try {
+          preference = localStorage.getItem("metagramThemePreference") || "light";
+        } catch {}
+        const mode = preference === "system"
+          ? (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+          : preference;
+        const theme = ["light", "dark"].includes(mode) ? mode : "dark";
+        document.documentElement.dataset.theme = theme;
+        const themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.content = theme === "light" ? "#f0f2f5" : "#000000";
+      })();
+    </script>
     <title>Calculator</title>
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
@@ -433,6 +448,18 @@
             </div>
           </section>
 
+          <fieldset class="profile-section profile-settings-card">
+            <legend><span class="profile-section-icon" aria-hidden="true">00</span><span><strong>Appearance</strong><small>Choose the theme for this device</small></span></legend>
+            <label>
+              <span>Color theme</span>
+              <select id="themePreference" name="themePreference">
+                <option value="system">Use device setting</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <small class="theme-preference-hint">This preference is saved on this device and does not change your account settings.</small>
+          </fieldset>
           <fieldset class="profile-section profile-settings-card">
             <legend><span class="profile-section-icon" aria-hidden="true">01</span><span><strong>Password &amp; security</strong><small>Update your sign-in password</small></span></legend>
             <div class="profile-password-grid">

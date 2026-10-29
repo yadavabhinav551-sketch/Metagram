@@ -23,6 +23,23 @@
   --font-calc: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+  --wa-bg: #f0f2f5;
+  --wa-surface: #ffffff;
+  --wa-card: #f4f6f7;
+  --wa-card-hover: #e7ecef;
+  --wa-emerald: #008f72;
+  --wa-emerald-hover: #007a61;
+  --wa-emerald-glow: rgba(0, 143, 114, 0.18);
+  --wa-bubble-out: #d9fdd3;
+  --wa-bubble-in: #ffffff;
+  --wa-text-primary: #111b21;
+  --wa-text-muted: #54656f;
+  --wa-text-faint: #667781;
+  --wa-line: rgba(17, 27, 33, 0.12);
+  --shadow-lg: 0 16px 40px rgba(17, 27, 33, 0.16);
+}
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -296,6 +313,13 @@ body.app-booting #updateRequiredView {
   gap: 14px;
 }
 
+.theme-preference-hint {
+  display: block;
+  margin-top: 8px;
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .profile-grid label,
 .profile-section label:not(.setting-toggle) {
   display: grid;
@@ -2636,4 +2660,33 @@ input:focus, select:focus {
   .mobile-only {
     display: none !important;
   }
+}
+:root[data-theme="light"] .modal-layer {
+  background: rgba(17, 27, 33, 0.3);
+}
+
+:root[data-theme="light"] .profile-card > .profile-settings-header,
+:root[data-theme="light"] .profile-save-bar {
+  background: rgba(255, 255, 255, 0.97);
+}
+
+:root[data-theme="light"] .profile-settings-card {
+  background: rgba(255, 255, 255, 0.84);
+}
+
+:root[data-theme="light"] .setting-toggle {
+  background: rgba(241, 245, 246, 0.9);
+}
+
+:root[data-theme="light"] .profile-card input:not([type="checkbox"]),
+:root[data-theme="light"] .profile-card select {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .auth-card .segmented {
+  background: #e7ecef;
+}
+
+:root[data-theme="light"] .reply-preview-card {
+  background: rgba(17, 27, 33, 0.06);
 }
