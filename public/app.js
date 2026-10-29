@@ -16,6 +16,9 @@ const state = {
   messages: [],
   starredMessages: [],
   statuses: [],
+  statusSequenceIds: [],
+  statusViewerIndex: -1,
+  activeStatusId: null,
   callHistory: [],
   createGroupMembers: [],
   createGroupSearchResults: [],
@@ -588,9 +591,17 @@ function connectSocket() {
   state.socket.on("status:new", () => {
     if (state.mainTab === "updates") loadStatuses();
   });
+  state.socket.on("status:updated", ({ status }) => {
+    if (!status?.id) return;
+    const index = state.statuses.findIndex((item) => item.id === status.id);
+    if (index >= 0) state.statuses[index] = status;
+    if (state.activeStatusId === status.id) openStatusViewer(status);
+    if (state.mainTab === "updates") renderSectionPanel();
+  });
   state.socket.on("status:deleted", ({ statusId }) => {
     state.statuses = state.statuses.filter((status) => status.id !== statusId);
-    if (!$("statusViewerModal").classList.contains("hidden")) $("statusViewerModal").classList.add("hidden");
+    state.statusSequenceIds = state.statusSequenceIds.filter((id) => id !== statusId);
+    if (state.activeStatusId === statusId) closeStatusViewer();
     if (state.mainTab === "updates") renderSectionPanel();
   });
   state.socket.on("app:restore", () => {
@@ -1404,7 +1415,7 @@ function renderSectionPanel() {
           <span class="story-avatar ${group.statuses.some((status) => !status.viewedByMe) ? "unread" : ""}">${avatarMarkup(group.user, "U")}</span>
           <span class="section-list-main">
             <strong>${escapeHtml(group.user?.displayName || group.user?.userId || "Friend")}</strong>
-            <small>${escapeHtml(statusPreviewText(latest))}</small>
+            <small>${group.statuses.length > 1 ? `${group.statuses.length} updates · ` : ""}${escapeHtml(statusPreviewText(latest))}</small>
           </span>
           <small class="section-list-meta">${new Date(latest.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small>
         </button>`;
@@ -1416,7 +1427,9 @@ function renderSectionPanel() {
           <span class="story-avatar own-story">${avatarMarkup(state.user, "You")}</span>
           <span class="section-list-main">
             <strong>My status</strong>
-            <small>${latestOwnStatus ? `${escapeHtml(statusPreviewText(latestOwnStatus))} · ${latestOwnStatus.viewerCount || 0} views` : "Share a photo, video, or text"}</small>
+            <small>${latestOwnStatus
+    ? `${escapeHtml(statusPreviewText(latestOwnStatus))} · ${myStatuses.length} updates · ${latestOwnStatus.viewerCount || 0} views · ${latestOwnStatus.reactionCount || 0} reactions · ${latestOwnStatus.replyCount || 0} replies`
+    : "Share a photo, video, or text"}</small>
           </span>
           <button class="icon-button add-status-button" type="button" data-action="add-status" title="Add status" aria-label="Add status">+</button>
           ${latestOwnStatus ? `<button class="text-button own-status-open" type="button" data-section-status="${latestOwnStatus.id}">View</button>` : ""}
@@ -1923,25 +1936,104 @@ function renderStatusMedia(status) {
   return "";
 }
 
+function statusTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
+
+function closeStatusViewer() {
+  $("statusViewerModal").classList.add("hidden");
+  state.activeStatusId = null;
+  state.statusSequenceIds = [];
+  state.statusViewerIndex = -1;
+}
+
+function renderStatusSequenceProgress() {
+  return state.statusSequenceIds.map((id, index) => `
+    <span class="status-progress-segment ${index < state.statusViewerIndex ? "complete" : ""} ${index === state.statusViewerIndex ? "current" : ""}" aria-hidden="true"></span>
+  `).join("");
+}
+
 function openStatusViewer(status) {
+  state.activeStatusId = status.id;
   $("statusViewerTitle").textContent = status.user?.displayName || "Status";
   const viewers = Array.isArray(status.viewers) ? status.viewers : [];
+  const reactions = Array.isArray(status.reactions) ? status.reactions : [];
+  const replies = Array.isArray(status.replies) ? status.replies : [];
   const viewerHtml = status.canDelete
     ? `<div class="status-viewers">
         <strong>Viewed by ${status.viewerCount || 0}</strong>
-        ${viewers.map((view) => `<small>${escapeHtml(view.user?.displayName || view.user?.userId || "User")} · ${new Date(view.at).toLocaleString()}</small>`).join("") || "<small>No viewers yet.</small>"}
+        ${viewers.map((view) => `<small>${escapeHtml(view.user?.displayName || view.user?.userId || "User")} · ${escapeHtml(statusTime(view.at))}</small>`).join("") || "<small>No viewers yet.</small>"}
       </div>
-      <button class="text-button danger" data-delete-status="${status.id}" type="button">Delete status</button>`
+      <div class="status-interaction-details">
+        <strong>Reactions (${status.reactionCount || 0})</strong>
+        ${reactions.map((reaction) => `<small>${escapeHtml(reaction.emoji)} ${escapeHtml(reaction.user?.displayName || reaction.user?.userId || "User")} · ${escapeHtml(statusTime(reaction.at))}</small>`).join("") || "<small>No reactions yet.</small>"}
+        <strong>Replies (${status.replyCount || 0})</strong>
+        ${replies.map((reply) => `<small><b>${escapeHtml(reply.user?.displayName || reply.user?.userId || "User")}:</b> ${escapeHtml(reply.text)} · ${escapeHtml(statusTime(reply.at))}</small>`).join("") || "<small>No replies yet.</small>"}
+      </div>
+      <button class="text-button danger" data-delete-status="${escapeHtml(status.id)}" type="button">Delete status</button>`
     : "";
+  const reactionPicker = status.canDelete ? "" : `
+    <div class="status-reaction-picker" aria-label="React to status">
+      ${["❤️", "😂", "😮", "😢", "🙏", "👍", "🔥", "👏"].map((emoji) => `
+        <button type="button" class="${status.myReaction === emoji ? "selected" : ""}" data-status-reaction="${escapeHtml(emoji)}" aria-label="React ${escapeHtml(emoji)}" aria-pressed="${status.myReaction === emoji}">${escapeHtml(emoji)}</button>
+      `).join("")}
+    </div>
+    <form class="status-reply-form">
+      <input name="reply" maxlength="500" placeholder="Reply privately to ${escapeHtml(status.user?.displayName || "this status")}" aria-label="Reply to status">
+      <button class="primary" type="submit">Send</button>
+    </form>
+    <small class="status-reply-privacy">Only you and the status poster can see this reply.</small>
+    ${replies.map((reply) => `<p class="status-own-reply">${escapeHtml(reply.text)} <small>${escapeHtml(statusTime(reply.at))}</small></p>`).join("")}
+  `;
+  const progress = renderStatusSequenceProgress();
+  const previousDisabled = state.statusViewerIndex <= 0;
+  const nextDisabled = state.statusViewerIndex < 0 || state.statusViewerIndex >= state.statusSequenceIds.length - 1;
   $("statusViewerBody").innerHTML = `
     ${renderStatusMedia(status)}
     ${status.text ? `<p>${escapeHtml(status.text)}</p>` : ""}
+    ${reactionPicker}
     ${viewerHtml}
-  ` || "<p>Status unavailable.</p>";
-  const created = status.createdAt ? new Date(status.createdAt).toLocaleString() : "";
-  $("statusViewerMeta").textContent = `${status.viewerCount || 0} views${created ? ` · ${created}` : ""}`;
+  `;
+  $("statusViewerMeta").innerHTML = `
+    <div class="status-viewer-navigation">
+      <button class="text-button" type="button" data-status-previous ${previousDisabled ? "disabled" : ""} aria-label="Previous status">‹</button>
+      <div class="status-viewer-progress">${progress}</div>
+      <button class="text-button" type="button" data-status-next ${nextDisabled ? "disabled" : ""} aria-label="Next status">›</button>
+    </div>
+    <small>${status.canDelete ? `${status.viewerCount || 0} views · ` : ""}${escapeHtml(statusTime(status.createdAt))}</small>
+    <small>${status.expiresAt ? `Expires ${escapeHtml(statusTime(status.expiresAt))}` : "Expires after 24 hours"}</small>
+  `;
   $("statusViewerModal").classList.remove("hidden");
   enforceStatusVideoClip($("statusViewerBody").querySelector("video[data-status-clip]"));
+}
+
+async function showStatusAt(index) {
+  const statusId = state.statusSequenceIds[index];
+  const status = state.statuses.find((item) => item.id === statusId);
+  if (!status) return;
+  const result = await api(`/api/statuses/${encodeURIComponent(status.id)}/view`, { method: "POST" });
+  Object.assign(status, result.status || {}, { viewedByMe: true });
+  state.statusViewerIndex = index;
+  openStatusViewer(status);
+  if (state.mainTab === "updates") renderSectionPanel();
+}
+
+async function openStatusSequence(status) {
+  const sequence = state.statuses
+    .filter((item) => item.userId === status.userId)
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  state.statusSequenceIds = sequence.map((item) => item.id);
+  const firstUnseenIndex = sequence.findIndex((item) => !item.viewedByMe);
+  const statusIndex = state.statusSequenceIds.indexOf(status.id);
+  const startIndex = status.userId === state.user.id
+    ? 0
+    : firstUnseenIndex >= 0 ? firstUnseenIndex : Math.max(0, statusIndex);
+  try {
+    await showStatusAt(startIndex);
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 function enforceStatusVideoClip(video) {
@@ -3902,8 +3994,25 @@ $("messageSearchNext").addEventListener("click", () => {
 });
 $("messageSearchClose").addEventListener("click", () => setMessageSearchOpen(false));
 $("closeDetailsBtn").addEventListener("click", () => $("detailsModal").classList.add("hidden"));
-$("closeStatusViewerBtn").addEventListener("click", () => $("statusViewerModal").classList.add("hidden"));
+$("closeStatusViewerBtn").addEventListener("click", closeStatusViewer);
 $("statusViewerBody").addEventListener("click", async (event) => {
+  const reactionButton = event.target.closest("[data-status-reaction]");
+  if (reactionButton && state.activeStatusId) {
+    reactionButton.disabled = true;
+    try {
+      const { status } = await api(`/api/statuses/${encodeURIComponent(state.activeStatusId)}/reactions`, {
+        method: "POST",
+        body: JSON.stringify({ emoji: reactionButton.dataset.statusReaction })
+      });
+      const index = state.statuses.findIndex((item) => item.id === status.id);
+      if (index >= 0) state.statuses[index] = status;
+      openStatusViewer(status);
+      renderSectionPanel();
+    } catch (error) {
+      alert(error.message);
+    }
+    return;
+  }
   const button = event.target.closest("[data-delete-status]");
   if (!button) return;
   if (!confirm("Delete this status?")) return;
@@ -3911,11 +4020,54 @@ $("statusViewerBody").addEventListener("click", async (event) => {
   try {
     await api(`/api/statuses/${button.dataset.deleteStatus}`, { method: "DELETE" });
     state.statuses = state.statuses.filter((status) => status.id !== button.dataset.deleteStatus);
-    $("statusViewerModal").classList.add("hidden");
-    renderConversations();
+    closeStatusViewer();
+    if (state.mainTab === "updates") renderSectionPanel();
   } catch (error) {
     button.disabled = false;
     alert(error.message);
+  }
+});
+$("statusViewerBody").addEventListener("submit", async (event) => {
+  const form = event.target.closest(".status-reply-form");
+  if (!form || !state.activeStatusId) return;
+  event.preventDefault();
+  const input = form.elements.reply;
+  const text = input.value.trim();
+  if (!text) {
+    input.focus();
+    return;
+  }
+  const sendButton = form.querySelector('button[type="submit"]');
+  sendButton.disabled = true;
+  try {
+    const { status } = await api(`/api/statuses/${encodeURIComponent(state.activeStatusId)}/replies`, {
+      method: "POST",
+      body: JSON.stringify({ text })
+    });
+    const index = state.statuses.findIndex((item) => item.id === status.id);
+    if (index >= 0) state.statuses[index] = status;
+    openStatusViewer(status);
+    renderSectionPanel();
+  } catch (error) {
+    alert(error.message);
+    sendButton.disabled = false;
+  }
+});
+$("statusViewerMeta").addEventListener("click", async (event) => {
+  const previous = event.target.closest("[data-status-previous]");
+  const next = event.target.closest("[data-status-next]");
+  if (previous && state.statusViewerIndex > 0) {
+    try {
+      await showStatusAt(state.statusViewerIndex - 1);
+    } catch (error) {
+      alert(error.message);
+    }
+  } else if (next && state.statusViewerIndex < state.statusSequenceIds.length - 1) {
+    try {
+      await showStatusAt(state.statusViewerIndex + 1);
+    } catch (error) {
+      alert(error.message);
+    }
   }
 });
 $("groupInfoBtn").addEventListener("click", () => {
@@ -4152,6 +4304,9 @@ function uploadStatusFile(file, onProgress = () => {}) {
 }
 
 $("statusImageBtn").addEventListener("click", () => $("statusImageInput").click());
+$("statusTextInput").addEventListener("input", () => {
+  $("statusCharacterCount").textContent = `${$("statusTextInput").value.length}/500`;
+});
 $("statusImageInput").addEventListener("change", async () => {
   clearStatusFilePreview();
   const file = $("statusImageInput").files?.[0];
@@ -4187,6 +4342,7 @@ $("postStatusBtn").addEventListener("click", async () => {
       body: JSON.stringify({ text: $("statusTextInput").value, media })
     });
     $("statusTextInput").value = "";
+    $("statusCharacterCount").textContent = "0/500";
     $("statusImageInput").value = "";
     clearStatusFilePreview();
     $("statusComposer").dataset.open = "false";
@@ -4523,12 +4679,7 @@ $("conversationList").addEventListener("click", async (event) => {
   if (statusButton) {
     const status = state.statuses.find((item) => item.id === statusButton.dataset.status);
     if (!status) return;
-    const result = await api(`/api/statuses/${status.id}/view`, { method: "POST" });
-    status.viewerCount = result.viewerCount || status.viewerCount || 0;
-    status.viewedByMe = true;
-    if (result.status) Object.assign(status, result.status);
-    openStatusViewer(status);
-    await loadStatuses();
+    await openStatusSequence(status);
     return;
   }
   const button = event.target.closest("[data-id]");
@@ -4559,16 +4710,7 @@ $("sectionPanelContent").addEventListener("click", async (event) => {
   if (statusButton) {
     const status = state.statuses.find((item) => item.id === statusButton.dataset.sectionStatus);
     if (!status) return;
-    try {
-      const result = await api(`/api/statuses/${status.id}/view`, { method: "POST" });
-      status.viewerCount = result.viewerCount || status.viewerCount || 0;
-      status.viewedByMe = true;
-      if (result.status) Object.assign(status, result.status);
-      openStatusViewer(status);
-      await loadStatuses();
-    } catch (error) {
-      alert(error.message);
-    }
+    await openStatusSequence(status);
     return;
   }
   const community = event.target.closest("[data-community-conversation]");

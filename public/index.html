@@ -288,9 +288,14 @@
             <button id="sectionPanelAction" class="primary hidden" type="button"></button>
           </header>
           <div id="statusComposer" class="status-composer hidden">
-            <input id="statusTextInput" maxlength="500" placeholder="Post a 24h text status">
+            <label class="status-text-label" for="statusTextInput">Share a thought or add a caption</label>
+            <textarea id="statusTextInput" maxlength="500" rows="3" placeholder="What's on your mind?"></textarea>
             <input id="statusImageInput" class="hidden" type="file" accept="image/*,video/*">
-            <button id="statusImageBtn" type="button">Media</button>
+            <small class="status-audience-hint">Only people you have a direct chat with can see this status. It disappears after 24 hours.</small>
+            <div class="status-composer-actions">
+              <button id="statusImageBtn" type="button">Add photo or video</button>
+              <span id="statusCharacterCount">0/500</span>
+            </div>
             <button id="postStatusBtn" class="primary" type="button">Post status</button>
             <div id="statusFilePreview" class="status-file-preview hidden"></div>
             <div id="statusUploadProgressWrap" class="status-upload-progress hidden">
@@ -337,7 +342,7 @@
             <button id="closeStatusViewerBtn" class="icon-button" type="button" title="Close">✕</button>
           </header>
           <div id="statusViewerBody" class="status-viewer-body"></div>
-          <small id="statusViewerMeta"></small>
+          <div id="statusViewerMeta" class="status-viewer-meta"></div>
         </div>
       </section>
 

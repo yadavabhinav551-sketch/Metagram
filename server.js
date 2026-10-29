@@ -947,6 +947,14 @@ function escapeHtml(value = "") {
 function removeUploadedMediaFile(media) {
   const url = media?.url;
   if (!url?.startsWith("/uploads/")) return;
+  const isReferenced = (db.messages || []).some((message) => message.media?.url === url)
+    || (db.statuses || []).some((status) => status.media?.url === url)
+    || (db.sharedItems || []).some((item) => {
+      const mediaItems = Array.isArray(item.media) ? item.media : [item.media];
+      return mediaItems.some((itemMedia) => itemMedia?.url === url);
+    })
+    || (db.users || []).some((user) => user.avatarUrl === url);
+  if (isReferenced) return;
   const filename = path.basename(url);
   const filePath = path.join(activeUploadDir, filename);
   try {
@@ -973,9 +981,53 @@ function clearUploadDirectory() {
 }
 
 function activeStatuses() {
-  const cutoff = Date.now() - STATUS_EXPIRE_MS;
-  db.statuses = (db.statuses || []).filter((status) => new Date(status.createdAt).getTime() >= cutoff);
+  const now = Date.now();
+  const previousStatuses = db.statuses || [];
+  const expiredStatuses = [];
+  db.statuses = previousStatuses.filter((status) => {
+    const expiresAt = new Date(status.expiresAt || new Date(new Date(status.createdAt).getTime() + STATUS_EXPIRE_MS)).getTime();
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      expiredStatuses.push(status);
+      return false;
+    }
+    return true;
+  });
+  for (const status of expiredStatuses) removeUploadedMediaFile(status.media);
+  if (expiredStatuses.length) saveDb();
   return db.statuses;
+}
+
+function statusContactIds(userId) {
+  const contactIds = new Set();
+  for (const conversation of db.conversations) {
+    if (conversation.groupId || conversation.participants.length !== 2 || !conversation.participants.includes(userId)) continue;
+    for (const participantId of conversation.participants) {
+      if (participantId === userId) continue;
+      const participant = db.users.find((user) => user.id === participantId);
+      if (
+        participant
+        && !participant.deleted
+        && !participant.blocked
+        && !participant.suspended
+        && !blockedBetween(userId, participantId)
+      ) {
+        contactIds.add(participantId);
+      }
+    }
+  }
+  return contactIds;
+}
+
+function canSeeStatus(status, user) {
+  return status.userId === user.id || statusContactIds(status.userId).has(user.id);
+}
+
+function recordStatusView(status, user) {
+  if (status.userId === user.id) return false;
+  status.viewedBy ||= [];
+  if (status.viewedBy.some((view) => view.userId === user.id)) return false;
+  status.viewedBy.push({ userId: user.id, at: new Date().toISOString() });
+  return true;
 }
 
 function statusViewers(status, { includeOwner = false } = {}) {
@@ -992,16 +1044,40 @@ function statusViewers(status, { includeOwner = false } = {}) {
 function statusResponse(status, viewerUser) {
   const isOwner = status.userId === viewerUser.id;
   const viewers = statusViewers(status);
+  const reactions = status.reactions || [];
+  const replies = status.replies || [];
+  const visibleReplies = isOwner ? replies : replies.filter((reply) => reply.userId === viewerUser.id);
   const { viewedBy: _viewedBy, ...safeStatus } = status;
   return {
     ...safeStatus,
+    reactions: isOwner
+      ? reactions.map((reaction) => ({
+        ...reaction,
+        user: publicUser(db.users.find((user) => user.id === reaction.userId))
+      })).filter((reaction) => reaction.user)
+      : undefined,
+    myReaction: reactions.find((reaction) => reaction.userId === viewerUser.id)?.emoji || null,
+    replies: visibleReplies.map((reply) => ({
+      ...reply,
+      user: publicUser(db.users.find((user) => user.id === reply.userId))
+    })).filter((reply) => reply.user),
     media: status.media?.kind === "video" ? { ...status.media, clipTo: STATUS_VIDEO_MAX_SECONDS } : status.media,
     user: publicUser(db.users.find((user) => user.id === status.userId)),
     viewedByMe: isOwner || (status.viewedBy || []).some((view) => view.userId === viewerUser.id),
-    viewerCount: viewers.length,
+    viewerCount: isOwner ? viewers.length : 0,
+    reactionCount: isOwner ? reactions.length : 0,
+    replyCount: isOwner ? replies.length : visibleReplies.length,
     viewers: isOwner ? viewers : undefined,
     canDelete: isOwner
   };
+}
+
+function emitStatusToContacts(eventName, status) {
+  const recipientIds = new Set([status.userId, ...statusContactIds(status.userId)]);
+  for (const userId of recipientIds) {
+    const user = db.users.find((item) => item.id === userId);
+    if (user) io.to(userId).emit(eventName, { status: statusResponse(status, user) });
+  }
 }
 
 async function closeUserSessions(user, reason = "Account is not active.") {
@@ -1132,7 +1208,16 @@ function handleMulterUpload(uploadHandler, { redirectOnError = false } = {}) {
 
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
-app.get("/uploads/:filename", async (req, res, next) => {
+app.get("/uploads/:filename", (req, res, next) => {
+  activeStatuses();
+  const filename = path.basename(req.params.filename);
+  const status = db.statuses.find((item) => item.media?.url === `/uploads/${filename}`);
+  if (!status) return next();
+  authUser(req, res, () => requirePrivacyUnlocked(req, res, () => {
+    if (!canSeeStatus(status, req.user)) return res.status(404).json({ error: "Media not found." });
+    next();
+  }));
+}, async (req, res, next) => {
   const filename = path.basename(req.params.filename);
   const media = findStoredMediaForUpload(filename);
   const filePath = path.join(activeUploadDir, filename);
@@ -2112,23 +2197,35 @@ app.post("/api/upload", authUser, requirePrivacyUnlocked, handleMulterUpload(upl
 
 app.get("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
   activeStatuses();
-  const visibleUserIds = new Set([req.user.id]);
-  for (const conversation of db.conversations.filter((item) => item.participants.includes(req.user.id))) {
-    conversation.participants.forEach((id) => visibleUserIds.add(id));
-  }
+  const visibleUserIds = statusContactIds(req.user.id);
+  visibleUserIds.add(req.user.id);
   const statuses = db.statuses
     .filter((status) => visibleUserIds.has(status.userId))
     .map((status) => statusResponse(status, req.user))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  saveDb();
   res.json({ statuses });
 });
 
 app.post("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
-  const text = String(req.body.text || "").trim().slice(0, 500);
+  const text = String(req.body.text || "").trim();
   const media = req.body.media || null;
   if (!text && !media) return res.status(400).json({ error: "Status text, image, or video is required." });
+  if (text.length > 500) return res.status(400).json({ error: "Status text must be 500 characters or fewer." });
   if (media && !["image", "video"].includes(media.kind)) return res.status(400).json({ error: "Only image or video status is supported." });
+  if (media) {
+    const filename = typeof media.url === "string" && media.url.startsWith("/uploads/")
+      ? path.basename(media.url)
+      : "";
+    if (!filename || media.url !== `/uploads/${filename}` || !fs.existsSync(path.join(activeUploadDir, filename))) {
+      return res.status(400).json({ error: "Upload a status photo or video before posting." });
+    }
+    if (findStoredMediaForUpload(filename) || db.users.some((user) => user.avatarUrl === media.url)) {
+      return res.status(409).json({ error: "This uploaded media is already in use. Upload it again for your status." });
+    }
+    const file = { path: path.join(activeUploadDir, filename), originalname: media.originalName || filename, mimetype: media.mimeType || "" };
+    const actualKind = mediaKindFromMime(normalizeUploadedMediaMimeType(file));
+    if (actualKind !== media.kind) return res.status(400).json({ error: "Status media type does not match the uploaded file." });
+  }
   if (media?.kind === "video") {
     const duration = Number(media.duration || 0);
     media.originalDuration = Number.isFinite(duration) && duration > 0 ? duration : null;
@@ -2142,35 +2239,95 @@ app.post("/api/statuses", authUser, requirePrivacyUnlocked, (req, res) => {
     media,
     createdAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + STATUS_EXPIRE_MS).toISOString(),
-    viewedBy: []
+    viewedBy: [],
+    reactions: [],
+    replies: []
   };
   db.statuses ||= [];
   db.statuses.push(status);
   saveDb();
-  io.emit("status:new", { status: statusResponse(status, req.user) });
+  emitStatusToContacts("status:new", status);
   io.to("admins").emit("admin:status", { statusId: status.id });
   res.json({ status: statusResponse(status, req.user) });
 });
 
 app.post("/api/statuses/:id/view", authUser, requirePrivacyUnlocked, (req, res) => {
+  activeStatuses();
   const status = (db.statuses || []).find((item) => item.id === req.params.id);
-  if (!status) return res.status(404).json({ error: "Status not found." });
-  status.viewedBy ||= [];
-  if (status.userId !== req.user.id && !status.viewedBy.some((view) => view.userId === req.user.id)) {
-    status.viewedBy.push({ userId: req.user.id, at: new Date().toISOString() });
+  if (!status || !canSeeStatus(status, req.user)) return res.status(404).json({ error: "Status not found." });
+  if (recordStatusView(status, req.user)) {
     saveDb();
+    const owner = db.users.find((user) => user.id === status.userId);
+    if (owner) io.to(owner.id).emit("status:updated", { status: statusResponse(status, owner) });
   }
   res.json({ ok: true, viewerCount: statusViewers(status).length, status: statusResponse(status, req.user) });
 });
 
+app.post("/api/statuses/:id/reactions", authUser, requirePrivacyUnlocked, (req, res) => {
+  activeStatuses();
+  const status = (db.statuses || []).find((item) => item.id === req.params.id);
+  if (!status || !canSeeStatus(status, req.user)) return res.status(404).json({ error: "Status not found." });
+  if (status.userId === req.user.id) return res.status(403).json({ error: "You cannot react to your own status." });
+  const emoji = String(req.body.emoji || "").trim();
+  const allowedReactions = new Set(["❤️", "😂", "😮", "😢", "🙏", "👍", "🔥", "👏"]);
+  if (!allowedReactions.has(emoji)) return res.status(400).json({ error: "Choose a supported status reaction." });
+  recordStatusView(status, req.user);
+  status.reactions ||= [];
+  const existingReactionIndex = status.reactions.findIndex((reaction) => reaction.userId === req.user.id);
+  if (existingReactionIndex >= 0 && status.reactions[existingReactionIndex].emoji === emoji) {
+    status.reactions.splice(existingReactionIndex, 1);
+  } else {
+    const reaction = { userId: req.user.id, emoji, at: new Date().toISOString() };
+    if (existingReactionIndex >= 0) status.reactions[existingReactionIndex] = reaction;
+    else status.reactions.push(reaction);
+  }
+  saveDb();
+  const owner = db.users.find((user) => user.id === status.userId);
+  if (owner) io.to(owner.id).emit("status:updated", { status: statusResponse(status, owner) });
+  res.json({ status: statusResponse(status, req.user) });
+});
+
+app.post("/api/statuses/:id/replies", authUser, requirePrivacyUnlocked, (req, res) => {
+  activeStatuses();
+  const status = (db.statuses || []).find((item) => item.id === req.params.id);
+  if (!status || !canSeeStatus(status, req.user)) return res.status(404).json({ error: "Status not found." });
+  if (status.userId === req.user.id) return res.status(403).json({ error: "You cannot reply to your own status." });
+  const text = String(req.body.text || "").trim();
+  if (!text) return res.status(400).json({ error: "Write a reply before sending." });
+  if (text.length > 500) return res.status(400).json({ error: "Status replies must be 500 characters or fewer." });
+  status.replies ||= [];
+  if (status.replies.filter((reply) => reply.userId === req.user.id).length >= 50) {
+    return res.status(429).json({ error: "You have reached the reply limit for this status." });
+  }
+  recordStatusView(status, req.user);
+  status.replies.push({
+    id: crypto.randomUUID(),
+    userId: req.user.id,
+    text,
+    at: new Date().toISOString()
+  });
+  saveDb();
+  const owner = db.users.find((user) => user.id === status.userId);
+  if (owner) io.to(owner.id).emit("status:updated", { status: statusResponse(status, owner) });
+  res.json({ status: statusResponse(status, req.user) });
+});
+
 app.delete("/api/statuses/:id", authUser, requirePrivacyUnlocked, (req, res) => {
+  activeStatuses();
   const status = (db.statuses || []).find((item) => item.id === req.params.id);
   if (!status) return res.status(404).json({ error: "Status not found." });
   if (status.userId !== req.user.id) return res.status(403).json({ error: "Only your own status can be deleted." });
   db.statuses = (db.statuses || []).filter((item) => item.id !== status.id);
   removeUploadedMediaFile(status.media);
   saveDb();
-  io.emit("status:deleted", { statusId: status.id, userId: req.user.id });
+  const recipientIds = new Set([
+    status.userId,
+    ...statusContactIds(status.userId),
+    ...(status.viewedBy || []).map((view) => view.userId)
+  ]);
+  for (const userId of recipientIds) {
+    io.to(userId).emit("status:deleted", { statusId: status.id, userId: req.user.id });
+  }
   io.to("admins").emit("admin:status-deleted", { statusId: status.id });
   res.json({ ok: true });
 });
