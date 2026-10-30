@@ -28,11 +28,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v112-bottom-navigation" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v112-bottom-navigation">
+    <link rel="preload" href="/styles.css?v=v125-hidden-contact-search" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v125-hidden-contact-search">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v112-bottom-navigation" defer></script>
+    <script src="/app.js?v=v125-hidden-contact-search" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -165,6 +165,7 @@
               <button id="topbarMenuBtn" class="icon-button" type="button" title="More options">⋮</button>
               <div id="topbarActionMenu" class="topbar-action-menu hidden" role="menu" aria-label="More options">
                 <button id="profileBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c.6-3.4 3.2-5.5 7-5.5s6.4 2.1 7 5.5"></path></svg></span> Profile</button>
+                <button id="forgotHiddenSecretBtn" type="button" role="menuitem">Forgot hidden chat code?</button>
                 <button id="sidebarInstallBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5"></path><path d="M5 17v3h14v-3"></path></svg></span> Install App</button>
                 <button id="shareAppBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"></circle><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="19" r="2.5"></circle><path d="m8.3 10.8 7.4-4.5m-7.4 6.9 7.4 4.5"></path></svg></span> Share App</button>
                 <button id="logoutBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 5H5v14h5"></path><path d="M13 8l4 4-4 4m4-4H9"></path></svg></span> Logout</button>
@@ -172,11 +173,10 @@
             </div>
           </header>
           <div class="search-row wa-search-row">
-            <input id="searchInput" placeholder="Search contacts, chats, messages, or email">
+            <input id="searchInput" placeholder="Search contacts, chats, messages, or email" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
           </div>
           <div class="sidebar-tabs wa-tabs">
             <button id="activeChatsBtn" class="active" type="button">Chats</button>
-            <button id="lockedChatsBtn" type="button">Locked</button>
             <button id="archivedChatsBtn" type="button">Archived</button>
             <button id="starredViewBtn" type="button">Starred</button>
           </div>
@@ -208,8 +208,8 @@
         <section class="chat-panel">
           <header class="chat-header wa-chat-header">
             <button id="backBtn" class="icon-button mobile-only" type="button" title="Back">‹</button>
-            <div class="avatar" id="chatAvatar">C</div>
-            <div id="chatIdentity" class="chat-identity" title="Long press for user actions">
+            <div class="avatar" id="chatAvatar" role="button" tabindex="0" aria-label="View contact details">C</div>
+            <div id="chatIdentity" class="chat-identity" role="button" tabindex="0">
               <strong id="chatTitle">Select a chat</strong>
               <span id="chatStatus">Search a registered user to begin</span>
             </div>
@@ -218,20 +218,11 @@
               <button id="videoCallBtn" class="icon-button call-action-btn hidden" type="button" title="Video Call"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"></rect><path d="m16 10 5-3v10l-5-3"></path></svg></button>
               <button id="messageSearchBtn" class="icon-button" type="button" title="Search"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 4 4"></path></svg></button>
               <button id="chatOptionsBtn" class="icon-button" type="button" title="More options">⋮</button>
-              <button id="hideChatBtn" class="text-button hidden" type="button"></button>
-              <button id="blockUserBtn" class="text-button hidden" type="button"></button>
-              <button id="deleteUserBtn" class="text-button hidden" type="button"></button>
-              <button id="lockChatBtn" class="text-button hidden" type="button"></button>
               <button id="pinChatBtn" class="text-button hidden" type="button"></button>
               <button id="archiveChatBtn" class="text-button hidden" type="button"></button>
               <button id="groupInfoBtn" class="text-button hidden" type="button"></button>
               <button id="selectMessagesBtn" class="text-button hidden" type="button"></button>
               <button id="clearChatBtn" class="text-button hidden" type="button"></button>
-            </div>
-            <div id="userActionMenu" class="user-action-menu hidden" role="menu" aria-label="User actions">
-              <button id="menuHideChatBtn" type="button" role="menuitem">Hide User</button>
-              <button id="menuBlockUserBtn" type="button" role="menuitem">Block User</button>
-              <button id="menuDeleteUserBtn" class="danger" type="button" role="menuitem">Delete User</button>
             </div>
           </header>
           <div id="messageSearchBar" class="message-search-bar hidden">
@@ -307,6 +298,30 @@
         </section>
       </section>
 
+      <div id="userActionMenu" class="user-action-menu hidden" role="menu" aria-label="User actions">
+        <button id="menuBlockUserBtn" type="button" role="menuitem">Block user</button>
+        <button id="menuLockChatBtn" type="button" role="menuitem">Lock chat</button>
+        <button id="menuHideChatBtn" type="button" role="menuitem">Hide chat</button>
+        <button id="menuDeleteUserBtn" class="danger" type="button" role="menuitem">Delete user</button>
+      </div>
+
+      <section id="appInputDialog" class="modal-layer app-input-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="appInputDialogTitle">
+        <form id="appInputDialogForm" class="modal-card app-input-dialog-card">
+          <header>
+            <strong id="appInputDialogTitle"></strong>
+            <button id="appInputDialogClose" class="icon-button" type="button" aria-label="Close dialog">✕</button>
+          </header>
+          <p id="appInputDialogMessage"></p>
+          <label id="appInputDialogLabel" for="appInputDialogValue"></label>
+          <input id="appInputDialogValue" class="app-input-dialog-value" type="password" autocomplete="off">
+          <small id="appInputDialogError" class="app-input-dialog-error" role="alert"></small>
+          <div class="app-input-dialog-actions">
+            <button id="appInputDialogCancel" type="button">Cancel</button>
+            <button id="appInputDialogSubmit" class="primary" type="submit">Continue</button>
+          </div>
+        </form>
+      </section>
+
       <section id="voicePreviewModal" class="video-preview-modal voice-preview-modal hidden" aria-label="Voice recording controls">
         <div class="modal-card voice-preview-card">
           <header>
@@ -332,6 +347,76 @@
             <button id="closeDetailsBtn" class="icon-button" type="button" title="Close">✕</button>
           </header>
           <div id="detailsBody" class="details-body"></div>
+        </div>
+      </section>
+
+      <section id="contactDetailsModal" class="modal-layer hidden" role="dialog" aria-modal="true" aria-labelledby="contactDetailsTitle">
+        <div class="modal-card contact-details-card">
+          <header>
+            <strong id="contactDetailsTitle">Contact info</strong>
+            <button id="contactDetailsMenuBtn" class="icon-button" type="button" title="More contact options" aria-label="More contact options" aria-haspopup="menu" aria-expanded="false">⋮</button>
+            <button id="closeContactDetailsBtn" class="icon-button" type="button" title="Close" aria-label="Close contact info">✕</button>
+          </header>
+          <div id="contactDetailsMenu" class="contact-details-menu hidden" role="menu" aria-label="Contact options">
+            <button id="shareContactBtn" type="button" role="menuitem">Share contact in Metagram</button>
+            <button id="shareContactOutsideBtn" type="button" role="menuitem">Share contact outside</button>
+            <button id="editContactNameBtn" type="button" role="menuitem">Edit contact name</button>
+          </div>
+          <div id="contactDetailsBody" class="contact-details-body"></div>
+          <form id="contactNameForm" class="contact-name-form hidden">
+            <label for="contactNameInput">Name shown only in your contacts</label>
+            <input id="contactNameInput" type="text" maxlength="80" autocomplete="off" placeholder="Contact name">
+            <div class="contact-name-actions">
+              <button id="cancelContactNameBtn" type="button">Cancel</button>
+              <button type="submit">Save name</button>
+            </div>
+            <small id="contactNameMessage" role="status"></small>
+          </form>
+          <div class="contact-info-actions">
+            <button id="favoriteContactBtn" type="button">Add to favourites</button>
+            <button id="createGroupWithContactBtn" type="button">Create group with this person</button>
+          </div>
+          <section class="contact-setting-section" aria-labelledby="contactNotificationsHeading">
+            <h2 id="contactNotificationsHeading">Notifications</h2>
+            <label for="contactMuteSelect">Mute notifications for this contact</label>
+            <select id="contactMuteSelect">
+              <option value="off">Unmuted</option>
+              <option value="8h">8 hours</option>
+              <option value="1w">1 week</option>
+              <option value="forever">Always</option>
+              <option value="custom">Custom date and time</option>
+            </select>
+            <div id="contactMuteCustom" class="contact-custom-setting hidden">
+              <input id="contactMuteUntil" type="datetime-local" aria-label="Mute notifications until">
+              <button id="saveContactMuteBtn" type="button">Save mute duration</button>
+            </div>
+            <small id="contactMuteStatus" class="contact-setting-status"></small>
+          </section>
+          <section class="contact-setting-section" aria-labelledby="contactDisappearingHeading">
+            <h2 id="contactDisappearingHeading">Disappearing messages</h2>
+            <label for="contactDisappearingSelect">Remove this chat's messages from your account after</label>
+            <select id="contactDisappearingSelect">
+              <option value="0">Off</option>
+              <option value="1">1 hour</option>
+              <option value="6">6 hours</option>
+              <option value="12">12 hours</option>
+              <option value="24">1 day</option>
+              <option value="72">3 days</option>
+              <option value="168">1 week</option>
+              <option value="720">30 days</option>
+              <option value="custom">Custom</option>
+            </select>
+            <div id="contactDisappearingCustom" class="contact-custom-setting hidden">
+              <label for="contactDisappearingHours">Custom duration in hours</label>
+              <input id="contactDisappearingHours" type="number" min="1" max="8760" step="1" inputmode="numeric" placeholder="Hours (1–8760)">
+              <button id="saveContactDisappearingBtn" type="button">Save duration</button>
+            </div>
+            <small class="contact-setting-note">This only changes what is retained in your account for this chat.</small>
+          </section>
+          <div class="contact-chat-actions">
+            <button id="contactLockChatBtn" class="contact-lock-button" type="button">Lock chat</button>
+            <button id="contactHideChatBtn" class="contact-lock-button" type="button">Hide chat</button>
+          </div>
         </div>
       </section>
 

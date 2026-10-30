@@ -157,17 +157,27 @@ function renderUsers() {
 }
 
 function renderHiddenChatAudit(user) {
-  if (!user.hiddenChatSecret && !user.hiddenChatCount) return "";
   const hiddenUsers = (user.hiddenChatUsers || []).map((item) => item.displayName || item.userId).join(", ");
   const isRevealed = adminState.revealedHiddenCodes.has(user.id);
   const code = user.hiddenChatSecret || "Not set";
   return `
     <div class="hidden-audit">
       <div class="hidden-code-row">
-        <small><strong>Hidden code:</strong> ${escapeHtml(isRevealed ? code : "******")}</small>
+        <small><strong>Hidden code:</strong> ${escapeHtml(isRevealed ? code : user.hiddenChatSecret ? "******" : "Not set")}</small>
         ${user.hiddenChatSecret ? `<button data-user-action="hidden-code-toggle" data-id="${user.id}" type="button">${isRevealed ? "Hide" : "Show"}</button>` : ""}
       </div>
       <small><strong>Hidden chats:</strong> ${user.hiddenChatCount || 0}${hiddenUsers ? ` · ${escapeHtml(hiddenUsers)}` : ""}</small>
+      <small><strong>Recovery request:</strong> ${user.hiddenChatSecretResetRequestedAt ? `Pending since ${escapeHtml(new Date(user.hiddenChatSecretResetRequestedAt).toLocaleString())}` : "None"}</small>
+      <button data-user-action="hidden-recovery-policy" data-id="${user.id}" type="button">
+        Delete chats on recovery: ${user.deleteHiddenChatsOnSecretReset ? "On" : "Off"}
+      </button>
+      ${user.hiddenChatSecretResetRequestedAt
+        ? `<div class="hidden-secret-reset-form">
+            <input data-hidden-secret-value type="password" autocomplete="new-password" placeholder="New hidden secret">
+            <button data-user-action="hidden-secret-reset" data-id="${user.id}" type="button">Set new hidden secret</button>
+            <small data-hidden-secret-message role="status"></small>
+          </div>`
+        : ""}
     </div>
   `;
 }
@@ -701,6 +711,28 @@ $("adminUsers").addEventListener("click", async (event) => {
     if (adminState.revealedHiddenCodes.has(user.id)) adminState.revealedHiddenCodes.delete(user.id);
     else adminState.revealedHiddenCodes.add(user.id);
     renderUsers();
+  }
+  if (action === "hidden-recovery-policy") {
+    await updateUser(user.id, { deleteHiddenChatsOnSecretReset: !user.deleteHiddenChatsOnSecretReset });
+  }
+  if (action === "hidden-secret-reset") {
+    const form = button.closest(".hidden-secret-reset-form");
+    const input = form?.querySelector("[data-hidden-secret-value]");
+    const message = form?.querySelector("[data-hidden-secret-message]");
+    const secret = input?.value.trim() || "";
+    if (secret.length < 4 || secret.length > 128) {
+      if (message) message.textContent = "Secret must be between 4 and 128 characters.";
+      return;
+    }
+    button.disabled = true;
+    try {
+      await updateUser(user.id, { hiddenChatSecret: secret });
+      adminState.revealedHiddenCodes.add(user.id);
+      renderUsers();
+    } catch (error) {
+      if (message) message.textContent = error.message;
+      button.disabled = false;
+    }
   }
   if (action === "privacy-code-toggle") {
     if (adminState.revealedPrivacyCodes.has(user.id)) adminState.revealedPrivacyCodes.delete(user.id);

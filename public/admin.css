@@ -243,6 +243,48 @@
   justify-content: space-between;
 }
 
+.hidden-audit > button {
+  margin: 5px 5px 0 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #334155;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hidden-secret-reset-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.hidden-secret-reset-form input {
+  min-width: 0;
+  flex: 1 1 130px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+.hidden-secret-reset-form button {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #334155;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hidden-secret-reset-form small {
+  flex-basis: 100%;
+  color: #fca5a5;
+}
+
 .admin-cleanup-panel, .update-notify-box, .restore-box {
   padding: 14px;
   border-radius: 14px;

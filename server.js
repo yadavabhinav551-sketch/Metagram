@@ -15,6 +15,7 @@ import { execFile } from "child_process";
 import ffmpegPath from "ffmpeg-static";
 import webPush from "web-push";
 import { MongoClient } from "mongodb";
+import nodemailer from "nodemailer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +48,17 @@ const MONGODB_KEEPALIVE_INTERVAL_MS = Number(process.env.MONGODB_KEEPALIVE_INTER
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:noreply@example.com";
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "BJFx_-apG37EmMF3U9OGhPqb4jIoVAIZwCNB9PdXXCHCSOJ_XeuOT4HSuysiS-mBecx02TQxcdJ6HwP0CwDnA14";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "JelHbPYGcFGSboEJCZrGfp5c9KTieNwi_ayRsfurjps";
+const SMTP_URL = String(process.env.SMTP_URL || "").trim();
+const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "true";
+const SMTP_USER = String(process.env.SMTP_USER || "");
+const SMTP_PASS = String(process.env.SMTP_PASS || "");
+const SMTP_FROM = String(process.env.SMTP_FROM || "").trim();
+const hiddenSecretRecoveryCodes = new Map();
+const hiddenSecretRecoveryRequests = new Map();
+const HIDDEN_SECRET_OTP_TTL_MS = 10 * 60 * 1000;
+const HIDDEN_SECRET_OTP_REQUEST_INTERVAL_MS = 60 * 1000;
 
 webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
@@ -59,6 +71,27 @@ function execFilePromise(command, args) {
         resolve(stdout);
       }
     });
+  });
+}
+
+async function sendHiddenSecretRecoveryCode(email, code) {
+  if ((!SMTP_URL && !SMTP_HOST) || !SMTP_FROM) {
+    const error = new Error("Email OTP delivery is not configured. Configure SMTP_URL (or SMTP_HOST) and SMTP_FROM.");
+    error.code = "SMTP_NOT_CONFIGURED";
+    throw error;
+  }
+  const transport = nodemailer.createTransport(SMTP_URL || {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    ...(SMTP_USER && SMTP_PASS ? { auth: { user: SMTP_USER, pass: SMTP_PASS } } : {})
+  });
+  await transport.sendMail({
+    from: SMTP_FROM,
+    to: email,
+    subject: "Metagram hidden chat recovery code",
+    text: `Your Metagram hidden chat recovery code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`,
+    html: `<p>Your Metagram hidden chat recovery code is <strong>${code}</strong>.</p><p>It expires in 10 minutes. If you did not request this, ignore this email.</p>`
   });
 }
 
@@ -426,7 +459,17 @@ function startSelfPing() {
 
 function publicUser(user) {
   if (!user) return null;
-  const { passwordHash, hiddenChatSecret, privacyCodeHash, privacyCodeAdminValue, lockedChatPin, email, ...safe } = user;
+  const {
+    passwordHash,
+    hiddenChatSecret,
+    privacyCodeHash,
+    privacyCodeAdminValue,
+    lockedChatPin,
+    email,
+    conversationPreferences,
+    contactAliases,
+    ...safe
+  } = user;
   safe.hasLockedChatPin = Boolean(lockedChatPin);
   safe.privacyMode = {
     enabled: Boolean(user.privacyMode?.enabled),
@@ -483,6 +526,12 @@ function ownUser(user) {
   };
 }
 
+function hiddenChatSecretMatches(user, candidate) {
+  if (!user?.hiddenChatSecret) return false;
+  return String(candidate || "").normalize("NFC").trim().toLowerCase()
+    === String(user.hiddenChatSecret).normalize("NFC").trim().toLowerCase();
+}
+
 function adminUser(user) {
   return {
     ...publicUser(user),
@@ -491,6 +540,8 @@ function adminUser(user) {
     hiddenChatSecret: user.hiddenChatSecret || null,
     hiddenChatCount: (user.hiddenUserIds || []).length,
     hiddenChatUsers: (user.hiddenUserIds || []).map((id) => publicUser(db.users.find((item) => item.id === id))).filter(Boolean),
+    deleteHiddenChatsOnSecretReset: Boolean(user.deleteHiddenChatsOnSecretReset),
+    hiddenChatSecretResetRequestedAt: user.hiddenChatSecretResetRequestedAt || null,
     privacyUnlockCode: user.privacyCodeAdminValue || null,
     hasPrivacyUnlockCode: Boolean(user.privacyCodeHash)
   };
@@ -743,10 +794,13 @@ function makeConversation(participants, groupId = null) {
 
 function ensureUserCollections(user) {
   user.hiddenUserIds ||= [];
+  if (typeof user.deleteHiddenChatsOnSecretReset !== "boolean") user.deleteHiddenChatsOnSecretReset = false;
   user.deletedUserIds ||= [];
   user.blockedUserIds ||= [];
   user.pinnedConversationIds ||= [];
   user.archivedConversationIds ||= [];
+  user.conversationPreferences ||= {};
+  user.contactAliases ||= {};
   user.starredMessageIds ||= [];
   user.reactionEmojis ||= [];
   user.messageAutoDelete ||= { enabled: false, ttlHours: 0 };
@@ -775,11 +829,23 @@ function groupCanManage(group, userId) {
 }
 
 function messageExpiredForUser(message, user) {
-  const ttlHours = Number(user?.messageAutoDelete?.ttlHours || 0);
-  if (!user?.messageAutoDelete?.enabled || !Number.isFinite(ttlHours) || ttlHours <= 0) return false;
+  const conversationPreferences = user?.conversationPreferences?.[message.conversationId];
+  const hasConversationTtl = conversationPreferences
+    && Object.prototype.hasOwnProperty.call(conversationPreferences, "disappearingHours");
+  const ttlHours = hasConversationTtl
+    ? Number(conversationPreferences.disappearingHours || 0)
+    : Number(user?.messageAutoDelete?.enabled ? user.messageAutoDelete.ttlHours : 0);
+  if (!Number.isFinite(ttlHours) || ttlHours <= 0) return false;
   const createdAt = new Date(message.createdAt).getTime();
   if (!Number.isFinite(createdAt)) return false;
   return Date.now() - createdAt >= ttlHours * 60 * 60 * 1000;
+}
+
+function isConversationMutedForUser(user, conversationId) {
+  const preferences = user?.conversationPreferences?.[conversationId];
+  if (preferences?.muteForever) return true;
+  const muteUntil = new Date(preferences?.muteUntil || 0).getTime();
+  return Number.isFinite(muteUntil) && muteUntil > Date.now();
 }
 
 function visibleMessages(conversationId, userOrId) {
@@ -819,8 +885,10 @@ function hydrateConversation(conversation, user) {
   const messages = visibleMessages(conversation.id, user);
   const members = conversation.participants.map((id) => {
     const member = db.users.find((item) => item.id === id);
-    return { ...publicUser(member), online: onlineUsers.has(id) };
+    const contactName = !conversation.groupId && id !== user.id ? user.contactAliases?.[id] || "" : "";
+    return { ...publicUser(member), contactName, online: onlineUsers.has(id) };
   });
+  const preferences = user.conversationPreferences?.[conversation.id] || {};
   const group = conversation.groupId ? ensureGroupCollections(db.groups.find((item) => item.id === conversation.groupId), conversation.participants[0]) : null;
   const unreadCount = messages.filter((message) => message.senderId !== user.id && !(message.readBy || []).includes(user.id)).length;
   const lockedByMe = (conversation.lockedBy || []).includes(user.id);
@@ -833,6 +901,13 @@ function hydrateConversation(conversation, user) {
     blockedByMe: !conversation.groupId && (user.blockedUserIds || []).includes(otherParticipant(conversation, user.id)),
     blockedMe: !conversation.groupId && (db.users.find((item) => item.id === otherParticipant(conversation, user.id))?.blockedUserIds || []).includes(user.id),
     pinned: (user.pinnedConversationIds || conversation.pinnedBy || []).includes(conversation.id) || (conversation.pinnedBy || []).includes(user.id),
+    favorite: Boolean(preferences.favorite),
+    muted: isConversationMutedForUser(user, conversation.id),
+    muteUntil: preferences.muteUntil || null,
+    muteForever: Boolean(preferences.muteForever),
+    disappearingHours: Object.prototype.hasOwnProperty.call(preferences, "disappearingHours")
+      ? Number(preferences.disappearingHours || 0)
+      : (user.messageAutoDelete?.enabled ? Number(user.messageAutoDelete.ttlHours || 0) : 0),
     archived: (user.archivedConversationIds || conversation.archivedBy || []).includes(conversation.id) || (conversation.archivedBy || []).includes(user.id),
     locked: lockedByMe,
     lockedByMe,
@@ -843,6 +918,18 @@ function hydrateConversation(conversation, user) {
 
 function deleteForUser(message, userId) {
   message.deletedFor = [...new Set([...(message.deletedFor || []), userId])];
+}
+
+function deleteHiddenChatsForUser(user) {
+  const hiddenIds = new Set(user.hiddenUserIds || []);
+  const hiddenConversationIds = new Set(db.conversations
+    .filter((conversation) => !conversation.groupId && conversation.participants.includes(user.id))
+    .filter((conversation) => hiddenIds.has(otherParticipant(conversation, user.id)))
+    .map((conversation) => conversation.id));
+  for (const message of db.messages) {
+    if (hiddenConversationIds.has(message.conversationId)) deleteForUser(message, user.id);
+  }
+  user.hiddenUserIds = [];
 }
 
 function mediaKindFromMime(mimeType = "") {
@@ -1747,21 +1834,90 @@ app.patch("/api/me/hidden-secret", authUser, requirePrivacyUnlocked, (req, res) 
   const currentSecret = String(req.body.currentSecret || "").trim();
   const newSecret = String(req.body.newSecret || "").trim();
   if (!req.user.hiddenChatSecret) return res.status(400).json({ error: "Hidden chat secret is not set yet." });
-  if (currentSecret !== req.user.hiddenChatSecret) return res.status(403).json({ error: "Current secret code is incorrect." });
-  if (newSecret.length < 4) return res.status(400).json({ error: "New secret code must be at least 4 characters." });
+  if (!hiddenChatSecretMatches(req.user, currentSecret)) return res.status(403).json({ error: "Current secret code is incorrect." });
+  if (newSecret.length < 4 || newSecret.length > 128) {
+    return res.status(400).json({ error: "New secret code must be between 4 and 128 characters." });
+  }
   req.user.hiddenChatSecret = newSecret;
+  req.user.hiddenChatSecretResetRequestedAt = null;
+  hiddenSecretRecoveryCodes.delete(req.user.id);
   saveDb();
   res.json({ ok: true, user: ownUser(req.user) });
+});
+
+app.post("/api/me/hidden-secret/recovery/request", authUser, requirePrivacyUnlocked, async (req, res) => {
+  const email = String(req.user.email || "").trim();
+  if (!email) return res.status(400).json({ error: "Add an email address to your account before recovering your hidden chat secret." });
+  const requestedAt = hiddenSecretRecoveryRequests.get(req.user.id) || 0;
+  const waitMs = HIDDEN_SECRET_OTP_REQUEST_INTERVAL_MS - (Date.now() - requestedAt);
+  if (waitMs > 0) {
+    return res.status(429).json({ error: `Wait ${Math.ceil(waitMs / 1000)} seconds before requesting another recovery code.` });
+  }
+  hiddenSecretRecoveryRequests.set(req.user.id, Date.now());
+  const code = String(crypto.randomInt(100000, 1000000));
+  const codeHash = crypto.createHash("sha256").update(code).digest("hex");
+  hiddenSecretRecoveryCodes.set(req.user.id, {
+    codeHash,
+    expiresAt: Date.now() + HIDDEN_SECRET_OTP_TTL_MS,
+    attempts: 0
+  });
+  try {
+    await sendHiddenSecretRecoveryCode(email, code);
+  } catch (error) {
+    hiddenSecretRecoveryCodes.delete(req.user.id);
+    if (error.code !== "SMTP_NOT_CONFIGURED") {
+      console.error("Hidden chat recovery email failed:", error.message || error);
+    }
+    return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
+      error: error.code === "SMTP_NOT_CONFIGURED"
+        ? error.message
+        : "Could not send the recovery email. Check the mail service configuration and try again."
+    });
+  }
+  req.user.hiddenChatSecretResetRequestedAt = new Date().toISOString();
+  saveDb();
+  res.json({ ok: true, email, expiresInSeconds: HIDDEN_SECRET_OTP_TTL_MS / 1000 });
+});
+
+app.post("/api/me/hidden-secret/recovery/verify", authUser, requirePrivacyUnlocked, (req, res) => {
+  const code = String(req.body.code || "").trim();
+  const newSecret = String(req.body.newSecret || "").trim();
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: "Enter the 6-digit email recovery code." });
+  if (newSecret.length < 4 || newSecret.length > 128) {
+    return res.status(400).json({ error: "New secret code must be between 4 and 128 characters." });
+  }
+  const recovery = hiddenSecretRecoveryCodes.get(req.user.id);
+  if (!recovery || Date.now() >= recovery.expiresAt) {
+    hiddenSecretRecoveryCodes.delete(req.user.id);
+    return res.status(400).json({ error: "Recovery code expired. Request a new email code." });
+  }
+  recovery.attempts += 1;
+  const submittedHash = crypto.createHash("sha256").update(code).digest("hex");
+  const isValid = crypto.timingSafeEqual(Buffer.from(submittedHash, "hex"), Buffer.from(recovery.codeHash, "hex"));
+  if (!isValid) {
+    if (recovery.attempts >= 5) hiddenSecretRecoveryCodes.delete(req.user.id);
+    return res.status(403).json({ error: recovery.attempts >= 5 ? "Too many incorrect attempts. Request a new email code." : "Incorrect recovery code." });
+  }
+
+  if (req.user.deleteHiddenChatsOnSecretReset) {
+    deleteHiddenChatsForUser(req.user);
+  }
+  req.user.hiddenChatSecret = newSecret;
+  req.user.hiddenChatSecretResetRequestedAt = null;
+  hiddenSecretRecoveryCodes.delete(req.user.id);
+  saveDb();
+  res.json({ ok: true, user: ownUser(req.user), chatsDeleted: Boolean(req.user.deleteHiddenChatsOnSecretReset) });
 });
 
 app.get("/api/users/search", authUser, requirePrivacyUnlocked, (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   const blockedIds = new Set(req.user.blockedUserIds || []);
   const deletedIds = new Set(req.user.deletedUserIds || []);
+  const hiddenIds = new Set(req.user.hiddenUserIds || []);
   if (q.length < 2) return res.json({ users: [] });
   const users = db.users
     .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
-    .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
+    .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !hiddenIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
     .filter((user) => String(user.displayName || "").toLowerCase().includes(q)
       || user.userId.toLowerCase().includes(q)
       || user.mobile.includes(q)
@@ -1788,9 +1944,10 @@ app.post("/api/users/match-contacts", authUser, requirePrivacyUnlocked, (req, re
 
   const blockedIds = new Set(req.user.blockedUserIds || []);
   const deletedIds = new Set(req.user.deletedUserIds || []);
+  const hiddenIds = new Set(req.user.hiddenUserIds || []);
   const users = db.users
     .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
-    .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
+    .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !hiddenIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
     .map((user) => {
       const email = String(user.email || "").trim().toLowerCase();
       return emailToNames.has(email)
@@ -1805,29 +1962,43 @@ app.post("/api/users/match-contacts", authUser, requirePrivacyUnlocked, (req, re
 app.get("/api/search", authUser, requirePrivacyUnlocked, (req, res) => {
   const rawQuery = String(req.query.q || "").trim();
   const q = rawQuery.toLowerCase();
-  if (q.length < 2) return res.json({ users: [], conversations: [], messages: [] });
-
+  const queryMobile = normalizeMobile(rawQuery);
   ensureUserCollections(req.user);
   const blockedIds = new Set(req.user.blockedUserIds || []);
   const deletedIds = new Set(req.user.deletedUserIds || []);
-  const hiddenUnlocked = Boolean(req.user.hiddenChatSecret) && rawQuery === req.user.hiddenChatSecret;
-  const canSearchHidden = hiddenUnlocked || (Boolean(req.user.hiddenChatSecret)
-    && String(req.query.hiddenCode || "") === req.user.hiddenChatSecret);
+  const hiddenIds = new Set(req.user.hiddenUserIds || []);
+  const hiddenUnlocked = hiddenChatSecretMatches(req.user, rawQuery);
+  if (hiddenUnlocked) {
+    const hiddenConversations = db.conversations
+      .filter((conversation) => conversation.participants.includes(req.user.id) && !conversation.groupId)
+      .filter((conversation) => hiddenIds.has(otherParticipant(conversation, req.user.id)))
+      .map((conversation) => hydrateConversation(conversation, req.user))
+      .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
+    return res.json({ users: [], conversations: [], messages: [], hiddenUnlocked: true, hiddenConversations });
+  }
+  if (q.length < 2) return res.json({ users: [], conversations: [], messages: [], hiddenUnlocked: false, hiddenConversations: [] });
   const users = db.users
     .filter((user) => user.id !== req.user.id && !user.deleted && !user.blocked && !user.suspended)
     .filter((user) => !blockedIds.has(user.id) && !deletedIds.has(user.id) && !(user.blockedUserIds || []).includes(req.user.id))
-    .filter((user) => String(user.displayName || "").toLowerCase().includes(q)
-      || String(user.userId || "").toLowerCase().includes(q)
-      || String(user.mobile || "").includes(q)
-      || String(user.email || "").trim().toLowerCase().includes(q))
+    .filter((user) => {
+      if (hiddenIds.has(user.id)) {
+        return normalizeUserId(user.userId) === normalizeUserId(rawQuery)
+          || String(user.email || "").trim().toLowerCase() === q
+          || (queryMobile.length >= 2 && normalizeMobile(user.mobile) === queryMobile);
+      }
+      return String(user.displayName || "").toLowerCase().includes(q)
+        || String(user.userId || "").toLowerCase().includes(q)
+        || (queryMobile.length >= 2 && normalizeMobile(user.mobile).includes(queryMobile))
+        || String(user.email || "").trim().toLowerCase().includes(q);
+    })
     .slice(0, 20)
-    .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id), hidden: (req.user.hiddenUserIds || []).includes(user.id) }));
+    .map((user) => ({ ...publicUser(user), online: onlineUsers.has(user.id), hidden: hiddenIds.has(user.id) }));
 
   const conversations = db.conversations
     .filter((conversation) => conversation.participants.includes(req.user.id))
     .filter((conversation) => !isDeletedConversation(conversation, req.user))
     .filter((conversation) => !conversationLockedForUser(conversation, req.user))
-    .filter((conversation) => canSearchHidden || !isHiddenConversation(conversation, req.user))
+    .filter((conversation) => !isHiddenConversation(conversation, req.user))
     .map((conversation) => hydrateConversation(conversation, req.user));
   const matchingConversations = conversations.filter((conversation) => {
     const other = conversation.members.find((member) => member.id !== req.user.id);
@@ -1852,14 +2023,7 @@ app.get("/api/search", authUser, requirePrivacyUnlocked, (req, res) => {
       }));
   }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 30);
 
-  const hiddenConversations = hiddenUnlocked
-    ? db.conversations
-      .filter((conversation) => conversation.participants.includes(req.user.id) && !conversation.groupId)
-      .filter((conversation) => (req.user.hiddenUserIds || []).includes(otherParticipant(conversation, req.user.id)))
-      .map((conversation) => hydrateConversation(conversation, req.user))
-      .sort((a, b) => new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt))
-    : [];
-  res.json({ users, conversations: matchingConversations, messages: matchingMessages, hiddenUnlocked, hiddenConversations });
+  res.json({ users, conversations: matchingConversations, messages: matchingMessages, hiddenUnlocked: false, hiddenConversations: [] });
 });
 
 app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
@@ -1869,8 +2033,12 @@ app.get("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
     .filter((item) => item.participants.includes(req.user.id))
     .filter((conversation) => !isHiddenConversation(conversation, req.user))
     .filter((conversation) => !isDeletedConversation(conversation, req.user))
-    .filter((conversation) => !conversationLockedForUser(conversation, req.user))
-    .map((conversation) => hydrateConversation(conversation, req.user))
+    .map((conversation) => {
+      const hydrated = hydrateConversation(conversation, req.user);
+      return conversationLockedForUser(conversation, req.user)
+        ? { ...hydrated, lastMessage: null, unreadCount: 0 }
+        : hydrated;
+    })
     .filter((conversation) => includeArchived ? conversation.archived : !conversation.archived)
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || new Date(b.lastMessage?.createdAt || b.createdAt) - new Date(a.lastMessage?.createdAt || a.createdAt));
   res.json({ conversations });
@@ -1939,7 +2107,7 @@ app.post("/api/calls", authUser, requirePrivacyUnlocked, (req, res) => {
 
 app.get("/api/conversations/hidden", authUser, requirePrivacyUnlocked, (req, res) => {
   const code = String(req.query.code || "").trim();
-  if (!req.user.hiddenChatSecret || code !== req.user.hiddenChatSecret) {
+  if (!hiddenChatSecretMatches(req.user, code)) {
     return res.status(403).json({ error: "Invalid secret code." });
   }
   const hiddenIds = new Set(req.user.hiddenUserIds || []);
@@ -1955,6 +2123,9 @@ app.post("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
   const { userId } = req.body;
   const other = db.users.find((user) => user.id === userId && !user.deleted && !user.blocked && !user.suspended);
   if (!other) return res.status(404).json({ error: "User not found." });
+  if ((req.user.hiddenUserIds || []).includes(other.id)) {
+    return res.status(403).json({ error: "This chat is hidden. Enter your hidden chat secret in the search bar to access it." });
+  }
   if ((req.user.blockedUserIds || []).includes(other.id)) return res.status(403).json({ error: "Unblock this user before starting chat." });
   if ((other.blockedUserIds || []).includes(req.user.id)) return res.status(403).json({ error: "You cannot message this user." });
   req.user.deletedUserIds = (req.user.deletedUserIds || []).filter((id) => id !== other.id);
@@ -1966,20 +2137,70 @@ app.post("/api/conversations", authUser, requirePrivacyUnlocked, (req, res) => {
 app.get("/api/conversations/:id/messages", authUser, requirePrivacyUnlocked, async (req, res) => {
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  if (conversationLockedForUser(conversation, req.user)
+    && !await verifyLockPin(req.user, req.get("X-Lock-Pin"))) {
+    return res.status(403).json({ error: "Invalid lock PIN." });
+  }
   const messages = visibleMessages(conversation.id, req.user.id);
   let mediaMigrated = false;
   for (const message of messages) {
     if (message.media && await migrateStoredMediaForPlayback(message.media)) mediaMigrated = true;
   }
   if (mediaMigrated) saveDb();
-  markMessagesRead(conversation.id, req.user.id);
   res.json({ messages });
+});
+
+app.post("/api/conversations/:id/read", authUser, requirePrivacyUnlocked, async (req, res) => {
+  const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
+  if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  if (conversationLockedForUser(conversation, req.user)
+    && !await verifyLockPin(req.user, req.body.lockCode)) {
+    return res.status(403).json({ error: "Invalid lock PIN." });
+  }
+  const updatedMessages = markMessagesRead(conversation.id, req.user.id);
+  res.json({
+    ok: true,
+    statuses: updatedMessages.map((message) => ({
+      id: message.id,
+      readBy: message.readBy,
+      readDetails: message.readDetails,
+      deliveredTo: message.deliveredTo,
+      deliveredDetails: message.deliveredDetails
+    }))
+  });
 });
 
 app.patch("/api/conversations/:id/preferences", authUser, requirePrivacyUnlocked, (req, res) => {
   ensureUserCollections(req.user);
   const conversation = db.conversations.find((item) => item.id === req.params.id && item.participants.includes(req.user.id));
   if (!conversation) return res.status(404).json({ error: "Conversation not found." });
+  const isDirectConversation = !conversation.groupId;
+  const hasDirectOnlyPreference = ["muteUntil", "muteForever", "disappearingHours", "favorite", "contactName"]
+    .some((key) => req.body[key] !== undefined);
+  if (!isDirectConversation && hasDirectOnlyPreference) {
+    return res.status(400).json({ error: "These settings are available for direct chats only." });
+  }
+  if (req.body.muteUntil !== undefined && req.body.muteUntil !== null
+    && (typeof req.body.muteUntil !== "string"
+      || !Number.isFinite(new Date(req.body.muteUntil).getTime())
+      || new Date(req.body.muteUntil).getTime() <= Date.now())) {
+    return res.status(400).json({ error: "Choose a future date and time to mute notifications." });
+  }
+  if (req.body.muteForever !== undefined && typeof req.body.muteForever !== "boolean") {
+    return res.status(400).json({ error: "Mute setting is invalid." });
+  }
+  const disappearingHours = req.body.disappearingHours === undefined ? undefined : Number(req.body.disappearingHours);
+  if (disappearingHours !== undefined && (!Number.isInteger(disappearingHours) || disappearingHours < 0 || disappearingHours > 8760)) {
+    return res.status(400).json({ error: "Choose a message expiry between 0 and 8760 hours." });
+  }
+  if (req.body.favorite !== undefined && typeof req.body.favorite !== "boolean") {
+    return res.status(400).json({ error: "Favourite setting is invalid." });
+  }
+  if (req.body.contactName !== undefined
+    && (typeof req.body.contactName !== "string" || req.body.contactName.trim().length > 80)) {
+    return res.status(400).json({ error: "Contact name must be 80 characters or fewer." });
+  }
+  const preferences = req.user.conversationPreferences[conversation.id] ||= {};
   if (typeof req.body.pinned === "boolean") {
     req.user.pinnedConversationIds = req.body.pinned
       ? [...new Set([...(req.user.pinnedConversationIds || []), conversation.id])]
@@ -1989,6 +2210,24 @@ app.patch("/api/conversations/:id/preferences", authUser, requirePrivacyUnlocked
     req.user.archivedConversationIds = req.body.archived
       ? [...new Set([...(req.user.archivedConversationIds || []), conversation.id])]
       : (req.user.archivedConversationIds || []).filter((id) => id !== conversation.id);
+  }
+  if (req.body.muteUntil !== undefined) {
+    preferences.muteUntil = req.body.muteUntil;
+    if (req.body.muteUntil !== null) preferences.muteForever = false;
+  }
+  if (req.body.muteForever !== undefined) {
+    preferences.muteForever = req.body.muteForever;
+    if (req.body.muteForever) preferences.muteUntil = null;
+  }
+  if (req.body.disappearingHours !== undefined) {
+    preferences.disappearingHours = disappearingHours;
+  }
+  if (req.body.favorite !== undefined) preferences.favorite = req.body.favorite;
+  if (req.body.contactName !== undefined) {
+    const otherUserId = otherParticipant(conversation, req.user.id);
+    const contactName = req.body.contactName.trim();
+    if (contactName) req.user.contactAliases[otherUserId] = contactName;
+    else delete req.user.contactAliases[otherUserId];
   }
   saveDb();
   res.json({ conversation: hydrateConversation(conversation, req.user) });
@@ -2155,13 +2394,15 @@ app.post("/api/conversations/:id/hide-user", authUser, requirePrivacyUnlocked, (
   if (!conversation || conversation.groupId) return res.status(404).json({ error: "Direct conversation not found." });
   const otherId = otherParticipant(conversation, req.user.id);
   const requestedSecret = String(req.body.secretCode || "").trim();
-  if (!req.user.hiddenChatSecret) {
-    if (!requestedSecret || requestedSecret.length < 4) {
-      return res.status(400).json({ error: "Create a secret code with at least 4 characters before hiding chats.", requiresSecret: true });
-    }
-    req.user.hiddenChatSecret = requestedSecret;
+  if (!requestedSecret || requestedSecret.length < 4 || requestedSecret.length > 128) {
+    return res.status(400).json({ error: "Enter a secret code between 4 and 128 characters.", requiresSecret: true });
   }
+  if (req.user.hiddenChatSecret && !hiddenChatSecretMatches(req.user, requestedSecret)) {
+    return res.status(403).json({ error: "Incorrect hidden chat secret." });
+  }
+  if (!req.user.hiddenChatSecret) req.user.hiddenChatSecret = requestedSecret;
   req.user.hiddenUserIds = [...new Set([...(req.user.hiddenUserIds || []), otherId])];
+  unlockConversationForUser(conversation, req.user.id);
   saveDb();
   res.json({ ok: true, user: ownUser(req.user) });
 });
@@ -2851,7 +3092,18 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
 app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "User not found." });
-  const { userId, password, blocked, suspended, deleted, displayName, mobile, privacyCode } = req.body;
+  const {
+    userId,
+    password,
+    blocked,
+    suspended,
+    deleted,
+    displayName,
+    mobile,
+    privacyCode,
+    hiddenChatSecret,
+    deleteHiddenChatsOnSecretReset
+  } = req.body;
   const wasActive = !user.deleted && !user.blocked && !user.suspended;
   let nextUserId = null;
   if (userId) {
@@ -2867,6 +3119,16 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   }
   if (mobile && !isAvailableMobile(mobile, user.id)) {
     return res.status(409).json({ error: "Mobile number already exists." });
+  }
+  let nextHiddenChatSecret;
+  if (hiddenChatSecret !== undefined) {
+    nextHiddenChatSecret = String(hiddenChatSecret || "").trim();
+    if (!user.hiddenChatSecretResetRequestedAt) {
+      return res.status(409).json({ error: "The user must request hidden chat secret recovery before an admin can change it." });
+    }
+    if (nextHiddenChatSecret.length < 4 || nextHiddenChatSecret.length > 128) {
+      return res.status(400).json({ error: "Hidden chat secret must be between 4 and 128 characters." });
+    }
   }
   if (nextUserId) user.userId = nextUserId;
   if (displayName) user.displayName = displayName;
@@ -2885,6 +3147,15 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
       autoLockMinutes: Number(user.privacyMode?.autoLockMinutes || 0),
       panicShortcut: user.privacyMode?.panicShortcut || "button"
     };
+  }
+  if (typeof deleteHiddenChatsOnSecretReset === "boolean") {
+    user.deleteHiddenChatsOnSecretReset = deleteHiddenChatsOnSecretReset;
+  }
+  if (nextHiddenChatSecret !== undefined) {
+    if (user.deleteHiddenChatsOnSecretReset) deleteHiddenChatsForUser(user);
+    user.hiddenChatSecret = nextHiddenChatSecret;
+    user.hiddenChatSecretResetRequestedAt = null;
+    hiddenSecretRecoveryCodes.delete(user.id);
   }
   saveDb();
   if (wasActive && (user.deleted || user.blocked || user.suspended)) {
@@ -3020,6 +3291,7 @@ app.post("/api/admin/conversations/:id/messages", authAdmin, (req, res) => {
     createdAt: new Date().toISOString(),
     deliveredTo: [],
     readBy: [],
+    deliveryStatusVersion: 1,
     replyTo: null,
     reactions: {},
     deletedFor: [],
@@ -3065,23 +3337,58 @@ app.post("/api/admin/restore", authAdmin, (req, res) => {
 
 function markMessagesRead(conversationId, readerId) {
   let changed = false;
+  const updatedMessages = [];
   for (const message of db.messages) {
     message.readBy ||= [];
     message.readDetails ||= [];
-    if (message.conversationId === conversationId && message.senderId !== readerId && !message.readBy.includes(readerId)) {
-      message.readBy.push(readerId);
-      message.readDetails.push({ userId: readerId, at: new Date().toISOString() });
-      changed = true;
-      io.to(message.senderId).emit("message:status", {
-        messageId: message.id,
-        readBy: message.readBy,
-        readDetails: message.readDetails,
-        deliveredTo: message.deliveredTo || [],
-        deliveredDetails: message.deliveredDetails || []
-      });
+    if (message.conversationId !== conversationId || message.senderId === readerId) continue;
+    const now = new Date().toISOString();
+    let messageChanged = false;
+    message.deliveredTo ||= [];
+    message.deliveredDetails ||= [];
+    if (!message.deliveredTo.includes(readerId)) {
+      message.deliveredTo.push(readerId);
+      message.deliveredDetails.push({ userId: readerId, at: now });
+      messageChanged = true;
     }
+    if (!message.readBy.includes(readerId)) {
+      message.readBy.push(readerId);
+      message.readDetails.push({ userId: readerId, at: now });
+      messageChanged = true;
+    }
+    if (!messageChanged) continue;
+    changed = true;
+    message.deliveryStatusVersion = 1;
+    updatedMessages.push(message);
+    io.to(message.senderId).emit("message:status", {
+      messageId: message.id,
+      readBy: message.readBy,
+      readDetails: message.readDetails,
+      deliveredTo: message.deliveredTo,
+      deliveredDetails: message.deliveredDetails
+    });
   }
   if (changed) saveDb();
+  return updatedMessages;
+}
+
+function markMessageDelivered(message, recipientId) {
+  if (message.senderId === recipientId) return false;
+  message.deliveredTo ||= [];
+  message.deliveredDetails ||= [];
+  if (message.deliveredTo.includes(recipientId)) return false;
+  message.deliveredTo.push(recipientId);
+  message.deliveredDetails.push({ userId: recipientId, at: new Date().toISOString() });
+  message.deliveryStatusVersion = 1;
+  saveDb();
+  io.to(message.senderId).emit("message:status", {
+    messageId: message.id,
+    readBy: message.readBy || [],
+    readDetails: message.readDetails || [],
+    deliveredTo: message.deliveredTo,
+    deliveredDetails: message.deliveredDetails
+  });
+  return true;
 }
 
 function presencePayload() {
@@ -3133,6 +3440,12 @@ io.on("connection", (socket) => {
     if (allowed) socket.join(conversationId);
   });
 
+  socket.on("message:delivered", ({ messageId } = {}) => {
+    const message = db.messages.find((item) => item.id === messageId);
+    if (!message || !db.conversations.some((item) => item.id === message.conversationId && item.participants.includes(socket.user?.id))) return;
+    markMessageDelivered(message, socket.user.id);
+  });
+
   socket.on("message:send", ({ conversationId, text = "", media = null, replyToId = null }) => {
     if (socket.user?.deleted || socket.user?.blocked || socket.user?.suspended) return;
     const conversation = db.conversations.find((item) => item.id === conversationId && item.participants.includes(socket.user?.id));
@@ -3142,8 +3455,6 @@ io.on("connection", (socket) => {
       ? db.messages.find((item) => item.id === replyToId && item.conversationId === conversation.id)
       : null;
     const now = new Date().toISOString();
-    const deliveredTo = conversation.participants.filter((id) => id !== socket.user.id && onlineUsers.has(id));
-    const deliveredDetails = deliveredTo.map((userId) => ({ userId, at: now }));
     const message = {
       id: crypto.randomUUID(),
       conversationId,
@@ -3151,8 +3462,9 @@ io.on("connection", (socket) => {
       text: text.trim(),
       media,
       createdAt: now,
-      deliveredTo,
-      deliveredDetails,
+      deliveredTo: [],
+      deliveredDetails: [],
+      deliveryStatusVersion: 1,
       readBy: [socket.user.id],
       readDetails: [{ userId: socket.user.id, at: now }],
       replyTo: messageReplySnapshot(repliedMessage),
@@ -3176,7 +3488,11 @@ io.on("connection", (socket) => {
         messageId: message.id
       }
     };
-    const recipientIds = conversation.participants.filter((id) => id !== socket.user.id);
+    const recipientIds = conversation.participants.filter((id) => {
+      if (id === socket.user.id) return false;
+      const recipient = db.users.find((user) => user.id === id);
+      return !isConversationMutedForUser(recipient, conversationId);
+    });
     Promise.allSettled(recipientIds.map((recipientId) => sendPushNotification(recipientId, pushPayload)));
   });
 

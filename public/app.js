@@ -13,7 +13,9 @@ const state = {
   mainTab: "chats",
   conversationView: "active",
   activeConversation: null,
+  contactDetailsConversationId: null,
   messages: [],
+  messageExpirationTimer: null,
   starredMessages: [],
   statuses: [],
   statusSequenceIds: [],
@@ -52,13 +54,11 @@ const state = {
   pendingShare: null,
   shareRecipients: new Map(),
   hiddenConversations: [],
-  unlockedHiddenCode: "",
   searchRequestId: 0,
   searchTimer: null,
   searchConversationMap: new Map(),
   newChatContacts: [],
   newChatSearchRequestId: 0,
-  lockedConversations: [],
   lockedChatCode: "",
   calculatorExpression: "",
   calculatorJustEvaluated: false,
@@ -79,6 +79,10 @@ const state = {
   reactionLongPressTimer: null,
   suppressNextMessageClick: false,
   userActionLongPressTimer: null,
+  userActionConversation: null,
+  userActionPressPoint: null,
+  suppressNextConversationClick: false,
+  userActionClickResetTimer: null,
   updateNotify: null,
   updateBlocked: false,
   call: {
@@ -106,9 +110,190 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+let activeCustomSelect = null;
+let customSelectMenu = null;
+let appInputDialogResolver = null;
 const APP_VERSION_STORAGE_KEY = "calculatorInstalledVersion";
 const THEME_PREFERENCE_KEY = "metagramThemePreference";
 const themeMediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+
+function selectedOptionLabel(select) {
+  const option = select.selectedOptions[0];
+  return option?.label || option?.textContent?.trim() || "";
+}
+
+function refreshCustomSelect(select) {
+  const control = select._customSelectControl;
+  if (!control) return;
+  const trigger = control.querySelector(".custom-select-trigger");
+  trigger.textContent = "";
+  const label = document.createElement("span");
+  label.className = "custom-select-value";
+  label.textContent = selectedOptionLabel(select);
+  const chevron = document.createElement("span");
+  chevron.className = "custom-select-chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = "⌄";
+  trigger.append(label, chevron);
+  trigger.disabled = select.disabled || !select.options.length;
+  control.classList.toggle("is-disabled", select.disabled);
+}
+
+function closeCustomSelect(restoreFocus = true) {
+  if (!customSelectMenu) return;
+  customSelectMenu.remove();
+  customSelectMenu = null;
+  if (activeCustomSelect?._customSelectControl) {
+    const trigger = activeCustomSelect._customSelectControl.querySelector(".custom-select-trigger");
+    trigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger.focus({ preventScroll: true });
+  }
+  activeCustomSelect = null;
+}
+
+function placeCustomSelectMenu(select, trigger) {
+  const rect = trigger.getBoundingClientRect();
+  const gap = 6;
+  const edge = 12;
+  const maxHeight = Math.min(320, window.innerHeight - edge * 2);
+  const below = window.innerHeight - rect.bottom - edge - gap;
+  const above = rect.top - edge - gap;
+  const placeAbove = below < Math.min(220, maxHeight) && above > below;
+  const availableHeight = Math.max(100, Math.min(maxHeight, placeAbove ? above : below));
+  const width = Math.min(Math.max(rect.width, 190), window.innerWidth - edge * 2);
+  const left = Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge));
+  const optionsHeight = customSelectMenu.scrollHeight;
+  const height = Math.min(optionsHeight, availableHeight);
+  const top = placeAbove
+    ? Math.max(edge, rect.top - gap - height)
+    : Math.min(window.innerHeight - edge - height, rect.bottom + gap);
+  customSelectMenu.style.left = `${left}px`;
+  customSelectMenu.style.top = `${top}px`;
+  customSelectMenu.style.width = `${width}px`;
+  customSelectMenu.style.maxHeight = `${availableHeight}px`;
+  customSelectMenu.style.setProperty("--custom-select-max-height", `${availableHeight}px`);
+  customSelectMenu.dataset.owner = select.id;
+}
+
+function openCustomSelect(select, focusSelected = false) {
+  if (select.disabled || !select.options.length) return;
+  if (activeCustomSelect === select) {
+    closeCustomSelect();
+    return;
+  }
+  closeCustomSelect(false);
+  refreshCustomSelect(select);
+  activeCustomSelect = select;
+  customSelectMenu = document.createElement("div");
+  customSelectMenu.className = "custom-select-menu";
+  customSelectMenu.setAttribute("role", "listbox");
+  customSelectMenu.setAttribute("aria-label", select.getAttribute("aria-label") || select.labels?.[0]?.textContent?.trim() || "Choose an option");
+  customSelectMenu.id = `${select.id || "select"}-options`;
+  for (const [index, option] of Array.from(select.options).entries()) {
+    const item = document.createElement("button");
+    item.className = "custom-select-option";
+    item.type = "button";
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", String(option.selected));
+    item.disabled = option.disabled;
+    item.textContent = option.label || option.textContent.trim();
+    item.dataset.optionIndex = String(index);
+    item.addEventListener("click", () => {
+      if (option.disabled) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event("input", { bubbles: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      refreshCustomSelect(select);
+      closeCustomSelect();
+    });
+    customSelectMenu.append(item);
+  }
+  customSelectMenu.addEventListener("keydown", (event) => {
+    const options = [...customSelectMenu.querySelectorAll(".custom-select-option:not(:disabled)")];
+    const currentIndex = options.indexOf(document.activeElement);
+    let nextIndex = currentIndex;
+    if (event.key === "ArrowDown") nextIndex = Math.min(options.length - 1, currentIndex + 1);
+    else if (event.key === "ArrowUp") nextIndex = Math.max(0, currentIndex < 0 ? 0 : currentIndex - 1);
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = options.length - 1;
+    else if (event.key === "Escape") {
+      event.preventDefault();
+      closeCustomSelect();
+      return;
+    } else if (event.key === "Tab") {
+      closeCustomSelect(false);
+      return;
+    } else return;
+    event.preventDefault();
+    options[nextIndex]?.focus();
+    options[nextIndex]?.scrollIntoView({ block: "nearest" });
+  });
+  document.body.append(customSelectMenu);
+  const trigger = select._customSelectControl.querySelector(".custom-select-trigger");
+  trigger.setAttribute("aria-expanded", "true");
+  trigger.setAttribute("aria-controls", customSelectMenu.id);
+  placeCustomSelectMenu(select, trigger);
+  if (focusSelected) {
+    const selected = customSelectMenu.querySelector('[aria-selected="true"]:not(:disabled)')
+      || customSelectMenu.querySelector(".custom-select-option:not(:disabled)");
+    selected?.focus();
+    selected?.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function enhanceNativeSelects() {
+  document.querySelectorAll("select").forEach((select, index) => {
+    if (select._customSelectControl) return;
+    const control = document.createElement("div");
+    control.className = "custom-select-control";
+    if (select.classList.contains("hidden")) control.classList.add("hidden");
+    control.dataset.selectId = select.id || `custom-select-${index}`;
+    const trigger = document.createElement("button");
+    trigger.className = "custom-select-trigger";
+    trigger.type = "button";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-label", select.getAttribute("aria-label") || select.labels?.[0]?.textContent?.trim() || "Choose an option");
+    trigger.addEventListener("click", () => openCustomSelect(select));
+    trigger.addEventListener("keydown", (event) => {
+      if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        openCustomSelect(select, true);
+      }
+    });
+    select.classList.add("native-select-source");
+    select.setAttribute("aria-hidden", "true");
+    select.tabIndex = -1;
+    select._customSelectControl = control;
+    select.insertAdjacentElement("afterend", control);
+    control.append(trigger);
+    select.labels?.forEach((label) => {
+      if (label.htmlFor === select.id) label.htmlFor = `${control.dataset.selectId}-trigger`;
+    });
+    trigger.id = `${control.dataset.selectId}-trigger`;
+    select.addEventListener("change", () => refreshCustomSelect(select));
+    new MutationObserver(() => {
+      control.classList.toggle("hidden", select.classList.contains("hidden"));
+      refreshCustomSelect(select);
+    }).observe(select, { attributes: true, attributeFilter: ["class", "disabled"] });
+    refreshCustomSelect(select);
+  });
+}
+
+document.addEventListener("click", (event) => {
+  if (!activeCustomSelect || event.target.closest(".custom-select-menu")
+    || event.target.closest(".custom-select-control")) return;
+  closeCustomSelect(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activeCustomSelect) closeCustomSelect();
+});
+document.addEventListener("scroll", (event) => {
+  if (activeCustomSelect && event.target !== customSelectMenu) closeCustomSelect(false);
+}, true);
+window.addEventListener("resize", () => {
+  if (activeCustomSelect) closeCustomSelect(false);
+});
 
 function applyThemePreference(preference) {
   const resolvedTheme = preference === "system"
@@ -255,6 +440,7 @@ function ensureTopbarControlsVisible() {
         <button id="topbarMenuBtn" class="icon-button" type="button" title="More options">&#8942;</button>
         <div id="topbarActionMenu" class="topbar-action-menu hidden" role="menu" aria-label="More options">
           <button id="profileBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"></circle><path d="M5 20c.6-3.4 3.2-5.5 7-5.5s6.4 2.1 7 5.5"></path></svg></span> Profile</button>
+          <button id="forgotHiddenSecretBtn" type="button" role="menuitem">Forgot hidden chat code?</button>
           <button id="sidebarInstallBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5"></path><path d="M5 17v3h14v-3"></path></svg></span> Install app</button>
           <button id="shareAppBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"></circle><circle cx="6" cy="12" r="2.5"></circle><circle cx="18" cy="19" r="2.5"></circle><path d="m8.3 10.8 7.4-4.5m-7.4 6.9 7.4 4.5"></path></svg></span> Share app</button>
           <button id="logoutBtn" type="button" role="menuitem"><span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 5H5v14h5"></path><path d="M13 8l4 4-4 4m4-4H9"></path></svg></span> Logout</button>
@@ -262,7 +448,7 @@ function ensureTopbarControlsVisible() {
       </div>
     `);
   }
-  ["panicHideBtn", "topbarMenuBtn", "profileBtn", "sidebarInstallBtn", "shareAppBtn", "logoutBtn"].forEach((id) => {
+  ["panicHideBtn", "topbarMenuBtn", "profileBtn", "forgotHiddenSecretBtn", "sidebarInstallBtn", "shareAppBtn", "logoutBtn"].forEach((id) => {
     const button = $(id);
     if (!button) return;
     button.classList.remove("hidden");
@@ -529,6 +715,9 @@ function connectSocket() {
     renderHeader();
   });
   state.socket.on("message:new", (message) => {
+    if (message.senderId !== state.user.id) {
+      state.socket.emit("message:delivered", { messageId: message.id });
+    }
     if (message.conversationId === state.activeConversation?.id) {
       loadMessages(state.activeConversation.id, message.senderId !== state.user.id);
     }
@@ -863,7 +1052,14 @@ async function shareApp() {
     alert("App link copied. Ab ise kisi bhi user ko bhej sakte hain.");
     return;
   }
-  prompt("App link copy karein", appUrl);
+  await showAppInputDialog({
+    title: "Copy app link",
+    message: "Copy this link to share the app.",
+    label: "App link",
+    initialValue: appUrl,
+    submitLabel: "Done",
+    showCancel: false
+  });
 }
 
 function closeTopbarMenu() {
@@ -1255,14 +1451,118 @@ async function handleCalculatorEquals() {
   clearCalculatorResetTimer();
 }
 
+function showAppInputDialog({
+  title,
+  message = "",
+  label = "Enter value",
+  initialValue = "",
+  inputType = "text",
+  submitLabel = "Continue",
+  cancelLabel = "Cancel",
+  showCancel = true,
+  minLength = 0,
+  errorMessage = ""
+}) {
+  if (appInputDialogResolver) return Promise.resolve(null);
+  const dialog = $("appInputDialog");
+  const input = $("appInputDialogValue");
+  $("appInputDialogTitle").textContent = title;
+  $("appInputDialogMessage").textContent = message;
+  $("appInputDialogMessage").classList.toggle("hidden", !message);
+  $("appInputDialogLabel").textContent = label;
+  $("appInputDialogLabel").classList.toggle("hidden", inputType === "hidden" || !label);
+  $("appInputDialogCancel").classList.toggle("hidden", !showCancel);
+  $("appInputDialogSubmit").textContent = submitLabel;
+  $("appInputDialogCancel").textContent = cancelLabel;
+  $("appInputDialogError").textContent = "";
+  input.type = inputType;
+  input.value = initialValue;
+  input.autocomplete = inputType === "password" ? "current-password" : "off";
+  dialog.classList.remove("hidden");
+  if (inputType === "hidden") $("appInputDialogSubmit").focus();
+  else {
+    input.focus();
+    input.select();
+  }
+
+  return new Promise((resolve) => {
+    appInputDialogResolver = resolve;
+    const finish = (value) => {
+      if (!appInputDialogResolver) return;
+      const currentResolver = appInputDialogResolver;
+      appInputDialogResolver = null;
+      dialog.classList.add("hidden");
+      $("appInputDialogForm").removeEventListener("submit", onSubmit);
+      $("appInputDialogCancel").removeEventListener("click", onCancel);
+      $("appInputDialogClose").removeEventListener("click", onCancel);
+      dialog.removeEventListener("click", onOverlayClick);
+      document.removeEventListener("keydown", onKeyDown);
+      currentResolver(value);
+    };
+    const onSubmit = (event) => {
+      event.preventDefault();
+      const value = input.value.trim();
+      if (value.length < minLength) {
+        $("appInputDialogError").textContent = errorMessage || `Enter at least ${minLength} characters.`;
+        input.focus();
+        return;
+      }
+      finish(value);
+    };
+    const onCancel = () => finish(null);
+    const onOverlayClick = (event) => {
+      if (event.target === dialog) onCancel();
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape" && !dialog.classList.contains("hidden")) {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+    $("appInputDialogForm").addEventListener("submit", onSubmit);
+    $("appInputDialogCancel").addEventListener("click", onCancel);
+    $("appInputDialogClose").addEventListener("click", onCancel);
+    dialog.addEventListener("click", onOverlayClick);
+    document.addEventListener("keydown", onKeyDown);
+  });
+}
+
+function showAppMessage(title, message, buttonLabel = "Done") {
+  return showAppInputDialog({
+    title,
+    message,
+    label: "",
+    submitLabel: buttonLabel,
+    cancelLabel: buttonLabel,
+    showCancel: false,
+    inputType: "hidden"
+  });
+}
+
+async function showAppConfirm(message, title = "Please confirm") {
+  const result = await showAppInputDialog({
+    title,
+    message,
+    label: "",
+    submitLabel: "Continue",
+    cancelLabel: "Cancel",
+    inputType: "hidden"
+  });
+  return result !== null;
+}
+
 async function promptForLockPin(action) {
   if (!state.user) return null;
   if (!state.user.hasLockedChatPin) {
-    const newPin = prompt("Set a lock PIN for locked chats (at least 4 characters):");
-    if (!newPin?.trim() || newPin.trim().length < 4) {
-      alert("Lock PIN must be at least 4 characters.");
-      return null;
-    }
+    const newPin = await showAppInputDialog({
+      title: "Set chat lock PIN",
+      message: "Create a PIN with at least 4 characters. You will need it to open locked chats.",
+      label: "New lock PIN",
+      inputType: "password",
+      minLength: 4,
+      errorMessage: "Lock PIN must be at least 4 characters."
+    });
+    if (!newPin) return null;
     try {
       await api("/api/lock-pin", {
         method: "POST",
@@ -1272,50 +1572,23 @@ async function promptForLockPin(action) {
       cacheCurrentUser();
       return newPin.trim();
     } catch (error) {
-      alert(error.message);
+      await showAppMessage("Could not set PIN", error.message);
       return null;
     }
   }
-  const promptText = action === "view"
-    ? "Enter your lock PIN to view locked chats:"
-    : `Enter your lock PIN to ${action} this chat:`;
-  const code = prompt(promptText);
-  if (!code?.trim() || code.trim().length < 4) {
-    alert("Lock PIN must be at least 4 characters.");
-    return null;
-  }
-  return code.trim();
-}
-
-async function loadLockedConversations() {
-  let code = state.lockedChatCode;
-  if (!code) {
-    code = await promptForLockPin("view");
-    if (!code) {
-      state.conversationView = "active";
-      await loadConversations();
-      return;
-    }
-  }
-  try {
-    const { conversations } = await api(`/api/conversations/locked?code=${encodeURIComponent(code)}`);
-    state.conversations = conversations;
-    state.lockedChatCode = code;
-    renderConversations();
-  } catch (error) {
-    if (error.status === 403) alert("Invalid lock PIN.");
-    else throw error;
-    state.conversationView = "active";
-    await loadConversations();
-  }
+  const title = action === "view" ? "Unlock chat" : `${action === "unlock" ? "Unlock" : "Lock"} chat`;
+  return showAppInputDialog({
+    title,
+    message: action === "view" ? "Enter the PIN you set when locking this chat." : `Enter your lock PIN to ${action} this chat.`,
+    label: "Lock PIN",
+    inputType: "password",
+    minLength: 4,
+    errorMessage: "Lock PIN must be at least 4 characters."
+  });
 }
 
 async function loadConversations() {
   try {
-    if (state.conversationView === "locked") {
-      await loadLockedConversations();
-      return;
-    }
     const archived = state.conversationView === "archived" ? "?archived=1" : "";
     const { conversations } = await api(`/api/conversations${archived}`);
     state.conversations = conversations;
@@ -1328,23 +1601,94 @@ async function loadConversations() {
   }
 }
 
-async function toggleConversationLock() {
-  if (!state.activeConversation) return;
-  const action = state.activeConversation.locked ? "unlock" : "lock";
+async function toggleConversationLock(conversation = state.activeConversation) {
+  if (!conversation || conversation.groupId) return;
+  const action = conversation.locked ? "unlock" : "lock";
   const code = await promptForLockPin(action);
   if (!code) return;
-  const url = `/api/conversations/${encodeURIComponent(state.activeConversation.id)}/${action}`;
+  const url = `/api/conversations/${encodeURIComponent(conversation.id)}/${action}`;
   const result = await api(url, { method: "POST", body: JSON.stringify({ code }) });
-  state.activeConversation = result.conversation;
-  if (state.conversationView === "locked") {
-    await loadLockedConversations();
-  } else {
-    await loadConversations();
+  state.lockedChatCode = action === "lock" ? code : "";
+  if (state.activeConversation?.id === conversation.id) state.activeConversation = result.conversation;
+  const conversationIndex = state.conversations.findIndex((item) => item.id === conversation.id);
+  if (conversationIndex >= 0) state.conversations[conversationIndex] = result.conversation;
+  await loadConversations();
+  if (state.activeConversation?.id === conversation.id) {
+    renderHeader();
+    await loadMessages(conversation.id);
   }
-  renderHeader();
-  if (state.activeConversation) {
-    await loadMessages(state.activeConversation.id);
+}
+
+async function toggleConversationHidden(conversation) {
+  if (!conversation || conversation.groupId) return;
+  const action = conversation.hidden ? "unhide-user" : "hide-user";
+  const body = {};
+  if (action === "hide-user") {
+    const secretCode = await requestHiddenChatSecret(Boolean(state.user.hasHiddenChatSecret));
+    if (!secretCode) return;
+    body.secretCode = secretCode;
   }
+  const { user } = await api(`/api/conversations/${encodeURIComponent(conversation.id)}/${action}`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+  if (action === "hide-user" && !state.user.hasHiddenChatSecret) {
+    state.user.hasHiddenChatSecret = true;
+    await showAppMessage("Hidden chat secret saved", `Your secret code is ${body.secretCode}. Enter it in the search bar to access hidden chats.`);
+  }
+  if (user) state.user = user;
+  conversation.hidden = !conversation.hidden;
+  if (action === "hide-user") conversation.locked = false;
+  const isActive = state.activeConversation?.id === conversation.id;
+  if (isActive && conversation.hidden) {
+    state.lockedChatCode = "";
+    state.activeConversation = null;
+    state.messages = [];
+    renderHeader();
+    renderMessages();
+    $("chatView").classList.remove("conversation-open");
+  }
+  await loadConversations();
+}
+
+async function toggleConversationBlock(conversation) {
+  if (!conversation || conversation.groupId) return;
+  const action = conversation.blockedByMe ? "unblock-user" : "block-user";
+  if (!conversation.blockedByMe && !await showAppConfirm("They will not be able to message you.", "Block user")) return;
+  const { user, conversation: updatedConversation } = await api(
+    `/api/conversations/${encodeURIComponent(conversation.id)}/${action}`,
+    { method: "POST" }
+  );
+  if (user) state.user = user;
+  if (updatedConversation) Object.assign(conversation, updatedConversation);
+  if (state.activeConversation?.id === conversation.id && updatedConversation) {
+    state.activeConversation = updatedConversation;
+    renderHeader();
+  }
+  await loadConversations();
+}
+
+async function deleteConversationUser(conversation) {
+  if (!conversation || conversation.groupId) return;
+  if (!await showAppConfirm("Delete this user from your account? This will not remove them from the admin panel.", "Delete user")) return;
+  const { user } = await api(`/api/conversations/${encodeURIComponent(conversation.id)}/delete-user`, { method: "POST" });
+  if (user) state.user = user;
+  if (state.activeConversation?.id === conversation.id) {
+    state.activeConversation = null;
+    state.messages = [];
+    renderHeader();
+    renderMessages();
+    $("chatView").classList.remove("conversation-open");
+  }
+  await loadConversations();
+}
+
+function runUserAction(action) {
+  const conversation = state.userActionConversation;
+  closeUserActionMenu();
+  Promise.resolve(action(conversation)).catch((error) => {
+    showAppMessage("Action failed", error.message);
+  });
 }
 
 async function loadStarredMessages() {
@@ -1508,6 +1852,11 @@ function renderSectionPanel() {
 
 async function setMainTab(tab) {
   if (!["chats", "updates", "communities", "calls"].includes(tab)) return;
+  if (tab !== "chats" && state.activeConversation?.locked) {
+    state.lockedChatCode = "";
+    state.messages = [];
+    renderMessages();
+  }
   state.mainTab = tab;
   if (tab === "chats") state.conversationView = "active";
   $("chatView").classList.toggle("section-mode", tab !== "chats");
@@ -1567,19 +1916,91 @@ async function loadPendingShare() {
 }
 
 async function loadMessages(conversationId, preserveScroll = false) {
+  let loadedFromServer = false;
   try {
-    const { messages } = await api(`/api/conversations/${conversationId}/messages`);
+    const lockCode = state.activeConversation?.id === conversationId && state.activeConversation.locked
+      ? state.lockedChatCode
+      : "";
+    const { messages } = await api(`/api/conversations/${conversationId}/messages`, {
+      headers: lockCode ? { "X-Lock-Pin": lockCode } : {}
+    });
     state.messages = messages;
     cacheMessages(conversationId);
+    loadedFromServer = true;
   } catch (error) {
     if (!error.offline && error.status !== 503) throw error;
     state.messages = loadCachedMessages(conversationId);
   }
   renderMessages({ preserveScroll });
+  const canMarkRead = loadedFromServer
+    && state.activeConversation?.id === conversationId
+    && state.mainTab === "chats"
+    && document.visibilityState === "visible"
+    && !$("chatView").classList.contains("hidden")
+    && $("chatView").classList.contains("conversation-open")
+    && (!privacyEnabled() || Boolean(state.privacyToken));
+  const hasUnreadMessages = state.messages.some((message) => (
+    message.senderId !== state.user.id && !(message.readBy || []).includes(state.user.id)
+  ));
+  if (canMarkRead && hasUnreadMessages) {
+    try {
+      const lockCode = state.activeConversation?.id === conversationId && state.activeConversation.locked
+        ? state.lockedChatCode
+        : "";
+      const { statuses = [] } = await api(`/api/conversations/${encodeURIComponent(conversationId)}/read`, {
+        method: "POST",
+        body: JSON.stringify({ lockCode })
+      });
+      const statusById = new Map(statuses.map((status) => [status.id, status]));
+      state.messages = state.messages.map((message) => (
+        statusById.has(message.id) ? { ...message, ...statusById.get(message.id) } : message
+      ));
+      cacheMessages(conversationId);
+      renderMessages({ preserveScroll: true });
+      await loadConversations();
+    } catch (error) {
+      console.error("Could not mark conversation messages as read:", error);
+    }
+  }
+  scheduleMessageExpiry(conversationId);
+}
+
+function scheduleMessageExpiry(conversationId) {
+  const conversation = state.activeConversation;
+  if (!conversation || conversation.id !== conversationId) return;
+  clearTimeout(state.messageExpirationTimer);
+  const ttlHours = Number(conversation?.id === conversationId ? conversation.disappearingHours : 0);
+  if (!Number.isFinite(ttlHours) || ttlHours <= 0) return;
+  const ttlMs = ttlHours * 60 * 60 * 1000;
+  const now = Date.now();
+  const unexpiredMessages = state.messages.filter((message) => {
+    const createdAt = new Date(message.createdAt).getTime();
+    return !Number.isFinite(createdAt) || createdAt + ttlMs > now;
+  });
+  if (unexpiredMessages.length !== state.messages.length) {
+    state.messages = unexpiredMessages;
+    cacheMessages(conversationId);
+    renderMessages({ preserveScroll: true });
+  }
+  const nextExpiry = state.messages.reduce((earliest, message) => {
+    const expiresAt = new Date(message.createdAt).getTime() + ttlMs;
+    return Number.isFinite(expiresAt) && expiresAt < earliest ? expiresAt : earliest;
+  }, Infinity);
+  if (!Number.isFinite(nextExpiry)) return;
+  state.messageExpirationTimer = setTimeout(() => {
+    if (state.activeConversation?.id !== conversationId) return;
+    loadMessages(conversationId).catch((error) => {
+      console.error("Could not refresh expired chat messages:", error);
+    });
+  }, Math.max(100, Math.min(2147483647, nextExpiry - Date.now() + 100)));
 }
 
 function getOtherMember(conversation) {
   return conversation.members?.find((member) => member.id !== state.user.id) || conversation.members?.[0];
+}
+
+function contactDisplayName(user) {
+  return user?.contactName || user?.displayName || user?.userId || "User";
 }
 
 function avatarMarkup(user, fallback = "User") {
@@ -1627,7 +2048,6 @@ function formatLastSeen(value) {
 
 function renderConversations() {
   $("activeChatsBtn")?.classList.toggle("active", state.conversationView === "active");
-  $("lockedChatsBtn")?.classList.toggle("active", state.conversationView === "locked");
   $("archivedChatsBtn")?.classList.toggle("active", state.conversationView === "archived");
   $("statusViewBtn")?.classList.toggle("active", state.conversationView === "status");
   $("starredViewBtn")?.classList.toggle("active", state.conversationView === "starred");
@@ -1660,6 +2080,7 @@ function renderConversations() {
     return;
   }
   const sortedConversations = state.conversations.slice().sort((a, b) => {
+    if (Boolean(a.favorite) !== Boolean(b.favorite)) return Number(Boolean(b.favorite)) - Number(Boolean(a.favorite));
     if (Boolean(a.pinned) !== Boolean(b.pinned)) return Number(Boolean(b.pinned)) - Number(Boolean(a.pinned));
     const timeA = new Date(a.lastMessage?.createdAt || a.createdAt || 0).getTime();
     const timeB = new Date(b.lastMessage?.createdAt || b.createdAt || 0).getTime();
@@ -1667,7 +2088,7 @@ function renderConversations() {
   });
 
   $("conversationList").innerHTML = sortedConversations.map((conversation) => {
-    const title = conversation.group?.name || getOtherMember(conversation)?.displayName || "Chat";
+    const title = conversation.group?.name || contactDisplayName(getOtherMember(conversation)) || "Chat";
     const other = getOtherMember(conversation);
     const status = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
     const profileStatus = !conversation.group ? statusLine(other) : "";
@@ -1676,7 +2097,7 @@ function renderConversations() {
       <button class="conversation ${state.activeConversation?.id === conversation.id ? "active" : ""}" data-id="${conversation.id}" type="button">
         <span class="avatar">${avatarMarkup(other, title)}</span>
         <span class="conversation-main">
-          <strong>${conversation.pinned ? "Pinned " : ""}${escapeHtml(title)}</strong>
+          <strong>${conversation.pinned ? "Pinned " : ""}${escapeHtml(title)}${conversation.favorite ? `<span class="conversation-favorite" aria-label="Favourite"> ★</span>` : ""}</strong>
           <small>${escapeHtml(conversation.locked ? `${profileStatus ? `${profileStatus} · ` : ""}Locked chat` : profileStatus || last)}</small>
         </span>
         ${conversation.unreadCount ? `<span class="unread-badge">${conversation.unreadCount}</span>` : ""}
@@ -1695,16 +2116,11 @@ function renderHeader() {
   $("pinChatBtn").disabled = !conversation;
   $("archiveChatBtn").disabled = !conversation;
   $("groupInfoBtn").classList.add("hidden");
-  $("lockChatBtn")?.classList.toggle("hidden", !conversation || conversation.groupId);
-  closeUserActionMenu();
   $("callBtn").classList.add("hidden");
   $("videoCallBtn").classList.add("hidden");
-  $("hideChatBtn").classList.add("hidden");
-  $("blockUserBtn").classList.add("hidden");
-  $("deleteUserBtn").classList.add("hidden");
   if (!conversation) return;
   const other = getOtherMember(conversation);
-  const title = conversation.group?.name || other?.displayName || "Chat";
+  const title = conversation.group?.name || contactDisplayName(other);
   $("chatTitle").textContent = title;
   renderAvatarInto($("chatAvatar"), other, title);
   $("chatStatus").textContent = conversation.group ? `${conversation.members.length} members` : formatPresenceStatus(other?.id);
@@ -1719,53 +2135,284 @@ function renderHeader() {
     $("videoCallBtn").classList.remove("hidden");
     $("callBtn").classList.toggle("active-call", state.call.active && state.call.conversationId === conversation.id);
     $("videoCallBtn").classList.toggle("active-call", state.call.active && state.call.conversationId === conversation.id);
-    $("hideChatBtn").classList.remove("hidden");
-    $("hideChatBtn").textContent = conversation.hidden ? "Unhide" : "Hide";
-    $("blockUserBtn").classList.remove("hidden");
-    $("deleteUserBtn").classList.remove("hidden");
-    $("blockUserBtn").textContent = conversation.blockedByMe ? "Unblock" : "Block";
-    $("lockChatBtn").classList.remove("hidden");
-    $("lockChatBtn").textContent = conversation.locked ? "Unlock" : "Lock";
-    syncUserActionMenuLabels();
   }
 }
 
-function syncUserActionMenuLabels() {
+function currentContactDetailsConversation() {
+  const conversationId = state.contactDetailsConversationId;
+  return state.activeConversation?.id === conversationId
+    ? state.activeConversation
+    : state.conversations.find((item) => item.id === conversationId) || null;
+}
+
+function localDateTimeValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+function showContactDetails() {
   const conversation = state.activeConversation;
-  $("menuHideChatBtn").textContent = conversation?.hidden ? "Unhide user" : "Hide user";
+  if (!conversation) return;
+  if (conversation.groupId) {
+    $("groupInfoBtn").click();
+    return;
+  }
+  state.contactDetailsConversationId = conversation.id;
+  const other = getOtherMember(conversation);
+  if (!other) return;
+  const presence = formatPresenceStatus(other.id);
+  const details = [
+    ["User ID", other.userId],
+    ["Mobile", other.mobile],
+    ["About", other.statusText],
+    ["Last seen", presence]
+  ].filter(([, value]) => String(value || "").trim());
+  $("contactDetailsTitle").textContent = "Contact info";
+  $("contactDetailsBody").innerHTML = `
+    <div class="contact-details-profile">
+      <span class="avatar">${avatarMarkup(other, other.displayName || "User")}</span>
+      <strong id="contactDetailsName">${escapeHtml(contactDisplayName(other))}</strong>
+      <small>${escapeHtml(presence)}</small>
+    </div>
+    <div class="contact-details-fields">
+      ${details.map(([label, value]) => `
+        <div class="contact-detail-item">
+          <small>${escapeHtml(label)}</small>
+          <span>${escapeHtml(value)}</span>
+        </div>`).join("")}
+    </div>`;
+  $("contactNameForm").classList.add("hidden");
+  $("contactDetailsMenu").classList.add("hidden");
+  $("contactDetailsMenuBtn").setAttribute("aria-expanded", "false");
+  $("contactNameInput").value = contactDisplayName(other);
+  $("contactNameMessage").textContent = "";
+  $("favoriteContactBtn").textContent = conversation.favorite ? "★ Remove favourite" : "☆ Add to favourites";
+  const muteRemainingHours = conversation.muteUntil
+    ? (new Date(conversation.muteUntil).getTime() - Date.now()) / (60 * 60 * 1000)
+    : 0;
+  const presetMute = Math.abs(muteRemainingHours - 8) < 0.1
+    ? "8h"
+    : Math.abs(muteRemainingHours - 168) < 1 ? "1w" : "custom";
+  $("contactMuteSelect").value = conversation.muteForever
+    ? "forever"
+    : conversation.muted && conversation.muteUntil ? presetMute : "off";
+  $("contactMuteCustom").classList.toggle("hidden", $("contactMuteSelect").value !== "custom");
+  $("contactMuteUntil").value = $("contactMuteSelect").value === "custom" ? localDateTimeValue(conversation.muteUntil) : "";
+  $("contactMuteStatus").textContent = conversation.muteForever
+    ? "Notifications are muted until you turn them back on."
+    : conversation.muted ? `Muted until ${new Date(conversation.muteUntil).toLocaleString()}.` : "Notifications are on.";
+  const disappearingValue = Number(conversation.disappearingHours || 0);
+  const commonDurations = new Set([0, 1, 6, 12, 24, 72, 168, 720]);
+  $("contactDisappearingSelect").value = commonDurations.has(disappearingValue) ? String(disappearingValue) : "custom";
+  $("contactDisappearingHours").value = disappearingValue && !commonDurations.has(disappearingValue) ? String(disappearingValue) : "";
+  $("contactDisappearingCustom").classList.toggle("hidden", $("contactDisappearingSelect").value !== "custom");
+  $("contactLockChatBtn").textContent = conversation.locked ? "Unlock chat" : "Lock chat";
+  $("contactHideChatBtn").textContent = conversation.hidden ? "Unhide chat" : "Hide chat";
+  $("contactDetailsModal").classList.remove("hidden");
+}
+
+async function updateContactConversationPreferences(changes) {
+  const conversation = currentContactDetailsConversation();
+  if (!conversation) return;
+  const editingContactName = !$("contactNameForm").classList.contains("hidden");
+  const { conversation: updatedConversation } = await api(
+    `/api/conversations/${encodeURIComponent(conversation.id)}/preferences`,
+    { method: "PATCH", body: JSON.stringify(changes) }
+  );
+  Object.assign(conversation, updatedConversation);
+  if (state.activeConversation?.id === conversation.id) state.activeConversation = updatedConversation;
+  const index = state.conversations.findIndex((item) => item.id === conversation.id);
+  if (index >= 0) state.conversations[index] = updatedConversation;
+  cacheConversations();
+  renderConversations();
+  if (state.activeConversation?.id === conversation.id) renderHeader();
+  showContactDetails();
+  if (editingContactName && changes.contactName !== undefined) {
+    $("contactNameForm").classList.remove("hidden");
+    $("contactNameMessage").textContent = "Contact name saved on this account.";
+  }
+  if (changes.disappearingHours !== undefined && state.activeConversation?.id === conversation.id) {
+    await loadMessages(conversation.id);
+  }
+}
+
+function contactShareText(conversation) {
+  const other = getOtherMember(conversation);
+  if (!other) return "";
+  return [
+    `Contact: ${contactDisplayName(other)}`,
+    other.userId ? `User ID: ${other.userId}` : "",
+    other.mobile ? `Mobile: ${other.mobile}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function openContactShare() {
+  const conversation = currentContactDetailsConversation();
+  if (!conversation) return;
+  state.pendingShare = { id: null, text: contactShareText(conversation), media: [] };
+  $("contactDetailsModal").classList.add("hidden");
+  $("contactDetailsMenu").classList.add("hidden");
+  showShareModal();
+}
+
+async function shareContactOutside() {
+  const conversation = currentContactDetailsConversation();
+  if (!conversation) return;
+  const text = contactShareText(conversation);
+  if (navigator.share) {
+    await navigator.share({ title: "Contact", text });
+    return;
+  }
+  await navigator.clipboard.writeText(text);
+  alert("Contact details copied.");
+}
+
+function startGroupWithContact() {
+  const conversation = currentContactDetailsConversation();
+  const other = conversation && getOtherMember(conversation);
+  if (!other) return;
+  state.createGroupMembers = [other];
+  state.createGroupSearchResults = [];
+  $("createGroupMessage").textContent = "";
+  $("createGroupName").value = "";
+  $("createGroupDescription").value = "";
+  $("createGroupMemberSearch").value = "";
+  $("createGroupSearchResults").innerHTML = "";
+  renderCreateGroupMembers();
+  $("contactDetailsModal").classList.add("hidden");
+  $("createGroupModal").classList.remove("hidden");
+  $("createGroupName").focus();
+}
+
+function toggleContactDetailsMenu() {
+  const menu = $("contactDetailsMenu");
+  const open = menu.classList.contains("hidden");
+  menu.classList.toggle("hidden", !open);
+  $("contactDetailsMenuBtn").setAttribute("aria-expanded", String(open));
+}
+
+async function setContactMute(value) {
+  if (value === "custom") {
+    $("contactMuteCustom").classList.remove("hidden");
+    $("contactMuteUntil").focus();
+    return;
+  }
+  const changes = value === "forever"
+    ? { muteForever: true, muteUntil: null }
+    : {
+        muteForever: false,
+        muteUntil: value === "off"
+          ? null
+          : new Date(Date.now() + (value === "8h" ? 8 : 168) * 60 * 60 * 1000).toISOString()
+      };
+  await updateContactConversationPreferences(changes);
+}
+
+async function saveCustomContactMute() {
+  const muteUntil = new Date($("contactMuteUntil").value);
+  if (!Number.isFinite(muteUntil.getTime()) || muteUntil.getTime() <= Date.now()) {
+    alert("Choose a future date and time.");
+    return;
+  }
+  await updateContactConversationPreferences({ muteForever: false, muteUntil: muteUntil.toISOString() });
+}
+
+async function setContactDisappearing(value) {
+  if (value === "custom") {
+    $("contactDisappearingCustom").classList.remove("hidden");
+    $("contactDisappearingHours").focus();
+    return;
+  }
+  await updateContactConversationPreferences({ disappearingHours: Number(value) });
+}
+
+async function saveContactDisappearing() {
+  const hours = Number($("contactDisappearingHours").value);
+  if (!Number.isInteger(hours) || hours < 1 || hours > 8760) {
+    alert("Enter a duration between 1 and 8760 hours.");
+    return;
+  }
+  await updateContactConversationPreferences({ disappearingHours: hours });
+}
+
+function syncUserActionMenuLabels(conversation = state.userActionConversation) {
   $("menuBlockUserBtn").textContent = conversation?.blockedByMe ? "Unblock user" : "Block user";
+  $("menuLockChatBtn").textContent = conversation?.locked ? "Unlock chat" : "Lock chat";
+  $("menuHideChatBtn").textContent = conversation?.hidden ? "Unhide chat" : "Hide chat";
+  $("menuHideChatBtn").hidden = !conversation?.locked && !conversation?.hidden;
 }
 
-function canShowUserActionMenu() {
-  return Boolean(state.activeConversation && !state.activeConversation.groupId && getOtherMember(state.activeConversation)?.id);
+function conversationForUserAction(row) {
+  const conversationId = row?.dataset.id || row?.dataset.searchConversation || row?.dataset.hiddenConversation;
+  return state.conversations.find((conversation) => conversation.id === conversationId)
+    || state.searchConversationMap.get(conversationId)
+    || state.hiddenConversations.find((conversation) => conversation.id === conversationId)
+    || null;
 }
 
-function openUserActionMenu(anchor = $("chatIdentity")) {
-  if (!canShowUserActionMenu()) return;
-  syncUserActionMenuLabels();
+function openUserActionMenu(conversation, x, y) {
+  if (!conversation || conversation.groupId || !getOtherMember(conversation)?.id) return false;
+  closeUserActionMenu();
+  state.userActionConversation = conversation;
+  syncUserActionMenuLabels(conversation);
   const menu = $("userActionMenu");
-  const headerRect = anchor.closest(".chat-header").getBoundingClientRect();
-  const anchorRect = anchor.getBoundingClientRect();
-  menu.style.left = `${Math.max(12, anchorRect.left - headerRect.left)}px`;
-  menu.style.top = `${Math.min(headerRect.height - 4, anchorRect.bottom - headerRect.top + 8)}px`;
   menu.classList.remove("hidden");
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+  return true;
 }
 
 function closeUserActionMenu() {
   $("userActionMenu")?.classList.add("hidden");
+  state.userActionConversation = null;
 }
 
-function startUserActionLongPress(event) {
-  if (!canShowUserActionMenu()) return;
+function startSidebarUserActionLongPress(event) {
+  if (event.pointerType === "mouse" || event.button !== 0) return;
+  const row = event.target.closest(".conversation[data-id], .search-result[data-search-conversation], .search-result[data-hidden-conversation]");
+  const conversation = conversationForUserAction(row);
+  if (!row || !conversation || conversation.groupId) return;
   clearTimeout(state.userActionLongPressTimer);
+  state.userActionPressPoint = { x: event.clientX, y: event.clientY };
   state.userActionLongPressTimer = setTimeout(() => {
-    event.preventDefault();
-    openUserActionMenu(event.currentTarget);
+    state.suppressNextConversationClick = true;
+    clearTimeout(state.userActionClickResetTimer);
+    state.userActionClickResetTimer = setTimeout(() => {
+      state.suppressNextConversationClick = false;
+    }, 1200);
+    const bounds = row.getBoundingClientRect();
+    openUserActionMenu(
+      conversation,
+      Math.min(bounds.left + 24, window.innerWidth - 220),
+      Math.min(bounds.bottom, window.innerHeight - 190)
+    );
   }, 520);
 }
 
-function cancelUserActionLongPress() {
+function cancelSidebarUserActionLongPress() {
   clearTimeout(state.userActionLongPressTimer);
+  state.userActionPressPoint = null;
+}
+
+function cancelSidebarUserActionIfMoved(event) {
+  const start = state.userActionPressPoint;
+  if (!start) return;
+  if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 12) {
+    cancelSidebarUserActionLongPress();
+  }
+}
+
+function consumeSuppressedConversationClick(event) {
+  if (!state.suppressNextConversationClick) return false;
+  if (!event.target.closest(".conversation[data-id], .search-result[data-search-conversation], .search-result[data-hidden-conversation]")) return false;
+  state.suppressNextConversationClick = false;
+  clearTimeout(state.userActionClickResetTimer);
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  return true;
 }
 
 function formatMessageDateLabel(value) {
@@ -2057,7 +2704,7 @@ function messageSnippet(message) {
 
 function senderName(senderId) {
   if (senderId === state.user.id) return "You";
-  return state.activeConversation?.members?.find((member) => member.id === senderId)?.displayName || "User";
+  return contactDisplayName(state.activeConversation?.members?.find((member) => member.id === senderId));
 }
 
 function renderReplyComposer() {
@@ -2304,7 +2951,7 @@ function renderShareRecipients(extraUsers = []) {
     if (!other) continue;
     rows.push({
       key: `user:${other.id}`,
-      label: other.displayName,
+      label: contactDisplayName(other),
       sub: other.userId || other.mobile,
       value: { conversationId: conversation.id, userId: other.id }
     });
@@ -2376,8 +3023,9 @@ async function sendPendingShare() {
 function tickLabel(message) {
   if (message.pending) return "single";
   const others = state.activeConversation.participants.filter((id) => id !== state.user.id);
+  if (!others.length) return "single";
   if (others.every((id) => message.readBy?.includes(id))) return "blue";
-  if (others.some((id) => message.deliveredTo?.includes(id))) return "double";
+  if (message.deliveryStatusVersion === 1 && others.every((id) => message.deliveredTo?.includes(id))) return "double";
   return "single";
 }
 
@@ -2449,6 +3097,8 @@ async function flushOfflineOutbox() {
 
 function notifyNewMessage(message) {
   if (message.senderId === state.user.id) return;
+  const conversation = state.conversations.find((item) => item.id === message.conversationId);
+  if (conversation?.muteForever || (conversation?.muteUntil && new Date(conversation.muteUntil).getTime() > Date.now())) return;
   try {
     navigator.vibrate?.(80);
     const context = new (window.AudioContext || window.webkitAudioContext)();
@@ -2500,6 +3150,25 @@ async function openConversationById(conversationId, messageId = null, knownConve
     conversation = state.conversations.find((item) => item.id === conversationId);
   }
   if (!conversation) return;
+  if (conversation.locked) {
+    const code = await promptForLockPin("view");
+    if (!code) return;
+    try {
+      await api("/api/lock-pin/verify", {
+        method: "POST",
+        body: JSON.stringify({ code })
+      });
+    } catch (error) {
+      if (error.status === 403) {
+        await showAppMessage("Incorrect PIN", "That PIN did not match. The chat is still locked.");
+        return;
+      }
+      throw error;
+    }
+    state.lockedChatCode = code;
+  } else {
+    state.lockedChatCode = "";
+  }
   state.mainTab = "chats";
   $("chatView").classList.remove("section-mode");
   $("sectionPanel").classList.add("hidden");
@@ -2512,12 +3181,12 @@ async function openConversationById(conversationId, messageId = null, knownConve
   state.activeConversation = conversation;
   state.selectionMode = false;
   state.selectedMessageIds.clear();
+  $("chatView").classList.add("conversation-open");
   clearReplyComposer();
   if (state.socket?.connected) state.socket.emit("conversation:join", { conversationId });
   renderHeader();
   renderConversations();
   await loadMessages(conversationId);
-  $("chatView").classList.add("conversation-open");
   if (messageId) {
     const element = $("messages").querySelector(`[data-message="${CSS.escape(messageId)}"]`);
     element?.scrollIntoView({ block: "center" });
@@ -2534,18 +3203,16 @@ async function searchUsers() {
     $("searchResults").innerHTML = "";
     $("searchResults").setAttribute("aria-busy", "false");
     state.hiddenConversations = [];
-    state.unlockedHiddenCode = "";
     state.searchConversationMap.clear();
     return;
   }
   $("searchResults").innerHTML = `<p class="search-feedback">Searching contacts, chats, and messages...</p>`;
-  const url = `/api/search?q=${encodeURIComponent(q)}&hiddenCode=${encodeURIComponent(state.unlockedHiddenCode)}`;
+  const url = `/api/search?q=${encodeURIComponent(q)}`;
   const results = await api(url);
   if (requestId !== state.searchRequestId) return;
   if (results.hiddenUnlocked) {
     state.searchConversationMap.clear();
     state.hiddenConversations = results.hiddenConversations;
-    state.unlockedHiddenCode = q;
     $("searchResults").innerHTML = renderHiddenVault(results.hiddenConversations);
     $("searchResults").setAttribute("aria-busy", "false");
     return;
@@ -2711,15 +3378,15 @@ function renderSearchResults({ users, conversations, messages }, query) {
   const sections = [];
   if (users.length) {
     sections.push(`<div class="search-result-section"><h2>Contacts</h2>${users.map((user) => `
-      <button class="search-result" data-user="${escapeHtml(user.id)}" type="button">
+      <button class="search-result" ${user.hidden ? `data-hidden-user="${escapeHtml(user.id)}"` : `data-user="${escapeHtml(user.id)}"`} type="button">
         <span class="avatar">${avatarMarkup(user, user.displayName)}</span>
-        <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · Hidden chat" : ""}</small></span>
+        <span><strong>${escapeHtml(user.displayName)}</strong><small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}${user.hidden ? " · Hidden chat (secret required)" : ""}</small></span>
       </button>`).join("")}</div>`);
   }
   if (conversations.length) {
     sections.push(`<div class="search-result-section"><h2>Chats</h2>${conversations.map((conversation) => {
       const other = getOtherMember(conversation);
-      const title = conversation.group?.name || other?.displayName || "Chat";
+      const title = conversation.group?.name || contactDisplayName(other);
       const last = conversation.lastMessage?.media
         ? `[${conversation.lastMessage.media.kind}]`
         : conversation.lastMessage?.text || "No messages yet";
@@ -2733,7 +3400,7 @@ function renderSearchResults({ users, conversations, messages }, query) {
     sections.push(`<div class="search-result-section"><h2>Messages</h2>${messages.map((item) => {
       const conversation = item.conversation;
       const other = getOtherMember(conversation);
-      const title = conversation.group?.name || other?.displayName || "Chat";
+      const title = conversation.group?.name || contactDisplayName(other);
       return `<button class="search-result message-search-result" data-search-message="${escapeHtml(item.id)}" data-search-conversation="${escapeHtml(item.conversationId)}" type="button">
         <span class="avatar">${avatarMarkup(other, title)}</span>
         <span><strong>${escapeHtml(title)} · ${escapeHtml(item.senderName)}</strong><small>${highlightSearchText(item.text, query)}</small></span>
@@ -2743,6 +3410,26 @@ function renderSearchResults({ users, conversations, messages }, query) {
   return sections.join("") || `<p class="search-feedback">No contacts, chats, or messages found.</p>`;
 }
 
+async function openHiddenSearchResult(userId) {
+  const code = await showAppInputDialog({
+    title: "Unlock hidden chat",
+    message: "Enter your hidden chat secret to open this conversation.",
+    label: "Secret code",
+    inputType: "password",
+    minLength: 4,
+    errorMessage: "Secret code must be at least 4 characters."
+  });
+  if (!code) return;
+  const { conversations } = await api(`/api/conversations/hidden?code=${encodeURIComponent(code)}`);
+  const conversation = conversations.find((item) => getOtherMember(item)?.id === userId);
+  if (!conversation) {
+    await showAppMessage("Hidden chat unavailable", "No hidden conversation was found for this user.");
+    return;
+  }
+  await openConversationById(conversation.id, null, conversation);
+  clearSidebarSearch();
+}
+
 function clearSidebarSearch() {
   clearTimeout(state.searchTimer);
   state.searchRequestId += 1;
@@ -2750,6 +3437,7 @@ function clearSidebarSearch() {
   $("searchResults").innerHTML = "";
   $("searchResults").setAttribute("aria-busy", "false");
   document.querySelector(".sidebar")?.classList.remove("searching");
+  state.hiddenConversations = [];
   state.searchConversationMap.clear();
 }
 
@@ -2763,11 +3451,12 @@ function renderHiddenVault(conversations) {
         <input id="oldHiddenCodeInput" type="password" autocomplete="current-password" placeholder="Old secret code">
         <input id="newHiddenCodeInput" type="password" autocomplete="new-password" placeholder="New secret code">
         <button class="text-button" data-change-hidden-code type="button">Change code</button>
+        <button class="text-button" data-recover-hidden-secret type="button">Forgot secret code?</button>
         <small id="hiddenCodeMessage"></small>
       </div>
       ${conversations.map((conversation) => {
         const other = getOtherMember(conversation);
-        const title = other?.displayName || "Hidden chat";
+        const title = contactDisplayName(other);
         const last = conversation.lastMessage?.media ? `[${conversation.lastMessage.media.kind}]` : conversation.lastMessage?.text || "No messages yet";
         return `
           <button class="search-result hidden-result" data-hidden-conversation="${conversation.id}" type="button">
@@ -2778,16 +3467,62 @@ function renderHiddenVault(conversations) {
     `;
 }
 
-function requestHiddenChatSecret() {
-  const generated = `lock-${Math.floor(1000 + Math.random() * 9000)}`;
-  const secret = prompt("Create secret code for hidden chats. Search bar me ye code dalne par hidden chats dikhenge.", generated);
-  if (secret === null) return null;
-  const trimmed = secret.trim();
-  if (trimmed.length < 4) {
-    alert("Secret code kam se kam 4 characters ka hona chahiye.");
-    return null;
+async function requestHiddenChatSecret(secretExists) {
+  return showAppInputDialog({
+    title: secretExists ? "Enter hidden chat secret" : "Create hidden chat secret",
+    message: secretExists
+      ? "Enter your current secret code to hide this chat."
+      : "Choose a secret code. Enter it in the search bar later to open hidden chats.",
+    label: "Secret code",
+    minLength: 4,
+    errorMessage: "Secret code must be at least 4 characters."
+  });
+}
+
+async function recoverHiddenChatSecret() {
+  const { email } = await api("/api/me/hidden-secret/recovery/request", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  const code = await showAppInputDialog({
+    title: "Enter email recovery code",
+    message: `A 6-digit code was sent to ${email}.`,
+    label: "Email code",
+    inputType: "text",
+    minLength: 6,
+    errorMessage: "Enter the 6-digit code from your email."
+  });
+  if (!code) return;
+  const newSecret = await showAppInputDialog({
+    title: "Create a new hidden chat secret",
+    message: "Use this new secret in the search bar to open hidden chats.",
+    label: "New secret code",
+    inputType: "password",
+    minLength: 4,
+    errorMessage: "Secret code must be at least 4 characters."
+  });
+  if (!newSecret) return;
+  const result = await api("/api/me/hidden-secret/recovery/verify", {
+    method: "POST",
+    body: JSON.stringify({ code, newSecret })
+  });
+  state.user = result.user;
+  if (state.activeConversation?.hidden) {
+    state.activeConversation = null;
+    state.lockedChatCode = "";
+    state.messages = [];
+    renderHeader();
+    renderMessages();
+    $("chatView").classList.remove("conversation-open");
   }
-  return trimmed;
+  clearSidebarSearch();
+  await loadConversations();
+  await showAppMessage(
+    "Hidden chat secret updated",
+    result.chatsDeleted
+      ? "Your hidden chat messages were deleted from your account according to the recovery policy."
+      : "Your hidden chats are still available with the new secret code."
+  );
 }
 
 async function sendMediaFile(file) {
@@ -3804,7 +4539,20 @@ $("calculatorModeToggle").addEventListener("click", () => {
   document.body.classList.toggle("calculator-advanced", state.calculatorAdvancedMode);
 });
 $("panicHideBtn").addEventListener("click", lockToCalculator);
-document.addEventListener("visibilitychange", handlePrivacyVisibilityChange);
+document.addEventListener("visibilitychange", () => {
+  handlePrivacyVisibilityChange();
+  if (
+    document.visibilityState === "visible"
+    && state.mainTab === "chats"
+    && state.activeConversation
+    && !$("chatView").classList.contains("hidden")
+    && $("chatView").classList.contains("conversation-open")
+  ) {
+    loadMessages(state.activeConversation.id).catch((error) => {
+      console.error("Could not refresh visible conversation messages:", error);
+    });
+  }
+});
 window.addEventListener("blur", startPrivacyAwayLock);
 window.addEventListener("focus", handlePrivacyReturn);
 window.addEventListener("pagehide", startPrivacyAwayLock);
@@ -3873,43 +4621,38 @@ $("closeProfileBtn").addEventListener("click", () => {
 $("themePreference").addEventListener("change", (event) => {
   saveThemePreference(event.currentTarget.value);
 });
-$("lockChatBtn").addEventListener("click", async () => {
-  try {
-    await toggleConversationLock();
-  } catch (error) {
-    alert(error.message);
-  }
-});
 $("messageAutoDeleteToggle").addEventListener("change", () => {
   $("messageAutoDeleteTtl").disabled = !$("messageAutoDeleteToggle").checked;
 });
-$("chatIdentity").addEventListener("pointerdown", startUserActionLongPress);
-$("chatIdentity").addEventListener("pointerup", cancelUserActionLongPress);
-$("chatIdentity").addEventListener("pointerleave", cancelUserActionLongPress);
-$("chatIdentity").addEventListener("pointercancel", cancelUserActionLongPress);
-$("chatIdentity").addEventListener("contextmenu", (event) => {
+document.addEventListener("pointerdown", startSidebarUserActionLongPress);
+document.addEventListener("pointerup", cancelSidebarUserActionLongPress);
+document.addEventListener("pointercancel", cancelSidebarUserActionLongPress);
+document.addEventListener("pointermove", cancelSidebarUserActionIfMoved);
+document.addEventListener("contextmenu", (event) => {
+  const row = event.target.closest(".conversation[data-id], .search-result[data-search-conversation], .search-result[data-hidden-conversation]");
+  const conversation = conversationForUserAction(row);
+  if (!row || !conversation || conversation.groupId) return;
   event.preventDefault();
-  openUserActionMenu(event.currentTarget);
-});
-$("chatIdentity").addEventListener("dblclick", (event) => {
-  event.preventDefault();
-  openUserActionMenu(event.currentTarget);
-});
-$("menuHideChatBtn").addEventListener("click", () => {
-  closeUserActionMenu();
-  $("hideChatBtn").click();
+  openUserActionMenu(conversation, event.clientX, event.clientY);
 });
 $("menuBlockUserBtn").addEventListener("click", () => {
-  closeUserActionMenu();
-  $("blockUserBtn").click();
+  runUserAction(toggleConversationBlock);
+});
+$("menuLockChatBtn").addEventListener("click", () => {
+  runUserAction(toggleConversationLock);
+});
+$("menuHideChatBtn").addEventListener("click", () => {
+  runUserAction(toggleConversationHidden);
 });
 $("menuDeleteUserBtn").addEventListener("click", () => {
-  closeUserActionMenu();
-  $("deleteUserBtn").click();
+  runUserAction(deleteConversationUser);
 });
 document.addEventListener("click", (event) => {
-  if (event.target.closest("#userActionMenu") || event.target.closest("#chatIdentity")) return;
+  if (event.target.closest("#userActionMenu")) return;
   closeUserActionMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeUserActionMenu();
 });
 $("profileAvatarInput").addEventListener("change", (event) => {
   const file = event.target.files?.[0];
@@ -3941,11 +4684,22 @@ $("topbarMenuBtn").addEventListener("click", (event) => {
   event.stopPropagation();
   toggleTopbarMenu();
 });
+$("forgotHiddenSecretBtn").addEventListener("click", () => {
+  closeTopbarMenu();
+  recoverHiddenChatSecret().catch((error) => showAppMessage("Recovery failed", error.message));
+});
 document.addEventListener("click", (event) => {
   if (event.target.closest(".sidebar-fixed-actions")) return;
   closeTopbarMenu();
 });
-$("backBtn").addEventListener("click", () => $("chatView").classList.remove("conversation-open"));
+$("backBtn").addEventListener("click", () => {
+  if (state.activeConversation?.locked) {
+    state.lockedChatCode = "";
+    state.messages = [];
+    renderMessages();
+  }
+  $("chatView").classList.remove("conversation-open");
+});
 $("chatView").addEventListener("click", (event) => {
   const tabButton = event.target.closest("[data-main-tab]");
   if (tabButton) setMainTab(tabButton.dataset.mainTab).catch((error) => {
@@ -3955,11 +4709,6 @@ $("chatView").addEventListener("click", (event) => {
 $("activeChatsBtn").addEventListener("click", async () => {
   state.conversationView = "active";
   await setMainTab("chats");
-});
-$("lockedChatsBtn").addEventListener("click", async () => {
-  if (state.mainTab !== "chats") await setMainTab("chats");
-  state.conversationView = "locked";
-  await loadConversations();
 });
 $("archivedChatsBtn").addEventListener("click", async () => {
   if (state.mainTab !== "chats") await setMainTab("chats");
@@ -4015,7 +4764,7 @@ $("statusViewerBody").addEventListener("click", async (event) => {
   }
   const button = event.target.closest("[data-delete-status]");
   if (!button) return;
-  if (!confirm("Delete this status?")) return;
+  if (!await showAppConfirm("Delete this status?", "Delete status")) return;
   button.disabled = true;
   try {
     await api(`/api/statuses/${button.dataset.deleteStatus}`, { method: "DELETE" });
@@ -4079,6 +4828,117 @@ $("groupInfoBtn").addEventListener("click", () => {
   renderGroupMembersList();
   $("groupModal").classList.remove("hidden");
 });
+$("chatIdentity").addEventListener("click", showContactDetails);
+$("chatAvatar").addEventListener("click", showContactDetails);
+for (const element of [$("chatIdentity"), $("chatAvatar")]) {
+  element.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    showContactDetails();
+  });
+}
+$("closeContactDetailsBtn").addEventListener("click", () => $("contactDetailsModal").classList.add("hidden"));
+$("contactDetailsModal").addEventListener("click", (event) => {
+  if (event.target === $("contactDetailsModal")) $("contactDetailsModal").classList.add("hidden");
+});
+$("contactLockChatBtn").addEventListener("click", async () => {
+  try {
+    await toggleConversationLock(state.activeConversation);
+    if (state.activeConversation) showContactDetails();
+    else $("contactDetailsModal").classList.add("hidden");
+  } catch (error) {
+    await showAppMessage("Could not update chat lock", error.message);
+  }
+});
+$("contactHideChatBtn").addEventListener("click", async () => {
+  const conversation = currentContactDetailsConversation();
+  if (!conversation) return;
+  try {
+    await toggleConversationHidden(conversation);
+    if (conversation.hidden) $("contactDetailsModal").classList.add("hidden");
+    else showContactDetails();
+  } catch (error) {
+    await showAppMessage("Could not update hidden chat", error.message);
+  }
+});
+$("contactDetailsMenuBtn").addEventListener("click", toggleContactDetailsMenu);
+$("contactDetailsMenu").addEventListener("click", async (event) => {
+  const action = event.target.closest("button");
+  if (!action) return;
+  $("contactDetailsMenu").classList.add("hidden");
+  $("contactDetailsMenuBtn").setAttribute("aria-expanded", "false");
+  if (action.id === "shareContactBtn") {
+    openContactShare();
+  } else if (action.id === "shareContactOutsideBtn") {
+    try {
+      await shareContactOutside();
+    } catch (error) {
+      if (error.name !== "AbortError") alert(error.message);
+    }
+  } else if (action.id === "editContactNameBtn") {
+    $("contactNameForm").classList.remove("hidden");
+    $("contactNameInput").focus();
+    $("contactNameInput").select();
+  }
+});
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#contactDetailsMenu, #contactDetailsMenuBtn")) return;
+  $("contactDetailsMenu")?.classList.add("hidden");
+  $("contactDetailsMenuBtn")?.setAttribute("aria-expanded", "false");
+});
+$("contactNameForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const saveButton = event.currentTarget.querySelector('button[type="submit"]');
+  saveButton.disabled = true;
+  $("contactNameMessage").textContent = "";
+  try {
+    await updateContactConversationPreferences({ contactName: $("contactNameInput").value.trim() });
+    $("contactNameMessage").textContent = "Contact name saved on this account.";
+  } catch (error) {
+    $("contactNameMessage").textContent = error.message;
+  } finally {
+    saveButton.disabled = false;
+  }
+});
+$("cancelContactNameBtn").addEventListener("click", () => $("contactNameForm").classList.add("hidden"));
+$("favoriteContactBtn").addEventListener("click", async () => {
+  const conversation = currentContactDetailsConversation();
+  if (!conversation) return;
+  try {
+    await updateContactConversationPreferences({ favorite: !conversation.favorite });
+  } catch (error) {
+    alert(error.message);
+  }
+});
+$("createGroupWithContactBtn").addEventListener("click", startGroupWithContact);
+$("contactMuteSelect").addEventListener("change", async (event) => {
+  try {
+    await setContactMute(event.currentTarget.value);
+  } catch (error) {
+    alert(error.message);
+  }
+});
+$("saveContactMuteBtn").addEventListener("click", async () => {
+  try {
+    await saveCustomContactMute();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+$("contactDisappearingSelect").addEventListener("change", async (event) => {
+  try {
+    await setContactDisappearing(event.currentTarget.value);
+  } catch (error) {
+    alert(error.message);
+  }
+});
+$("saveContactDisappearingBtn").addEventListener("click", async () => {
+  try {
+    await saveContactDisappearing();
+  } catch (error) {
+    alert(error.message);
+  }
+});
 $("closeGroupBtn").addEventListener("click", () => $("groupModal").classList.add("hidden"));
 $("pinChatBtn").addEventListener("click", async () => {
   if (!state.activeConversation) return;
@@ -4117,7 +4977,7 @@ $("bulkDeleteBtn").addEventListener("click", async () => {
 });
 $("bulkDeleteEveryoneBtn").addEventListener("click", async () => {
   if (state.selectedMessageIds.size < 2) return;
-  if (!confirm("Delete selected messages for everyone?")) return;
+  if (!await showAppConfirm("Delete selected messages for everyone?", "Delete messages")) return;
   const { deletedIds = [], count = 0 } = await api("/api/messages/bulk-delete-everyone", { method: "POST", body: JSON.stringify({ ids: [...state.selectedMessageIds] }) });
   if (!count) {
     alert("Selected messages delete from everyone ke liye available nahi hain.");
@@ -4130,58 +4990,11 @@ $("bulkDeleteEveryoneBtn").addEventListener("click", async () => {
   await loadConversations();
 });
 $("clearChatBtn").addEventListener("click", async () => {
-  if (!state.activeConversation || !confirm("Clear this chat from your screen")) return;
+  if (!state.activeConversation || !await showAppConfirm("Clear this chat from your screen?", "Clear chat")) return;
   await api(`/api/conversations/${state.activeConversation.id}/clear-for-me`, { method: "POST" });
   state.messages = [];
   renderMessages();
   await loadConversations();
-});
-$("hideChatBtn").addEventListener("click", async () => {
-  if (!state.activeConversation || state.activeConversation.groupId) return;
-  const action = state.activeConversation.hidden ? "unhide-user" : "hide-user";
-  const body = {};
-  if (action === "hide-user" && !state.user.hasHiddenChatSecret) {
-    const secretCode = requestHiddenChatSecret();
-    if (!secretCode) return;
-    body.secretCode = secretCode;
-    alert(`Secret code saved: ${secretCode}\nSearch bar me ye code dalne se hidden chats unlock honge.`);
-  }
-  const { user } = await api(`/api/conversations/${state.activeConversation.id}/${action}`, { method: "POST", body: JSON.stringify(body) });
-  if (user) state.user = user;
-  state.activeConversation.hidden = !state.activeConversation.hidden;
-  renderHeader();
-  await loadConversations();
-  if (state.activeConversation.hidden) {
-    state.activeConversation = null;
-    state.messages = [];
-    renderHeader();
-    renderMessages();
-    $("chatView").classList.remove("conversation-open");
-  }
-});
-$("blockUserBtn").addEventListener("click", async () => {
-  if (!state.activeConversation || state.activeConversation.groupId) return;
-  const blocked = state.activeConversation.blockedByMe;
-  const action = blocked ? "unblock-user" : "block-user";
-  if (!blocked && !confirm("Block this user? They will not be able to message you.")) return;
-  const { user, conversation } = await api(`/api/conversations/${state.activeConversation.id}/${action}`, { method: "POST" });
-  if (user) state.user = user;
-  if (conversation) state.activeConversation = conversation;
-  renderHeader();
-  await loadConversations();
-});
-$("deleteUserBtn").addEventListener("click", async () => {
-  if (!state.activeConversation || state.activeConversation.groupId) return;
-  if (!confirm("Delete this user from your account? Admin panel se user delete nahi hoga.")) return;
-  const conversationId = state.activeConversation.id;
-  const { user } = await api(`/api/conversations/${conversationId}/delete-user`, { method: "POST" });
-  if (user) state.user = user;
-  state.activeConversation = null;
-  state.messages = [];
-  renderHeader();
-  renderMessages();
-  await loadConversations();
-  $("chatView").classList.remove("conversation-open");
 });
 $("searchInput").addEventListener("input", () => {
   const showChats = $("searchInput").value.trim() && state.mainTab !== "chats";
@@ -4670,6 +5483,7 @@ $("profileForm").addEventListener("submit", async (event) => {
 });
 
 $("conversationList").addEventListener("click", async (event) => {
+  if (consumeSuppressedConversationClick(event)) return;
   const starred = event.target.closest("[data-starred-message]");
   if (starred) {
     await openConversationById(starred.dataset.conversation, starred.dataset.starredMessage);
@@ -4737,7 +5551,7 @@ function renderCreateGroupMembers() {
   $("createGroupSelectedMembers").innerHTML = state.createGroupMembers.map((user) => `
     <button class="selected-group-member" type="button" data-remove-create-member="${user.id}">
       <span class="avatar">${avatarMarkup(user, "U")}</span>
-      <span>${escapeHtml(user.displayName || user.userId)}</span>
+      <span>${escapeHtml(contactDisplayName(user))}</span>
       <span aria-hidden="true">×</span>
     </button>`).join("");
 }
@@ -4814,6 +5628,24 @@ $("createGroupForm").addEventListener("submit", async (event) => {
 });
 
 $("searchResults").addEventListener("click", async (event) => {
+  if (consumeSuppressedConversationClick(event)) return;
+  const hiddenUserButton = event.target.closest("[data-hidden-user]");
+  if (hiddenUserButton) {
+    try {
+      await openHiddenSearchResult(hiddenUserButton.dataset.hiddenUser);
+    } catch (error) {
+      await showAppMessage("Could not open hidden chat", error.message);
+    }
+    return;
+  }
+  if (event.target.closest("[data-recover-hidden-secret]")) {
+    try {
+      await recoverHiddenChatSecret();
+    } catch (error) {
+      await showAppMessage("Recovery failed", error.message);
+    }
+    return;
+  }
   const changeCodeButton = event.target.closest("[data-change-hidden-code]");
   if (changeCodeButton) {
     const oldInput = $("oldHiddenCodeInput");
@@ -4837,7 +5669,6 @@ $("searchResults").addEventListener("click", async (event) => {
         body: JSON.stringify({ currentSecret, newSecret })
       });
       state.user = user;
-      state.unlockedHiddenCode = newSecret;
       oldInput.value = "";
       newInput.value = "";
       message.textContent = "Secret code updated.";
@@ -4869,8 +5700,12 @@ $("searchResults").addEventListener("click", async (event) => {
   }
   const button = event.target.closest("[data-user]");
   if (!button) return;
-  await startConversationWithUser(button.dataset.user);
-  clearSidebarSearch();
+  try {
+    await startConversationWithUser(button.dataset.user);
+    clearSidebarSearch();
+  } catch (error) {
+    await showAppMessage("Could not start chat", error.message);
+  }
 });
 
 $("newChatFab").addEventListener("click", () => openNewChatModal());
@@ -4956,7 +5791,13 @@ $("messages").addEventListener("click", async (event) => {
   }
   const addReactionButton = event.target.closest("[data-add-reaction]");
   if (addReactionButton) {
-    const emoji = prompt("Emoji add karein", "");
+    const emoji = await showAppInputDialog({
+      title: "Add a reaction",
+      message: "Enter an emoji to add it to your reaction options.",
+      label: "Emoji",
+      inputType: "text",
+      submitLabel: "Add"
+    });
     if (!emoji?.trim()) return;
     const nextEmojis = [...new Set([...(state.user.reactionEmojis || []), emoji.trim()])].slice(0, 12);
     const { user } = await api("/api/me", { method: "PATCH", body: JSON.stringify({ reactionEmojis: nextEmojis }) });
@@ -5011,7 +5852,7 @@ $("messages").addEventListener("click", async (event) => {
   }
   const deleteEveryoneButton = event.target.closest("[data-delete-everyone]");
   if (deleteEveryoneButton) {
-    if (!confirm("Delete this message for everyone?")) return;
+    if (!await showAppConfirm("Delete this message for everyone?", "Delete message")) return;
     await api(`/api/messages/${deleteEveryoneButton.dataset.deleteEveryone}/delete-everyone`, { method: "POST" });
     state.messages = state.messages.filter((message) => message.id !== deleteEveryoneButton.dataset.deleteEveryone);
     state.selectedMessageIds.delete(deleteEveryoneButton.dataset.deleteEveryone);
@@ -5118,7 +5959,7 @@ $("groupFormUser").addEventListener("submit", async (event) => {
 });
 
 $("leaveGroupBtn").addEventListener("click", async () => {
-  if (!state.activeConversation?.groupId || !confirm("Leave this group?")) return;
+  if (!state.activeConversation?.groupId || !await showAppConfirm("Leave this group?", "Leave group")) return;
   await api(`/api/groups/${state.activeConversation.groupId}/leave`, { method: "POST" });
   $("groupModal").classList.add("hidden");
   state.activeConversation = null;
@@ -5149,4 +5990,5 @@ window.addEventListener("online", async () => {
 
 renderEmojiPicker();
 if ($("cameraSelect")) $("cameraSelect").value = state.cameraFacingMode;
+enhanceNativeSelects();
 bootstrap();
