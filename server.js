@@ -55,10 +55,34 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "tru
 const SMTP_USER = String(process.env.SMTP_USER || "");
 const SMTP_PASS = String(process.env.SMTP_PASS || "");
 const SMTP_FROM = String(process.env.SMTP_FROM || "").trim();
+const emailAuthOtps = new Map();
+const emailAuthOtpRequests = new Map();
+const adminCredentialOtps = new Map();
+const adminCredentialOtpRequests = new Map();
+const EMAIL_AUTH_OTP_TTL_MS = 10 * 60 * 1000;
+const EMAIL_AUTH_OTP_REQUEST_INTERVAL_MS = 60 * 1000;
+const SIGNUP_MODE_GOOGLE_ONLY = "google_only";
+const SIGNUP_MODE_GOOGLE_AND_OTP = "google_and_otp";
+const DEFAULT_ANIMATIONS = Object.freeze({
+  enabled: true,
+  ambient: true,
+  surfaces: true,
+  accents: true,
+  interactions: true
+});
 const hiddenSecretRecoveryCodes = new Map();
 const hiddenSecretRecoveryRequests = new Map();
 const HIDDEN_SECRET_OTP_TTL_MS = 10 * 60 * 1000;
 const HIDDEN_SECRET_OTP_REQUEST_INTERVAL_MS = 60 * 1000;
+
+function normalizeAnimationSettings(settings = {}) {
+  return Object.fromEntries(
+    Object.entries(DEFAULT_ANIMATIONS).map(([key, defaultValue]) => [
+      key,
+      typeof settings?.[key] === "boolean" ? settings[key] : defaultValue
+    ])
+  );
+}
 
 webPush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
@@ -74,7 +98,7 @@ function execFilePromise(command, args) {
   });
 }
 
-async function sendHiddenSecretRecoveryCode(email, code) {
+async function sendEmailOtp(email, code, purpose) {
   if ((!SMTP_URL && !SMTP_HOST) || !SMTP_FROM) {
     const error = new Error("Email OTP delivery is not configured. Configure SMTP_URL (or SMTP_HOST) and SMTP_FROM.");
     error.code = "SMTP_NOT_CONFIGURED";
@@ -89,10 +113,14 @@ async function sendHiddenSecretRecoveryCode(email, code) {
   await transport.sendMail({
     from: SMTP_FROM,
     to: email,
-    subject: "Metagram hidden chat recovery code",
-    text: `Your Metagram hidden chat recovery code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`,
-    html: `<p>Your Metagram hidden chat recovery code is <strong>${code}</strong>.</p><p>It expires in 10 minutes. If you did not request this, ignore this email.</p>`
+    subject: `Metagram ${purpose} code`,
+    text: `Your Metagram ${purpose} code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`,
+    html: `<p>Your Metagram ${purpose} code is <strong>${code}</strong>.</p><p>It expires in 10 minutes. If you did not request this, ignore this email.</p>`
   });
+}
+
+async function sendHiddenSecretRecoveryCode(email, code) {
+  return sendEmailOtp(email, code, "hidden chat recovery");
 }
 
 const pendingRecordingTranscodes = new Map();
@@ -220,6 +248,8 @@ const defaultDb = {
     passwordHash: bcrypt.hashSync("1234546", 10),
     updatedAt: new Date().toISOString(),
     secretCodeLoginEnabled: false,
+    signupMode: SIGNUP_MODE_GOOGLE_AND_OTP,
+    animations: { ...DEFAULT_ANIMATIONS },
     hiddenAdminConversationIds: [],
     updateNotify: {
       enabled: false,
@@ -235,6 +265,10 @@ function normalizeDb(raw = {}) {
     ...defaultDb.admin,
     ...(raw.admin || {}),
     email: raw.admin?.email || defaultDb.admin.email,
+    signupMode: [SIGNUP_MODE_GOOGLE_ONLY, SIGNUP_MODE_GOOGLE_AND_OTP].includes(raw.admin?.signupMode)
+      ? raw.admin.signupMode
+      : defaultDb.admin.signupMode,
+    animations: normalizeAnimationSettings(raw.admin?.animations),
     hiddenAdminConversationIds: Array.isArray(raw.admin?.hiddenAdminConversationIds) ? raw.admin.hiddenAdminConversationIds : [],
     updateNotify: {
       ...defaultDb.admin.updateNotify,
@@ -506,6 +540,14 @@ function isAvailableMobile(mobile, excludedUserId = null) {
   ));
 }
 
+function isAvailableEmail(email, excludedUserId = null) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  return !db.users.some((user) => (
+    user.id !== excludedUserId
+      && String(user.email || "").trim().toLowerCase() === normalizedEmail
+  ));
+}
+
 function validUserId(value = "") {
   return /^[a-z0-9](?:[a-z0-9._]{1,28}[a-z0-9])?$/.test(value) && !value.includes("..");
 }
@@ -621,7 +663,7 @@ async function verifyGoogleIdToken(idToken, { maxAgeSeconds = null } = {}) {
 }
 
 function profileIsComplete(user) {
-  return Boolean(user?.displayName && user?.mobile && user?.userId && user?.passwordHash);
+  return Boolean(user?.displayName && user?.mobile && user?.userId);
 }
 
 function signAdmin() {
@@ -631,34 +673,20 @@ function signAdmin() {
 async function verifyAdminCredentials(loginValue, password) {
   const normalizedLogin = String(loginValue || "").trim().toLowerCase();
   const admin = db.admin || {};
-  const loginCandidates = [admin.loginId, admin.email, "6388391842", "yadavabhinav551@gmail.com"]
+  const loginCandidates = [admin.loginId, admin.email]
     .filter(Boolean)
     .map((value) => String(value).trim().toLowerCase());
   const loginMatches = loginCandidates.includes(normalizedLogin);
   if (!loginMatches) return { ok: false, reason: "login-mismatch" };
 
-  const possiblePasswords = [password, "1234546", "123456"].filter((value, index, list) => value && list.indexOf(value) === index);
-  if (admin.passwordHash) {
-    for (const candidatePassword of possiblePasswords) {
-      try {
-        if (await bcrypt.compare(candidatePassword, admin.passwordHash)) {
-          return {
-            ok: true,
-            shouldRehash: candidatePassword !== password || !admin.passwordHash || admin.passwordHash === ""
-          };
-        }
-      } catch {
-        // Ignore and continue to fallback checks.
-      }
-    }
+  if (!admin.passwordHash || !password) return { ok: false, reason: "password-mismatch" };
+  try {
+    return await bcrypt.compare(password, admin.passwordHash)
+      ? { ok: true }
+      : { ok: false, reason: "password-mismatch" };
+  } catch {
+    return { ok: false, reason: "password-mismatch" };
   }
-
-  const directPasswordMatch = possiblePasswords.includes("1234546") && password === "1234546";
-  if (directPasswordMatch) {
-    return { ok: true, shouldRehash: true };
-  }
-
-  return { ok: false, reason: "password-mismatch" };
 }
 
 function signPrivacy(user) {
@@ -1346,6 +1374,8 @@ app.get("/api/app-config", (_req, res) => {
   const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
   res.json({
     googleClientId: GOOGLE_CLIENT_ID,
+    signupMode: db.admin.signupMode || defaultDb.admin.signupMode,
+    animations: normalizeAnimationSettings(db.admin.animations),
     updateNotify: {
       enabled: Boolean(updateNotify.enabled),
       version: Number(updateNotify.version || 1),
@@ -1359,8 +1389,183 @@ app.get(ADMIN_ENTRY, (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
 
+function isValidEmail(email) {
+  return String(email || "").length <= 254
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || ""));
+}
+
+async function issueEmailAuthOtp(req, res, email, purpose, payload = null) {
+  const rateLimitKey = `${purpose}:${email}`;
+  const lastRequestedAt = emailAuthOtpRequests.get(rateLimitKey) || 0;
+  const waitMs = EMAIL_AUTH_OTP_REQUEST_INTERVAL_MS - (Date.now() - lastRequestedAt);
+  if (waitMs > 0) {
+    res.status(429).json({ error: `Wait ${Math.ceil(waitMs / 1000)} seconds before requesting another code.` });
+    return false;
+  }
+  emailAuthOtpRequests.set(rateLimitKey, Date.now());
+  const code = String(crypto.randomInt(100000, 1000000));
+  try {
+    await sendEmailOtp(email, code, purpose === "signup" ? "sign-up verification" : "sign-in");
+  } catch (error) {
+    if (error.code !== "SMTP_NOT_CONFIGURED") {
+      console.error("Email authentication code delivery failed:", error.message || error);
+    }
+    res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
+      error: error.code === "SMTP_NOT_CONFIGURED"
+        ? error.message
+        : "Could not send the email code. Check the email service configuration and try again."
+    });
+    return false;
+  }
+  const otpKey = `${purpose}:${email}`;
+  emailAuthOtps.set(otpKey, {
+    codeHash: crypto.createHash("sha256").update(code).digest("hex"),
+    expiresAt: Date.now() + EMAIL_AUTH_OTP_TTL_MS,
+    attempts: 0,
+    payload
+  });
+  res.json({ ok: true, email, expiresInSeconds: EMAIL_AUTH_OTP_TTL_MS / 1000 });
+  return true;
+}
+
+function verifyEmailAuthOtp(email, purpose, submittedCode) {
+  const otpKey = `${purpose}:${email}`;
+  const entry = emailAuthOtps.get(otpKey);
+  if (!entry || Date.now() >= entry.expiresAt) {
+    emailAuthOtps.delete(otpKey);
+    return { error: "Code expired. Request a new email code." };
+  }
+  const code = String(submittedCode || "").trim();
+  if (!/^\d{6}$/.test(code)) return { error: "Enter the 6-digit code from your email." };
+  entry.attempts += 1;
+  const submittedHash = crypto.createHash("sha256").update(code).digest("hex");
+  const matches = crypto.timingSafeEqual(Buffer.from(submittedHash, "hex"), Buffer.from(entry.codeHash, "hex"));
+  if (!matches) {
+    if (entry.attempts >= 5) emailAuthOtps.delete(otpKey);
+    return { error: entry.attempts >= 5 ? "Too many incorrect attempts. Request a new email code." : "Incorrect email code." };
+  }
+  emailAuthOtps.delete(otpKey);
+  return { entry };
+}
+
+function emailOtpMatches(code, codeHash) {
+  const normalizedCode = String(code || "").trim();
+  if (!/^\d{6}$/.test(normalizedCode) || typeof codeHash !== "string" || !/^[a-f0-9]{64}$/.test(codeHash)) {
+    return false;
+  }
+  const submittedHash = crypto.createHash("sha256").update(normalizedCode).digest();
+  return crypto.timingSafeEqual(submittedHash, Buffer.from(codeHash, "hex"));
+}
+
+app.post("/api/auth/email/signup/request", async (req, res) => {
+  if ((db.admin.signupMode || defaultDb.admin.signupMode) !== SIGNUP_MODE_GOOGLE_AND_OTP) {
+    return res.status(403).json({ error: "Account creation is currently available only through Google sign-up." });
+  }
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const displayName = String(req.body.displayName || "").trim();
+  const mobile = String(req.body.mobile || "").trim();
+  const calculatorLockPassword = String(req.body.calculatorLockPassword || "").trim();
+  const userIdResult = validateUserId(req.body.userId);
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Enter a valid email address." });
+  if (!displayName || displayName.length > 80) return res.status(400).json({ error: "Name is required and must be 80 characters or fewer." });
+  if (normalizeMobile(mobile).length < 7 || normalizeMobile(mobile).length > 15) {
+    return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+  }
+  if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
+  if (calculatorLockPassword && !validPrivacyCode(calculatorLockPassword)) {
+    return res.status(400).json({ error: "Optional calculator lock password must be exactly 6 digits." });
+  }
+  if (!isAvailableEmail(email) || !isAvailableMobile(mobile) || !isAvailableUserId(userIdResult.userId)) {
+    return res.status(409).json({ error: "Email, phone number, or user ID already exists. Sign in or choose different details." });
+  }
+  return issueEmailAuthOtp(req, res, email, "signup", {
+    email,
+    displayName,
+    mobile,
+    userId: userIdResult.userId,
+    calculatorLockPassword
+  });
+});
+
+app.post("/api/auth/email/signup/complete", async (req, res) => {
+  if ((db.admin.signupMode || defaultDb.admin.signupMode) !== SIGNUP_MODE_GOOGLE_AND_OTP) {
+    return res.status(403).json({ error: "Account creation is currently available only through Google sign-up." });
+  }
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const result = verifyEmailAuthOtp(email, "signup", req.body.code);
+  if (result.error) return res.status(401).json({ error: result.error });
+  const signup = result.entry.payload;
+  if (!signup || signup.email !== email) return res.status(400).json({ error: "Sign-up details expired. Request a new email code." });
+  if (!isAvailableEmail(email) || !isAvailableMobile(signup.mobile) || !isAvailableUserId(signup.userId)) {
+    return res.status(409).json({ error: "Email, phone number, or user ID was registered while you were signing up. Please sign in or update your details." });
+  }
+  const privacyCodeHash = signup.calculatorLockPassword
+    ? await bcrypt.hash(signup.calculatorLockPassword, 10)
+    : null;
+  if (!isAvailableEmail(email) || !isAvailableMobile(signup.mobile) || !isAvailableUserId(signup.userId)) {
+    return res.status(409).json({ error: "Email, phone number, or user ID was registered while you were signing up. Please sign in or update your details." });
+  }
+  const user = {
+    id: crypto.randomUUID(),
+    displayName: signup.displayName,
+    mobile: signup.mobile,
+    userId: signup.userId,
+    email,
+    emailVerifiedAt: new Date().toISOString(),
+    passwordHash: null,
+    googleSubject: null,
+    blocked: false,
+    suspended: false,
+    deleted: false,
+    hiddenUserIds: [],
+    blockedUserIds: [],
+    deletedUserIds: [],
+    pinnedConversationIds: [],
+    archivedConversationIds: [],
+    starredMessageIds: [],
+    reactionEmojis: [],
+    messageAutoDelete: { enabled: false, ttlHours: 0 },
+    statusText: "",
+    statusUpdatedAt: null,
+    avatarUrl: null,
+    hiddenChatSecret: null,
+    notificationEnabled: true,
+    lockedChatPin: null,
+    privacyMode: { enabled: Boolean(privacyCodeHash), autoLockMinutes: 0, panicShortcut: "button" },
+    privacyCodeHash,
+    privacyCodeAdminValue: null,
+    createdAt: new Date().toISOString(),
+    lastSeenAt: null
+  };
+  db.users.push(user);
+  saveDb();
+  res.json({ token: signUser(user), privacyToken: signPrivacy(user), user: ownUser(user) });
+});
+
+app.post("/api/auth/email/login/request", async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Enter the email address linked to your account." });
+  const user = db.users.find((item) => String(item.email || "").trim().toLowerCase() === email);
+  if (!user || user.deleted || user.blocked || user.suspended) {
+    return res.status(404).json({ error: "No active account is linked to this email address." });
+  }
+  return issueEmailAuthOtp(req, res, email, "login");
+});
+
+app.post("/api/auth/email/login/verify", (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Enter a valid email address." });
+  const result = verifyEmailAuthOtp(email, "login", req.body.code);
+  if (result.error) return res.status(401).json({ error: result.error });
+  const user = db.users.find((item) => String(item.email || "").trim().toLowerCase() === email);
+  if (!user || user.deleted || user.blocked || user.suspended) {
+    return res.status(403).json({ error: "Account is blocked, suspended, or no longer active." });
+  }
+  res.json({ token: signUser(user), privacyToken: signPrivacy(user), user: ownUser(user) });
+});
+
 app.post("/api/signup", async (req, res) => {
-  res.status(410).json({ error: "Create your account with Google sign-in." });
+  res.status(410).json({ error: "Use email verification or Google sign-up to create an account." });
 });
 
 app.post("/api/auth/google", async (req, res) => {
@@ -1517,17 +1722,17 @@ app.post("/api/auth/google/complete-profile", async (req, res) => {
 });
 
 app.post("/api/login", async (req, res) => {
-  const { login, password } = req.body;
+  const { login, password = "" } = req.body;
   const loginId = normalizeUserId(login);
   const normalizedLogin = String(login || "").trim().toLowerCase();
   const user = db.users.find((item) => (
     !item.deleted && (
       normalizeUserId(item.userId) === loginId
-      || item.mobile === login
+      || (normalizeMobile(login).length >= 7 && normalizeMobile(item.mobile) === normalizeMobile(login))
       || (item.email && String(item.email).toLowerCase() === normalizedLogin)
     )
   ));
-  const passwordMatches = user ? await bcrypt.compare(password, user.passwordHash) : false;
+  const passwordMatches = Boolean(user?.passwordHash && password && await bcrypt.compare(password, user.passwordHash));
   const secretCodeMatches = Boolean(
     db.admin.secretCodeLoginEnabled
       && user
@@ -2745,14 +2950,6 @@ app.post("/api/admin/login", async (req, res) => {
     return res.status(401).json({ error: "Invalid admin credentials." });
   }
 
-  if (result.shouldRehash) {
-    db.admin.loginId = db.admin.loginId || "6388391842";
-    db.admin.email = db.admin.email || "yadavabhinav551@gmail.com";
-    db.admin.passwordHash = await bcrypt.hash("1234546", 10);
-    db.admin.updatedAt = new Date().toISOString();
-    saveDb();
-  }
-
   res.json({ token: signAdmin(), admin: { loginId: db.admin.loginId, email: db.admin.email } });
 });
 
@@ -2841,8 +3038,14 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
       url: entry.media?.url
     }));
   res.json({
+    credentials: {
+      loginId: String(db.admin.loginId || ""),
+      email: String(db.admin.email || "")
+    },
     settings: {
       secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled),
+      signupMode: db.admin.signupMode || defaultDb.admin.signupMode,
+      animations: normalizeAnimationSettings(db.admin.animations),
       updateNotify: {
         enabled: Boolean(updateNotify.enabled),
         version: Number(updateNotify.version || 1),
@@ -2974,6 +3177,7 @@ app.post("/api/admin/cleanup", authAdmin, (req, res) => {
       email: preservedAdmin.email,
       passwordHash: preservedAdmin.passwordHash,
       secretCodeLoginEnabled: false,
+      signupMode: defaultDb.admin.signupMode,
       updateNotify: defaultDb.admin.updateNotify,
       hiddenAdminConversationIds: [] ,
       updatedAt: preservedAdmin.updatedAt
@@ -3034,19 +3238,172 @@ app.patch("/api/admin/conversations/:id/hidden", authAdmin, (req, res) => {
   res.json({ ok: true, hidden });
 });
 
+app.post("/api/admin/credentials/email-otp", authAdmin, async (req, res) => {
+  const currentEmail = String(db.admin.email || "").trim().toLowerCase();
+  const requestedEmail = String(req.body.email || currentEmail).trim().toLowerCase();
+  if (!isValidEmail(currentEmail)) {
+    return res.status(400).json({ error: "Set a valid current admin email before requesting a verification code." });
+  }
+  if (!isValidEmail(requestedEmail)) return res.status(400).json({ error: "Enter a valid new admin email address." });
+
+  const requestKey = currentEmail;
+  const lastRequestedAt = adminCredentialOtpRequests.get(requestKey) || 0;
+  const waitMs = EMAIL_AUTH_OTP_REQUEST_INTERVAL_MS - (Date.now() - lastRequestedAt);
+  if (waitMs > 0) {
+    return res.status(429).json({ error: `Wait ${Math.ceil(waitMs / 1000)} seconds before requesting another code.` });
+  }
+
+  adminCredentialOtpRequests.set(requestKey, Date.now());
+  const currentCode = String(crypto.randomInt(100000, 1000000));
+  const newEmailCode = requestedEmail !== currentEmail
+    ? String(crypto.randomInt(100000, 1000000))
+    : null;
+  try {
+    await sendEmailOtp(currentEmail, currentCode, "admin credential change");
+    if (newEmailCode) await sendEmailOtp(requestedEmail, newEmailCode, "new admin email verification");
+  } catch (error) {
+    if (error.code !== "SMTP_NOT_CONFIGURED") {
+      console.error("Admin credential code delivery failed:", error.message || error);
+    }
+    return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
+      error: error.code === "SMTP_NOT_CONFIGURED"
+        ? error.message
+        : "Could not send the verification code. Check the email service configuration and try again."
+    });
+  }
+
+  adminCredentialOtps.set("admin", {
+    currentEmail,
+    requestedEmail,
+    currentCodeHash: crypto.createHash("sha256").update(currentCode).digest("hex"),
+    newEmailCodeHash: newEmailCode
+      ? crypto.createHash("sha256").update(newEmailCode).digest("hex")
+      : null,
+    expiresAt: Date.now() + EMAIL_AUTH_OTP_TTL_MS,
+    attempts: 0
+  });
+  res.json({
+    ok: true,
+    currentEmail,
+    requestedEmail,
+    newEmailVerificationRequired: Boolean(newEmailCode),
+    expiresInSeconds: EMAIL_AUTH_OTP_TTL_MS / 1000
+  });
+});
+
 app.post("/api/admin/credentials", authAdmin, async (req, res) => {
-  const { loginId, password } = req.body;
-  if (!loginId || !password) return res.status(400).json({ error: "Login ID and password are required." });
+  const currentLoginId = String(db.admin.loginId || "");
+  const currentEmail = String(db.admin.email || "").trim().toLowerCase();
+  const loginIdInput = String(req.body.loginId || "").trim();
+  const emailInput = String(req.body.email || "").trim().toLowerCase();
+  const newPassword = String(req.body.password || "");
+  const loginId = loginIdInput || currentLoginId;
+  const email = emailInput || currentEmail;
+  const loginIdChanged = loginId !== currentLoginId;
+  const emailChanged = email !== currentEmail;
+  const passwordChanged = Boolean(newPassword);
+
+  if (!loginIdChanged && !emailChanged && !passwordChanged) {
+    return res.status(400).json({ error: "Enter a new admin email, login ID, or password to update." });
+  }
+  if (loginId.length < 3 || loginId.length > 80) {
+    return res.status(400).json({ error: "Admin login ID must be between 3 and 80 characters." });
+  }
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Enter a valid admin email address." });
+  if (passwordChanged && (newPassword.length < 8 || newPassword.length > 128)) {
+    return res.status(400).json({ error: "New admin password must be between 8 and 128 characters." });
+  }
+
+  const verificationMethod = String(req.body.verificationMethod || "");
+  if (verificationMethod === "current_password") {
+    if (emailChanged) {
+      return res.status(400).json({ error: "Verify the current and new email addresses with Email OTP, or use the matching Google account, to change the admin email." });
+    }
+    if (!db.admin.passwordHash || !req.body.currentPassword
+      || !(await bcrypt.compare(String(req.body.currentPassword), db.admin.passwordHash))) {
+      return res.status(401).json({ error: "Current admin password is incorrect." });
+    }
+  } else if (verificationMethod === "email_otp") {
+    const challenge = adminCredentialOtps.get("admin");
+    const submittedEmail = String(req.body.email || currentEmail).trim().toLowerCase();
+    const validChallenge = Boolean(
+      challenge
+      && Date.now() < challenge.expiresAt
+      && challenge.currentEmail === currentEmail
+      && challenge.requestedEmail === submittedEmail
+      && submittedEmail === email
+    );
+    if (!validChallenge) {
+      adminCredentialOtps.delete("admin");
+      return res.status(401).json({ error: "Admin email verification expired or does not match these changes. Request new codes." });
+    }
+    const currentCodeMatches = emailOtpMatches(req.body.currentEmailCode, challenge.currentCodeHash);
+    const newEmailCodeMatches = !challenge.newEmailCodeHash
+      || emailOtpMatches(req.body.newEmailCode, challenge.newEmailCodeHash);
+    if (!currentCodeMatches || !newEmailCodeMatches) {
+      challenge.attempts += 1;
+      if (challenge.attempts >= 5) adminCredentialOtps.delete("admin");
+      return res.status(401).json({
+        error: challenge.attempts >= 5
+          ? "Too many incorrect codes. Request new verification codes."
+          : "The current or new email verification code is incorrect."
+      });
+    }
+    adminCredentialOtps.delete("admin");
+  } else if (verificationMethod === "google") {
+    let identity;
+    try {
+      identity = await verifyGoogleIdToken(req.body.googleCredential, { maxAgeSeconds: 5 * 60 });
+    } catch (error) {
+      console.error("Admin Google credential verification failed:", error.message || error);
+      return res.status(401).json({ error: "Could not verify the Google account. Sign in with Google again and retry." });
+    }
+    if (identity.email !== email) {
+      return res.status(403).json({ error: "Verify the Google account matching the admin email you want to use." });
+    }
+  } else {
+    return res.status(400).json({ error: "Choose current password, email OTP, or Google account verification." });
+  }
+
   db.admin.loginId = loginId;
-  db.admin.passwordHash = await bcrypt.hash(password, 10);
+  db.admin.email = email;
+  if (passwordChanged) db.admin.passwordHash = await bcrypt.hash(newPassword, 10);
   db.admin.updatedAt = new Date().toISOString();
   saveDb();
-  res.json({ ok: true, admin: { loginId } });
+  res.json({
+    ok: true,
+    credentials: {
+      loginId: db.admin.loginId,
+      email: db.admin.email
+    }
+  });
 });
 
 app.patch("/api/admin/settings", authAdmin, (req, res) => {
+  if (req.body.animations !== undefined && (!req.body.animations || typeof req.body.animations !== "object" || Array.isArray(req.body.animations))) {
+    return res.status(400).json({ error: "Animation settings must be an object of boolean options." });
+  }
+  if (req.body.animations !== undefined) {
+    const invalidAnimationSetting = Object.keys(req.body.animations)
+      .find((key) => !Object.hasOwn(DEFAULT_ANIMATIONS, key) || typeof req.body.animations[key] !== "boolean");
+    if (invalidAnimationSetting) {
+      return res.status(400).json({ error: "Animation settings must contain only supported boolean options." });
+    }
+  }
+  if (req.body.signupMode !== undefined) {
+    if (![SIGNUP_MODE_GOOGLE_ONLY, SIGNUP_MODE_GOOGLE_AND_OTP].includes(req.body.signupMode)) {
+      return res.status(400).json({ error: "Choose a valid account sign-up option." });
+    }
+    db.admin.signupMode = req.body.signupMode;
+  }
   if (typeof req.body.secretCodeLoginEnabled === "boolean") {
     db.admin.secretCodeLoginEnabled = req.body.secretCodeLoginEnabled;
+  }
+  if (req.body.animations !== undefined) {
+    db.admin.animations = {
+      ...normalizeAnimationSettings(db.admin.animations),
+      ...req.body.animations
+    };
   }
   if (req.body.updateNotify && typeof req.body.updateNotify === "object") {
     const currentUpdate = db.admin.updateNotify || defaultDb.admin.updateNotify;
@@ -3065,6 +3422,7 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
   db.admin.updatedAt = new Date().toISOString();
   saveDb();
   const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
+  const animations = normalizeAnimationSettings(db.admin.animations);
   if (req.body.updateNotify && typeof req.body.updateNotify === "object") {
     io.emit("app:update", {
       updateNotify: {
@@ -3075,10 +3433,15 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
       }
     });
   }
+  if (req.body.animations !== undefined) {
+    io.emit("app:animations", { animations });
+  }
   res.json({
     ok: true,
     settings: {
       secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled),
+      signupMode: db.admin.signupMode || defaultDb.admin.signupMode,
+      animations,
       updateNotify: {
         enabled: Boolean(updateNotify.enabled),
         version: Number(updateNotify.version || 1),

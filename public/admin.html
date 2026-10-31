@@ -12,11 +12,12 @@
     <link rel="manifest" href="/admin-manifest.json">
     <link rel="icon" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
-    <link rel="preload" href="/styles.css?v=recording-media-53" as="style">
-    <link rel="stylesheet" href="/styles.css?v=recording-media-53">
-    <link rel="stylesheet" href="/admin.css?v=hidden-chat-recovery-49">
+    <link rel="preload" href="/styles.css?v=website-animations-55" as="style">
+    <link rel="stylesheet" href="/styles.css?v=website-animations-55">
+    <link rel="stylesheet" href="/admin.css?v=website-animations-52">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/admin.js?v=v123-hidden-chat-recovery" defer></script>
+    <script src="/admin.js?v=v126-website-animations" defer></script>
   </head>
   <body class="admin-page">
     <main class="admin-shell">
@@ -100,6 +101,64 @@
                 <button id="cleanupBothClustersBtn" class="danger-action" type="button">Clean both clusters</button>
               </div>
             </div>
+            <section class="signup-policy-setting">
+              <strong>Account sign-up</strong>
+              <p>Choose which methods new users can use to create an account.</p>
+              <div class="signup-policy-options" role="group" aria-label="Allowed account sign-up methods">
+                <button class="signup-policy-choice" type="button" data-signup-mode="google_only" aria-pressed="false">
+                  <strong>Google only</strong>
+                  <small>New accounts must be created with Google.</small>
+                </button>
+                <button class="signup-policy-choice" type="button" data-signup-mode="google_and_otp" aria-pressed="false">
+                  <strong>Google + Email OTP</strong>
+                  <small>Allow Google sign-up or manual email verification.</small>
+                </button>
+              </div>
+            </section>
+            <section class="animation-settings" aria-labelledby="animationSettingsTitle">
+              <div class="animation-settings-heading">
+                <strong id="animationSettingsTitle">Website animations</strong>
+                <p>Control subtle motion effects across the website for all users.</p>
+              </div>
+              <label class="setting-toggle animation-master-toggle">
+                <input type="checkbox" data-animation-setting="enabled">
+                <span>
+                  <strong>Enable all animations</strong>
+                  <small>Master switch for every motion effect on the site.</small>
+                </span>
+              </label>
+              <div class="animation-settings-options">
+                <label class="setting-toggle">
+                  <input type="checkbox" data-animation-setting="ambient">
+                  <span>
+                    <strong>Ambient backgrounds</strong>
+                    <small>Slow, soft movement behind the app screens.</small>
+                  </span>
+                </label>
+                <label class="setting-toggle">
+                  <input type="checkbox" data-animation-setting="surfaces">
+                  <span>
+                    <strong>Panel atmosphere</strong>
+                    <small>Subtle lighting on cards and chat headers.</small>
+                  </span>
+                </label>
+                <label class="setting-toggle">
+                  <input type="checkbox" data-animation-setting="accents">
+                  <span>
+                    <strong>Animated highlights</strong>
+                    <small>Gentle motion on the app mark and key actions.</small>
+                  </span>
+                </label>
+                <label class="setting-toggle">
+                  <input type="checkbox" data-animation-setting="interactions">
+                  <span>
+                    <strong>Smooth interactions</strong>
+                    <small>Polished hover, focus, and press transitions.</small>
+                  </span>
+                </label>
+              </div>
+              <small id="animationSettingsStatus" class="settings-note" role="status" aria-live="polite"></small>
+            </section>
             <label class="setting-toggle">
               <input id="secretCodeLoginToggle" type="checkbox">
               <span>
@@ -128,11 +187,53 @@
               <input id="restoreInput" type="file" accept="application/json,.json">
               <button id="restoreBtn" class="danger-action" type="button">Restore backup</button>
             </div>
-            <form id="credentialsForm" class="stack">
-              <input name="loginId" placeholder="New Admin Login ID" required>
-              <input name="password" placeholder="New Admin Password" type="password" required>
-              <button class="primary" type="submit">Update credentials</button>
-            </form>
+            <section class="admin-credentials-panel">
+              <h3>Admin credentials</h3>
+              <p>Current email: <strong id="adminCurrentEmail"></strong></p>
+              <p>Current login ID: <strong id="adminCurrentLoginId"></strong></p>
+              <form id="credentialsForm" class="stack">
+                <label>
+                  <span>New admin email <small>(optional)</small></span>
+                  <input id="adminCredentialEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="Leave blank to keep current email">
+                </label>
+                <label>
+                  <span>New login ID <small>(optional)</small></span>
+                  <input id="adminCredentialLoginId" name="loginId" autocomplete="username" maxlength="80" placeholder="Leave blank to keep current login ID">
+                </label>
+                <label>
+                  <span>New password <small>(optional, 8–128 characters)</small></span>
+                  <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" placeholder="Leave blank to keep current password">
+                </label>
+                <div class="admin-credential-methods" role="group" aria-label="Verify admin credential changes">
+                  <button class="admin-credential-method selected" type="button" data-credential-method="current_password" aria-pressed="true">Current password</button>
+                  <button class="admin-credential-method" type="button" data-credential-method="email_otp" aria-pressed="false">Email OTP</button>
+                  <button class="admin-credential-method" type="button" data-credential-method="google" aria-pressed="false">Google</button>
+                </div>
+                <div id="adminCurrentPasswordPanel" class="admin-credential-verification">
+                  <label>
+                    <span>Current admin password</span>
+                    <input name="currentPassword" type="password" autocomplete="current-password">
+                  </label>
+                </div>
+                <div id="adminEmailOtpPanel" class="admin-credential-verification hidden">
+                  <button id="sendAdminCredentialOtpBtn" type="button">Send verification code</button>
+                  <p id="adminCredentialOtpStatus" class="settings-note" role="status" aria-live="polite"></p>
+                  <label>
+                    <span>Code sent to current admin email</span>
+                    <input id="adminCurrentEmailCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+                  </label>
+                  <label id="adminNewEmailCodeGroup" class="hidden">
+                    <span>Code sent to new admin email</span>
+                    <input id="adminNewEmailCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+                  </label>
+                </div>
+                <div id="adminGooglePanel" class="admin-credential-verification hidden">
+                  <div id="adminGoogleCredentialButton" class="google-signin-button"></div>
+                  <small id="adminGoogleCredentialStatus" class="settings-note">Verify the Google account matching the admin email you want to use.</small>
+                </div>
+                <button class="primary" type="submit">Save admin credentials</button>
+              </form>
+            </section>
             <h2>Groups</h2>
             <div id="adminGroups"></div>
             <section id="groupEditor" class="admin-panel-group-editor hidden">

@@ -149,6 +149,64 @@
   background: rgba(5, 184, 143, 0.08);
 }
 
+.signup-policy-setting {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #111c30;
+}
+
+.signup-policy-setting > strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.signup-policy-setting > p,
+.signup-policy-choice small {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.signup-policy-options {
+  display: grid;
+  gap: 7px;
+}
+
+.signup-policy-choice {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 9px;
+  background: #1e293b;
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.signup-policy-choice strong {
+  font-size: 12px;
+}
+
+.signup-policy-choice:hover {
+  border-color: rgba(5, 184, 143, 0.55);
+}
+
+.signup-policy-choice.selected {
+  border-color: #05b88f;
+  background: rgba(5, 184, 143, 0.12);
+  box-shadow: 0 0 0 1px rgba(5, 184, 143, 0.16);
+}
+
+.signup-policy-choice:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .admin-item strong {
   font-size: 14px;
   font-weight: 700;
@@ -299,6 +357,187 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.animation-settings {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(5, 184, 143, 0.22);
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse at 100% 0%, rgba(5, 184, 143, 0.12), transparent 58%),
+    #111c30;
+}
+
+.animation-settings-heading {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.animation-settings-heading strong {
+  color: #f8fafc;
+  font-size: 14px;
+}
+
+.animation-settings-heading p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.animation-settings .setting-toggle {
+  min-height: 50px;
+  padding: 9px 10px;
+  border-color: rgba(148, 163, 184, 0.12);
+  background: rgba(11, 18, 32, 0.72);
+}
+
+.animation-settings .setting-toggle input {
+  accent-color: #05b88f;
+}
+
+.animation-settings-options {
+  display: grid;
+  gap: 6px;
+  transition: opacity 0.18s ease;
+}
+
+.animation-settings-options.disabled {
+  opacity: 0.48;
+}
+
+.animation-settings .settings-note {
+  min-height: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.admin-credentials-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: #111c30;
+}
+
+.admin-credentials-panel h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 14px;
+}
+
+.admin-credentials-panel > p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.admin-credentials-panel > p strong {
+  color: #e2e8f0;
+}
+
+.admin-credentials-panel form {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-credentials-panel form > label {
+  display: grid;
+  gap: 5px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.admin-credentials-panel form > label small {
+  color: #64748b;
+}
+
+.admin-credentials-panel input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  outline: none;
+  background: #0b1220;
+  color: #f8fafc;
+  font: inherit;
+}
+
+.admin-credentials-panel input:focus {
+  border-color: #05b88f;
+  box-shadow: 0 0 0 2px rgba(5, 184, 143, 0.14);
+}
+
+.admin-credential-methods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #0b1220;
+}
+
+.admin-credential-methods button {
+  min-width: 0;
+  padding: 8px 4px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.admin-credential-methods button.selected {
+  border-color: rgba(5, 184, 143, 0.3);
+  background: rgba(5, 184, 143, 0.14);
+  color: #5eead4;
+}
+
+.admin-credential-verification {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.35);
+}
+
+.admin-credential-verification > label {
+  display: grid;
+  gap: 5px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.admin-credential-verification > button {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-credential-verification > button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.admin-credential-verification .settings-note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-credentials-panel form > button[type="submit"] {
+  width: 100%;
 }
 
 @media (max-width: 1200px) {

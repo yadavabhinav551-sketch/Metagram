@@ -1,11 +1,17 @@
 const adminState = {
   token: localStorage.getItem("adminToken"),
+  credentials: { loginId: "", email: "" },
+  googleClientId: "",
+  googleInitialized: false,
+  googleCredential: "",
+  credentialMethod: "current_password",
+  animationDefaults: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true },
   users: [],
   conversations: [],
   statuses: [],
   groups: [],
   stats: null,
-  settings: { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } },
+  settings: { secretCodeLoginEnabled: false, signupMode: "google_and_otp", animations: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true }, updateNotify: { enabled: false, version: 1, message: "" } },
   activeConversationId: null,
   socket: null,
   installPrompt: null,
@@ -62,18 +68,20 @@ function showInstallHelp() {
 
 async function loadOverview() {
   const data = await adminApi("/api/admin/overview");
+  adminState.credentials = data.credentials || { loginId: "", email: "" };
   adminState.users = data.users;
   adminState.conversations = data.conversations;
   adminState.statuses = data.statuses || [];
   adminState.groups = data.groups;
   adminState.stats = data.stats;
-  adminState.settings = data.settings || { secretCodeLoginEnabled: false, updateNotify: { enabled: false, version: 1, message: "" } };
+  adminState.settings = data.settings || { secretCodeLoginEnabled: false, signupMode: "google_and_otp", updateNotify: { enabled: false, version: 1, message: "" } };
   renderUsers();
   renderConversations();
   renderStatuses();
   renderMediaUsage();
   renderGroupsAndMembers();
   renderSettings();
+  renderAdminCredentials();
   renderStats();
   renderConversationInfo(adminState.conversations.find((item) => item.id === adminState.activeConversationId));
 }
@@ -101,12 +109,80 @@ function renderStats() {
 }
 
 function renderSettings() {
+  const signupMode = adminState.settings.signupMode || "google_and_otp";
+  document.querySelectorAll(".signup-policy-choice").forEach((button) => {
+    const selected = button.dataset.signupMode === signupMode;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
   $("secretCodeLoginToggle").checked = Boolean(adminState.settings.secretCodeLoginEnabled);
+  const animations = { ...adminState.animationDefaults, ...(adminState.settings.animations || {}) };
+  document.querySelectorAll("[data-animation-setting]").forEach((input) => {
+    const setting = input.dataset.animationSetting;
+    input.checked = Boolean(animations[setting]);
+    input.disabled = setting !== "enabled" && !animations.enabled;
+  });
+  document.querySelector(".animation-settings-options").classList.toggle("disabled", !animations.enabled);
+  $("animationSettingsStatus").textContent = animations.enabled
+    ? "Animation preferences apply across the website."
+    : "All website animations are currently turned off.";
   const updateNotify = adminState.settings.updateNotify || {};
   $("updateNotifyToggle").checked = Boolean(updateNotify.enabled);
   $("updateNotifyMessage").value = updateNotify.message || "Please update the app to continue.";
   const updatedAt = updateNotify.updatedAt ? new Date(updateNotify.updatedAt).toLocaleString() : "not sent yet";
   $("updateNotifyStatus").textContent = `Version ${updateNotify.version || 1} · ${updatedAt}`;
+}
+
+function renderAdminCredentials() {
+  $("adminCurrentEmail").textContent = adminState.credentials.email || "Not set";
+  $("adminCurrentLoginId").textContent = adminState.credentials.loginId || "Not set";
+}
+
+function setCredentialMethod(method) {
+  adminState.credentialMethod = method;
+  document.querySelectorAll(".admin-credential-method").forEach((button) => {
+    const selected = button.dataset.credentialMethod === method;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  $("adminCurrentPasswordPanel").classList.toggle("hidden", method !== "current_password");
+  $("adminEmailOtpPanel").classList.toggle("hidden", method !== "email_otp");
+  $("adminGooglePanel").classList.toggle("hidden", method !== "google");
+  if (method === "google") renderAdminGoogleCredentialButton();
+}
+
+function renderAdminGoogleCredentialButton() {
+  const container = $("adminGoogleCredentialButton");
+  container.replaceChildren();
+  if (!adminState.googleClientId) {
+    $("adminGoogleCredentialStatus").textContent = "Google sign-in is not configured on this server.";
+    return;
+  }
+  if (!window.google?.accounts?.id) {
+    $("adminGoogleCredentialStatus").textContent = "Google sign-in is loading. Try again in a moment.";
+    return;
+  }
+  if (!adminState.googleInitialized) {
+    window.google.accounts.id.initialize({
+      client_id: adminState.googleClientId,
+      callback: (response) => {
+        adminState.googleCredential = response.credential;
+        $("adminGoogleCredentialStatus").textContent = "Google account selected. Save to verify and update credentials.";
+      },
+      auto_select: false
+    });
+    adminState.googleInitialized = true;
+  }
+  window.google.accounts.id.renderButton(container, {
+    theme: "outline",
+    size: "large",
+    shape: "rectangular",
+    text: "continue_with",
+    width: Math.max(180, Math.min(360, Math.floor(container.clientWidth || 320)))
+  });
+  $("adminGoogleCredentialStatus").textContent = adminState.googleCredential
+    ? "Google account selected. Save to verify and update credentials."
+    : "Verify the Google account matching the admin email you want to use.";
 }
 
 function formatLastSeen(value) {
@@ -808,12 +884,97 @@ $("adminLogoutBtn").addEventListener("click", () => {
   $("adminError").textContent = "";
 });
 
+document.querySelectorAll(".signup-policy-choice").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const signupMode = button.dataset.signupMode;
+    if (!["google_only", "google_and_otp"].includes(signupMode)) return;
+    const previousMode = adminState.settings.signupMode || "google_and_otp";
+    if (signupMode === previousMode) return;
+    document.querySelectorAll(".signup-policy-choice").forEach((choice) => {
+      choice.disabled = true;
+    });
+    $("settingsMessage").textContent = "Saving account sign-up options...";
+    try {
+      const { settings } = await adminApi("/api/admin/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ signupMode })
+      });
+      adminState.settings = settings;
+      renderSettings();
+      $("settingsMessage").textContent = signupMode === "google_only"
+        ? "New accounts can now be created only with Google."
+        : "Google and email OTP sign-up are now enabled.";
+    } catch (error) {
+      $("settingsMessage").textContent = error.message;
+    } finally {
+      document.querySelectorAll(".signup-policy-choice").forEach((choice) => {
+        choice.disabled = false;
+      });
+      renderSettings();
+    }
+  });
+});
+
 $("credentialsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const body = Object.fromEntries(new FormData(event.target));
-  await adminApi("/api/admin/credentials", { method: "POST", body: JSON.stringify(body) });
-  event.target.reset();
-  alert("Admin credentials updated.");
+  const formData = new FormData(event.target);
+  const body = {
+    email: String(formData.get("email") || "").trim(),
+    loginId: String(formData.get("loginId") || "").trim(),
+    password: String(formData.get("password") || ""),
+    verificationMethod: adminState.credentialMethod
+  };
+  if (adminState.credentialMethod === "current_password") {
+    body.currentPassword = String(formData.get("currentPassword") || "");
+  } else if (adminState.credentialMethod === "email_otp") {
+    body.currentEmailCode = $("adminCurrentEmailCode").value.trim();
+    body.newEmailCode = $("adminNewEmailCode").value.trim();
+  } else {
+    body.googleCredential = adminState.googleCredential;
+  }
+  $("settingsMessage").textContent = "Verifying and saving admin credentials...";
+  try {
+    const result = await adminApi("/api/admin/credentials", {
+      method: "POST",
+      body: JSON.stringify(body)
+    });
+    adminState.credentials = result.credentials;
+    adminState.googleCredential = "";
+    event.target.reset();
+    $("adminCredentialOtpStatus").textContent = "";
+    $("adminGoogleCredentialStatus").textContent = "Verify the Google account matching the admin email you want to use.";
+    renderAdminCredentials();
+    $("settingsMessage").textContent = "Admin credentials updated.";
+  } catch (error) {
+    $("settingsMessage").textContent = error.message;
+  }
+});
+
+document.querySelectorAll(".admin-credential-method").forEach((button) => {
+  button.addEventListener("click", () => setCredentialMethod(button.dataset.credentialMethod));
+});
+
+$("sendAdminCredentialOtpBtn").addEventListener("click", async () => {
+  const email = $("adminCredentialEmail").value.trim() || adminState.credentials.email;
+  $("sendAdminCredentialOtpBtn").disabled = true;
+  $("adminCredentialOtpStatus").textContent = "Sending verification code...";
+  $("adminCurrentEmailCode").value = "";
+  $("adminNewEmailCode").value = "";
+  $("adminNewEmailCodeGroup").classList.add("hidden");
+  try {
+    const result = await adminApi("/api/admin/credentials/email-otp", {
+      method: "POST",
+      body: JSON.stringify({ email })
+    });
+    $("adminNewEmailCodeGroup").classList.toggle("hidden", !result.newEmailVerificationRequired);
+    $("adminCredentialOtpStatus").textContent = result.newEmailVerificationRequired
+      ? `Codes sent to ${result.currentEmail} and ${result.requestedEmail}. They expire in ${Math.floor(result.expiresInSeconds / 60)} minutes.`
+      : `Code sent to ${result.currentEmail}. It expires in ${Math.floor(result.expiresInSeconds / 60)} minutes.`;
+  } catch (error) {
+    $("adminCredentialOtpStatus").textContent = error.message;
+  } finally {
+    $("sendAdminCredentialOtpBtn").disabled = false;
+  }
 });
 
 $("secretCodeLoginToggle").addEventListener("change", async (event) => {
@@ -831,6 +992,30 @@ $("secretCodeLoginToggle").addEventListener("change", async (event) => {
     event.target.checked = !enabled;
     $("settingsMessage").textContent = error.message;
   }
+});
+
+document.querySelectorAll("[data-animation-setting]").forEach((input) => {
+  input.addEventListener("change", async () => {
+    const setting = input.dataset.animationSetting;
+    const currentAnimations = { ...adminState.animationDefaults, ...(adminState.settings.animations || {}) };
+    const animations = { ...currentAnimations, [setting]: input.checked };
+    document.querySelectorAll("[data-animation-setting]").forEach((option) => {
+      option.disabled = true;
+    });
+    $("animationSettingsStatus").textContent = "Saving animation preferences...";
+    try {
+      const { settings } = await adminApi("/api/admin/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ animations })
+      });
+      adminState.settings = settings;
+      $("settingsMessage").textContent = "Website animation preferences saved.";
+    } catch (error) {
+      $("settingsMessage").textContent = error.message;
+    } finally {
+      renderSettings();
+    }
+  });
 });
 
 async function saveUpdateNotify({ bumpVersion = false } = {}) {
@@ -961,6 +1146,19 @@ function formatFileSize(bytes = 0) {
   return `${size.toFixed(size >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+fetch("/api/app-config")
+  .then((response) => {
+    if (!response.ok) throw new Error("Could not load Google sign-in configuration.");
+    return response.json();
+  })
+  .then((config) => {
+    adminState.googleClientId = config.googleClientId || "";
+    if (adminState.credentialMethod === "google") renderAdminGoogleCredentialButton();
+  })
+  .catch((error) => {
+    $("adminGoogleCredentialStatus").textContent = error.message;
+  });
+
 if (adminState.token) {
   showAdminApp();
   connectAdminSocket();
@@ -983,3 +1181,6 @@ window.addEventListener("appinstalled", () => {
 
 registerAdminPwa();
 setInstallButtonsVisible(true);
+window.addEventListener("load", () => {
+  if (adminState.credentialMethod === "google") renderAdminGoogleCredentialButton();
+});

@@ -996,12 +996,15 @@ body.app-booting #updateRequiredView {
    ========================================================================== */
 
 .auth-view {
+  box-sizing: border-box;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
+  gap: 0;
+  overflow-y: auto;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
   background: radial-gradient(circle at 50% 20%, rgba(0, 168, 132, 0.12), transparent 70%), var(--wa-bg);
 }
 
@@ -1031,12 +1034,150 @@ body.app-booting #updateRequiredView {
 }
 
 .auth-card {
-  width: min(400px, 100%);
+  box-sizing: border-box;
+  width: min(420px, 100%);
+  min-width: 0;
   padding: 28px 24px;
   border: 1px solid var(--wa-line);
   border-radius: var(--radius-lg);
   background: var(--wa-surface);
   box-shadow: var(--shadow-lg);
+}
+
+.auth-method-tabs {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 20px;
+}
+
+.auth-card > .stack,
+.auth-card > form,
+.auth-signup-fields {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.auth-card label {
+  display: grid;
+  gap: 6px;
+  color: var(--wa-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-card label small {
+  color: var(--wa-text-muted);
+  font-weight: 400;
+}
+
+.auth-signup-fields {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.auth-signup-fields:disabled {
+  opacity: 0.72;
+}
+
+.auth-code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.auth-code-actions button {
+  padding: 4px 0;
+  background: transparent;
+  color: var(--wa-emerald);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-card form > .primary {
+  width: 100%;
+}
+
+.auth-mode-switch {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--wa-line);
+  text-align: center;
+}
+
+.auth-mode-switch p {
+  margin: 0;
+  color: var(--wa-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-mode-switch button {
+  padding: 2px 3px;
+  background: transparent;
+  color: var(--wa-emerald);
+  font-size: inherit;
+  font-weight: 700;
+}
+
+.auth-mode-switch button:hover {
+  color: var(--wa-emerald-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.auth-mode-switch #adminLoginPrompt {
+  margin-top: 10px;
+  color: var(--wa-text-faint);
+  font-size: 12px;
+}
+
+.auth-mode-switch #adminLoginPrompt button {
+  color: var(--wa-text-muted);
+  font-size: 12px;
+}
+
+.auth-admin-login {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--wa-line);
+}
+
+.auth-admin-heading {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.auth-admin-heading strong {
+  color: var(--wa-text-primary);
+  font-size: 16px;
+}
+
+.auth-admin-heading small {
+  color: var(--wa-text-muted);
+  font-size: 12px;
+}
+
+.auth-admin-login .text-button {
+  justify-self: center;
+  padding: 6px 10px;
+  color: var(--wa-text-muted);
+  font-size: 13px;
+}
+
+.auth-flow-message {
+  min-height: 18px;
+  margin: 0;
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .segmented {
@@ -1243,15 +1384,37 @@ input:focus, select:focus {
 .auth-google-section {
   display: grid;
   justify-items: center;
+  width: 100%;
+  box-sizing: border-box;
   gap: 8px;
-  min-height: 44px;
+  min-height: 0;
   margin-top: 18px;
+}
+
+.auth-google-divider {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.auth-google-divider::before,
+.auth-google-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--wa-line);
+  content: "";
 }
 
 .google-signin-button {
   display: flex;
   justify-content: center;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .auth-google-intro,
@@ -3353,4 +3516,101 @@ input:focus, select:focus {
 
 :root[data-theme="light"] .reply-preview-card {
   background: rgba(17, 27, 33, 0.06);
+}
+
+html[data-animations="on"][data-animation-ambient="on"] .auth-view {
+  background-size: 220% 220%;
+  animation: app-ambient-drift 16s ease-in-out infinite alternate;
+}
+
+html[data-animations="on"][data-animation-ambient="on"] .chat-view {
+  background-image:
+    radial-gradient(ellipse at 82% 18%, rgba(0, 168, 132, 0.1), transparent 42%),
+    radial-gradient(ellipse at 18% 84%, rgba(6, 182, 212, 0.06), transparent 38%);
+  background-size: 220% 220%;
+  animation: app-ambient-drift 20s ease-in-out infinite alternate;
+}
+
+html[data-animations="on"][data-animation-surfaces="on"] .auth-card {
+  animation: app-surface-glow 5s ease-in-out infinite alternate;
+}
+
+html[data-animations="on"][data-animation-surfaces="on"] .wa-topbar {
+  background-image: linear-gradient(115deg, var(--wa-surface) 35%, rgba(0, 168, 132, 0.11) 72%, var(--wa-surface));
+  background-size: 220% 100%;
+  animation: app-header-shimmer 14s ease-in-out infinite alternate;
+}
+
+html[data-animations="on"][data-animation-accents="on"] .brand-icon {
+  animation: app-mark-float 5s ease-in-out infinite;
+}
+
+html[data-animations="on"][data-animation-accents="on"] .new-chat-fab {
+  animation: app-action-glow 3.8s ease-in-out infinite;
+}
+
+html[data-animations="on"][data-animation-interactions="on"] #authView button:not(:disabled):hover,
+html[data-animations="on"][data-animation-interactions="on"] #chatView button:not(:disabled):hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+html[data-animation-interactions="off"] #authView button,
+html[data-animation-interactions="off"] #chatView button {
+  transition: none;
+}
+
+html[data-animations="off"] #authView *,
+html[data-animations="off"] #authView *::before,
+html[data-animations="off"] #authView *::after,
+html[data-animations="off"] #chatView *,
+html[data-animations="off"] #chatView *::before,
+html[data-animations="off"] #chatView *::after,
+html[data-animations="off"] #updateRequiredView *,
+html[data-animations="off"] #updateRequiredView *::before,
+html[data-animations="off"] #updateRequiredView *::after {
+  animation: none !important;
+  scroll-behavior: auto !important;
+  transition: none !important;
+}
+
+@keyframes app-ambient-drift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+@keyframes app-surface-glow {
+  0% { box-shadow: var(--shadow-lg), 0 0 0 rgba(0, 168, 132, 0); }
+  100% { box-shadow: var(--shadow-lg), 0 0 28px rgba(0, 168, 132, 0.11); }
+}
+
+@keyframes app-header-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+
+@keyframes app-mark-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes app-action-glow {
+  0%, 100% { box-shadow: 0 8px 22px rgba(0, 0, 0, 0.36), 0 0 0 rgba(0, 168, 132, 0); }
+  50% { box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3), 0 0 18px rgba(0, 168, 132, 0.28); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #authView *,
+  #authView *::before,
+  #authView *::after,
+  #chatView *,
+  #chatView *::before,
+  #chatView *::after,
+  #updateRequiredView *,
+  #updateRequiredView *::before,
+  #updateRequiredView *::after {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
 }

@@ -20,6 +20,24 @@
           : preference;
         const theme = ["light", "dark"].includes(mode) ? mode : "dark";
         document.documentElement.dataset.theme = theme;
+        const defaultAnimations = { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true };
+        let animations = defaultAnimations;
+        try {
+          const savedAnimations = JSON.parse(localStorage.getItem("metagramAnimationSettings") || "null");
+          if (savedAnimations && typeof savedAnimations === "object") {
+            animations = Object.fromEntries(
+              Object.entries(defaultAnimations).map(([key, defaultValue]) => [
+                key,
+                typeof savedAnimations[key] === "boolean" ? savedAnimations[key] : defaultValue
+              ])
+            );
+          }
+        } catch {}
+        document.documentElement.dataset.animations = animations.enabled ? "on" : "off";
+        document.documentElement.dataset.animationAmbient = animations.enabled && animations.ambient ? "on" : "off";
+        document.documentElement.dataset.animationSurfaces = animations.enabled && animations.surfaces ? "on" : "off";
+        document.documentElement.dataset.animationAccents = animations.enabled && animations.accents ? "on" : "off";
+        document.documentElement.dataset.animationInteractions = animations.enabled && animations.interactions ? "on" : "off";
         const themeColor = document.querySelector('meta[name="theme-color"]');
         if (themeColor) themeColor.content = theme === "light" ? "#f0f2f5" : "#000000";
       })();
@@ -28,11 +46,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v125-hidden-contact-search" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v125-hidden-contact-search">
+    <link rel="preload" href="/styles.css?v=v131-website-only-animations" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v131-website-only-animations">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v125-hidden-contact-search" defer></script>
+    <script src="/app.js?v=v130-visible-animations" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -97,25 +115,101 @@
           <h1>Calculator</h1>
           <p>Secure privacy lock disguised as a real calculator.</p>
         </div>
-        <div class="auth-card">
-          <div class="segmented">
-            <button id="loginTab" class="active" type="button">Login</button>
-            <button id="signupTab" type="button">Sign up</button>
+        <div id="authCard" class="auth-card">
+          <div id="loginMethodTabs" class="segmented auth-method-tabs">
+            <button id="passwordLoginTab" class="active" type="button">Password</button>
+            <button id="otpLoginTab" type="button">OTP Login</button>
           </div>
           <form id="loginForm" class="stack">
-            <input name="login" autocomplete="username" placeholder="User ID or Mobile Number" required>
+            <input name="login" autocomplete="username" placeholder="User ID, mobile number, or email" required>
             <input name="password" autocomplete="current-password" type="password" placeholder="Password" required>
             <button class="primary" type="submit">Login</button>
           </form>
-          <form id="signupForm" class="stack hidden">
-            <p class="auth-google-intro">Create your account securely with your Google account. You will set your profile and login password next.</p>
+          <form id="loginOtpForm" class="stack hidden">
+            <label>
+              <span>Email address</span>
+              <input id="loginOtpEmail" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+            </label>
+            <div id="loginOtpCodeGroup" class="stack hidden">
+              <label>
+                <span>6-digit email code</span>
+                <input id="loginOtpCode" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="Enter code">
+              </label>
+              <div class="auth-code-actions">
+                <button id="loginOtpChangeEmail" class="text-button" type="button">Change email</button>
+                <button id="loginOtpResend" class="text-button" type="button">Send a new code</button>
+              </div>
+            </div>
+            <p id="loginOtpMessage" class="auth-flow-message" role="status" aria-live="polite"></p>
+            <button id="loginOtpSubmit" class="primary" type="submit">Send email code</button>
           </form>
-          <div class="auth-google-section">
+          <form id="signupForm" class="stack hidden">
+            <p class="auth-google-intro">Create an account with a verified email. Name, email, phone number, and username are required.</p>
+            <fieldset id="signupFields" class="stack auth-signup-fields">
+              <label>
+                <span>Full name</span>
+                <input name="displayName" autocomplete="name" maxlength="80" placeholder="Your name" required>
+              </label>
+              <label>
+                <span>Email address</span>
+                <input id="signupEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required>
+              </label>
+              <label>
+                <span>Mobile number</span>
+                <input name="mobile" type="tel" autocomplete="tel" inputmode="tel" placeholder="+91 98765 43210" required>
+              </label>
+              <label>
+                <span>User ID</span>
+                <input name="userId" autocomplete="username" autocapitalize="off" placeholder="username.like_instagram" pattern="[a-zA-Z0-9._]{3,30}" minlength="3" maxlength="30" required>
+              </label>
+              <label>
+                <span>Calculator lock password <small>(optional, 6 digits)</small></span>
+                <input name="calculatorLockPassword" type="password" autocomplete="new-password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
+              </label>
+            </fieldset>
+            <div id="signupOtpCodeGroup" class="stack hidden">
+              <label>
+                <span>6-digit email code</span>
+                <input id="signupOtpCode" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="Enter code">
+              </label>
+              <div class="auth-code-actions">
+                <button id="signupChangeDetails" class="text-button" type="button">Change details</button>
+                <button id="signupOtpResend" class="text-button" type="button">Send a new code</button>
+              </div>
+            </div>
+            <p id="signupMessage" class="auth-flow-message" role="status" aria-live="polite"></p>
+            <button id="signupSubmit" class="primary" type="submit">Send email code</button>
+          </form>
+          <div id="authGoogleSection" class="auth-google-section">
+            <div class="auth-google-divider"><span>or continue with</span></div>
             <div id="googleSignInButton" class="google-signin-button"></div>
             <p id="googleSignInUnavailable" class="auth-google-unavailable hidden">Google sign-in is not configured yet.</p>
           </div>
           <button class="install-button install-control hidden" type="button">Install Calculator App</button>
           <p id="authError" class="error-text"></p>
+          <div id="authModeSwitch" class="auth-mode-switch">
+            <p id="loginModePrompt">Don't have an account? <button id="signupTab" type="button">Sign up</button></p>
+            <p id="loginGoogleOnlyPrompt" class="hidden">New users can create an account with Google below.</p>
+            <p id="signupModePrompt" class="hidden">Already have an account? <button id="loginTab" type="button">Login</button></p>
+            <p id="adminLoginPrompt" class="auth-admin-prompt">Administrator? <button id="adminLoginLink" type="button">Admin login</button></p>
+          </div>
+          <form id="userPageAdminLoginForm" class="stack auth-admin-login hidden">
+            <div class="auth-admin-heading">
+              <strong>Administrator sign in</strong>
+              <small>Use your admin login ID or admin email.</small>
+            </div>
+            <label>
+              <span>Admin login ID or email</span>
+              <input name="loginId" autocomplete="username" required>
+            </label>
+            <label>
+              <span>Admin password</span>
+              <input name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <p id="userPageAdminLoginError" class="error-text" role="alert" aria-live="polite"></p>
+            <button class="primary" type="submit">Sign in to admin</button>
+            <button id="userPageAdminLoginBack" class="text-button" type="button">Back to user login</button>
+          </form>
         </div>
         <div id="googleOnboardingOverlay" class="google-onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="googleOnboardingTitle">
           <section class="google-onboarding-card">

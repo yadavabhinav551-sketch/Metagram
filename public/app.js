@@ -5,6 +5,14 @@ const state = {
   googleInitialized: false,
   googleSetupToken: "",
   googleFlow: null,
+  signupMode: "google_and_otp",
+  animations: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true },
+  authLoginMethod: "password",
+  signupOtpSent: false,
+  signupOtpEmail: "",
+  signupOtpPayload: null,
+  loginOtpSent: false,
+  loginOtpEmail: "",
   emailVerificationToken: "",
   emailVerificationExpiresAt: 0,
   user: null,
@@ -485,12 +493,42 @@ function normalizeUiText() {
 }
 
 function setAuthMode(mode) {
-  $("loginTab").classList.toggle("active", mode === "login");
-  $("signupTab").classList.toggle("active", mode === "signup");
+  if (mode === "signup" && state.signupMode === "google_only") return;
+  $("userPageAdminLoginForm").classList.add("hidden");
+  $("authModeSwitch").classList.remove("hidden");
+  $("authGoogleSection").classList.remove("hidden");
+  $("loginModePrompt").classList.toggle("hidden", mode !== "login");
+  $("loginGoogleOnlyPrompt").classList.toggle("hidden", mode !== "login" || state.signupMode !== "google_only");
+  $("signupModePrompt").classList.toggle("hidden", mode !== "signup");
+  $("loginMethodTabs").classList.toggle("hidden", mode !== "login");
   $("loginForm").classList.toggle("hidden", mode !== "login");
+  $("loginOtpForm").classList.toggle("hidden", mode !== "login" || state.authLoginMethod !== "otp");
   $("signupForm").classList.toggle("hidden", mode !== "signup");
+  $("adminLoginPrompt").classList.toggle("hidden", mode !== "login");
   $("authError").textContent = "";
   renderGoogleSignInButton(mode);
+}
+
+function applySignupMode(mode) {
+  state.signupMode = mode === "google_only" ? "google_only" : "google_and_otp";
+  $("signupTab").classList.toggle("hidden", state.signupMode === "google_only");
+  if (state.signupMode === "google_only" && !$("signupForm").classList.contains("hidden")) {
+    setAuthMode("login");
+    resetSignupEmailCode();
+  }
+  if (!$("authView").classList.contains("hidden")) {
+    setAuthMode($("signupForm").classList.contains("hidden") ? "login" : "signup");
+  }
+}
+
+function setAuthLoginMethod(method) {
+  state.authLoginMethod = method === "otp" ? "otp" : "password";
+  $("passwordLoginTab").classList.toggle("active", state.authLoginMethod === "password");
+  $("otpLoginTab").classList.toggle("active", state.authLoginMethod === "otp");
+  $("loginForm").classList.toggle("hidden", state.authLoginMethod !== "password");
+  $("loginOtpForm").classList.toggle("hidden", state.authLoginMethod !== "otp");
+  $("authError").textContent = "";
+  renderGoogleSignInButton("login");
 }
 
 function renderGoogleSignInButton(mode = ($("signupTab")?.classList.contains("active") ? "signup" : "login")) {
@@ -522,7 +560,7 @@ function renderGoogleSignInButton(mode = ($("signupTab")?.classList.contains("ac
     size: "large",
     shape: "rectangular",
     text: mode === "signup" ? "signup_with" : "signin_with",
-    width: Math.max(220, Math.min(360, Math.floor($("authView").clientWidth - 64)))
+    width: Math.max(120, Math.min(360, Math.floor(button.clientWidth || $("authCard").clientWidth - 48)))
   });
 }
 
@@ -561,9 +599,16 @@ function renderProfileGoogleVerifyButton() {
 }
 
 const googleIdentityScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+let authGoogleResizeTimer = null;
 googleIdentityScript?.addEventListener("load", () => renderGoogleSignInButton());
 googleIdentityScript?.addEventListener("load", () => {
   if (!$("profileModal").classList.contains("hidden")) renderProfileGoogleVerifyButton();
+});
+window.addEventListener("resize", () => {
+  clearTimeout(authGoogleResizeTimer);
+  if (!$("authView").classList.contains("hidden") && state.googleClientId) {
+    authGoogleResizeTimer = setTimeout(() => renderGoogleSignInButton(), 120);
+  }
 });
 googleIdentityScript?.addEventListener("error", () => {
   $("googleSignInUnavailable").textContent = "Google sign-in could not load. Check your internet connection and try again.";
@@ -624,6 +669,73 @@ async function handleGoogleCredential(response) {
   }
 }
 
+function signupFormPayload() {
+  const form = $("signupForm");
+  return {
+    displayName: form.elements.displayName.value.trim(),
+    email: form.elements.email.value.trim(),
+    mobile: form.elements.mobile.value.trim(),
+    userId: form.elements.userId.value.trim(),
+    calculatorLockPassword: form.elements.calculatorLockPassword.value.trim()
+  };
+}
+
+async function requestSignupEmailCode(payload = state.signupOtpPayload) {
+  if (!payload) throw new Error("Fill in your account details first.");
+  const response = await api("/api/auth/email/signup/request", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  state.signupOtpPayload = payload;
+  state.signupOtpEmail = response.email;
+  state.signupOtpSent = true;
+  $("signupFields").disabled = true;
+  $("signupOtpCodeGroup").classList.remove("hidden");
+  $("signupOtpCode").required = true;
+  $("signupSubmit").textContent = "Verify code and create account";
+  $("signupMessage").textContent = `A verification code was sent to ${response.email}. It expires in 10 minutes.`;
+  $("signupOtpCode").focus();
+}
+
+function resetSignupEmailCode() {
+  state.signupOtpSent = false;
+  state.signupOtpEmail = "";
+  state.signupOtpPayload = null;
+  $("signupFields").disabled = false;
+  $("signupOtpCodeGroup").classList.add("hidden");
+  $("signupOtpCode").required = false;
+  $("signupOtpCode").value = "";
+  $("signupSubmit").textContent = "Send email code";
+  $("signupMessage").textContent = "";
+}
+
+async function requestLoginEmailCode() {
+  const email = $("loginOtpEmail").value.trim();
+  const response = await api("/api/auth/email/login/request", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+  state.loginOtpSent = true;
+  state.loginOtpEmail = response.email;
+  $("loginOtpEmail").disabled = true;
+  $("loginOtpCodeGroup").classList.remove("hidden");
+  $("loginOtpCode").required = true;
+  $("loginOtpSubmit").textContent = "Verify code and login";
+  $("loginOtpMessage").textContent = `A sign-in code was sent to ${response.email}. It expires in 10 minutes.`;
+  $("loginOtpCode").focus();
+}
+
+function resetLoginEmailCode() {
+  state.loginOtpSent = false;
+  state.loginOtpEmail = "";
+  $("loginOtpEmail").disabled = false;
+  $("loginOtpCodeGroup").classList.add("hidden");
+  $("loginOtpCode").required = false;
+  $("loginOtpCode").value = "";
+  $("loginOtpSubmit").textContent = "Send email code";
+  $("loginOtpMessage").textContent = "";
+}
+
 async function establishSession({ token, privacyToken, user }) {
   state.token = token;
   state.user = user;
@@ -682,6 +794,7 @@ async function showAuth() {
   $("calculatorPrivacyView").classList.add("hidden");
   $("authView").classList.remove("hidden");
   $("chatView").classList.add("hidden");
+  renderGoogleSignInButton();
   setAppReady();
 }
 
@@ -708,6 +821,9 @@ function connectSocket() {
   });
   state.socket.on("app:update", async ({ updateNotify } = {}) => {
     await checkRequiredUpdate(updateNotify);
+  });
+  state.socket.on("app:animations", ({ animations } = {}) => {
+    applyAnimationSettings(animations);
   });
   state.socket.on("presence", (presence) => {
     state.presence = presence;
@@ -890,6 +1006,8 @@ async function checkRequiredUpdate(updateNotify = null) {
         renderProfileGoogleVerifyButton();
       }
     }
+    if (config.signupMode !== undefined) applySignupMode(config.signupMode);
+    if (config.animations !== undefined) applyAnimationSettings(config.animations);
     const notify = config.updateNotify || {};
     state.updateNotify = notify;
     const serverVersion = Number(notify.version || 1);
@@ -914,6 +1032,48 @@ async function checkRequiredUpdate(updateNotify = null) {
     return true;
   }
 }
+
+function applyAnimationSettings(settings = {}) {
+  const defaults = { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true };
+  state.animations = Object.fromEntries(
+    Object.entries(defaults).map(([key, defaultValue]) => [
+      key,
+      typeof settings?.[key] === "boolean" ? settings[key] : defaultValue
+    ])
+  );
+  const root = document.documentElement;
+  root.dataset.animations = state.animations.enabled ? "on" : "off";
+  root.dataset.animationAmbient = state.animations.enabled && state.animations.ambient ? "on" : "off";
+  root.dataset.animationSurfaces = state.animations.enabled && state.animations.surfaces ? "on" : "off";
+  root.dataset.animationAccents = state.animations.enabled && state.animations.accents ? "on" : "off";
+  root.dataset.animationInteractions = state.animations.enabled && state.animations.interactions ? "on" : "off";
+  try {
+    localStorage.setItem("metagramAnimationSettings", JSON.stringify(state.animations));
+  } catch (error) {
+    console.warn("Could not cache website animation preferences:", error);
+  }
+}
+
+async function refreshPublicAnimationSettings() {
+  const response = await fetch("/api/app-config", { cache: "no-store" });
+  if (!response.ok) throw new Error(`Animation settings request failed (${response.status}).`);
+  const config = await response.json();
+  if (config.animations) applyAnimationSettings(config.animations);
+}
+
+function refreshPublicAnimationSettingsWithLog() {
+  refreshPublicAnimationSettings().catch((error) => {
+    console.warn("Could not refresh website animation preferences:", error);
+  });
+}
+
+window.addEventListener("focus", refreshPublicAnimationSettingsWithLog);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshPublicAnimationSettingsWithLog();
+});
+window.setInterval(() => {
+  if (!document.hidden) refreshPublicAnimationSettingsWithLog();
+}, 60000);
 
 function buildUpdateUrl(version = state.updateNotify?.version || 1) {
   return `${location.origin}/?updated=${encodeURIComponent(version)}&t=${Date.now()}`;
@@ -4449,6 +4609,76 @@ function insertEmoji(emoji) {
 
 $("loginTab").addEventListener("click", () => setAuthMode("login"));
 $("signupTab").addEventListener("click", () => setAuthMode("signup"));
+$("passwordLoginTab").addEventListener("click", () => setAuthLoginMethod("password"));
+$("otpLoginTab").addEventListener("click", () => setAuthLoginMethod("otp"));
+$("adminLoginLink").addEventListener("click", () => {
+  $("loginMethodTabs").classList.add("hidden");
+  $("loginForm").classList.add("hidden");
+  $("loginOtpForm").classList.add("hidden");
+  $("signupForm").classList.add("hidden");
+  $("authGoogleSection").classList.add("hidden");
+  $("authModeSwitch").classList.add("hidden");
+  $("authError").textContent = "";
+  $("userPageAdminLoginError").textContent = "";
+  $("userPageAdminLoginForm").classList.remove("hidden");
+});
+$("userPageAdminLoginBack").addEventListener("click", () => {
+  $("userPageAdminLoginForm").reset();
+  $("userPageAdminLoginError").textContent = "";
+  setAuthMode("login");
+});
+$("userPageAdminLoginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submitButton = form.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  $("userPageAdminLoginError").textContent = "";
+  try {
+    const body = Object.fromEntries(new FormData(form));
+    const result = await api("/api/admin/login", { method: "POST", body: JSON.stringify(body) });
+    if (!result.token) throw new Error("Admin sign-in did not return a valid session.");
+    localStorage.setItem("adminToken", result.token);
+    window.location.assign("/vault-6388391842");
+  } catch (error) {
+    $("userPageAdminLoginError").textContent = error.message;
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+$("loginOtpForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submitButton = $("loginOtpSubmit");
+  submitButton.disabled = true;
+  $("loginOtpMessage").textContent = "";
+  try {
+    if (!state.loginOtpSent) {
+      await requestLoginEmailCode();
+      return;
+    }
+    const result = await api("/api/auth/email/login/verify", {
+      method: "POST",
+      body: JSON.stringify({
+        email: state.loginOtpEmail,
+        code: $("loginOtpCode").value.trim()
+      })
+    });
+    resetLoginEmailCode();
+    await establishSession(result);
+  } catch (error) {
+    $("loginOtpMessage").textContent = error.message;
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+$("loginOtpChangeEmail").addEventListener("click", resetLoginEmailCode);
+$("loginOtpResend").addEventListener("click", async () => {
+  $("loginOtpMessage").textContent = "";
+  try {
+    await requestLoginEmailCode();
+  } catch (error) {
+    $("loginOtpMessage").textContent = error.message;
+  }
+});
 $("logoutBtn").addEventListener("click", () => {
   closeTopbarMenu();
   showAuth();
@@ -5363,6 +5593,41 @@ $("loginForm").addEventListener("submit", async (event) => {
     await establishSession(await api("/api/login", { method: "POST", body: JSON.stringify(body) }));
   } catch (error) {
     $("authError").textContent = error.message;
+  }
+});
+
+$("signupForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const submitButton = $("signupSubmit");
+  submitButton.disabled = true;
+  $("signupMessage").textContent = "";
+  try {
+    if (!state.signupOtpSent) {
+      await requestSignupEmailCode(signupFormPayload());
+      return;
+    }
+    const result = await api("/api/auth/email/signup/complete", {
+      method: "POST",
+      body: JSON.stringify({
+        email: state.signupOtpEmail,
+        code: $("signupOtpCode").value.trim()
+      })
+    });
+    resetSignupEmailCode();
+    await establishSession(result);
+  } catch (error) {
+    $("signupMessage").textContent = error.message;
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+$("signupChangeDetails").addEventListener("click", resetSignupEmailCode);
+$("signupOtpResend").addEventListener("click", async () => {
+  $("signupMessage").textContent = "";
+  try {
+    await requestSignupEmailCode();
+  } catch (error) {
+    $("signupMessage").textContent = error.message;
   }
 });
 
