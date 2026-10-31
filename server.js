@@ -417,6 +417,22 @@ function saveDb() {
   }
 }
 
+async function saveDbAndWait() {
+  const appState = { key: "main", ...db };
+  if (adminStateCollection) {
+    await adminStateCollection.replaceOne(
+      { key: "main" },
+      { key: "main", admin: db.admin },
+      { upsert: true }
+    );
+  }
+  if (stateCollection) {
+    await stateCollection.replaceOne({ key: "main" }, appState, { upsert: true });
+  } else {
+    fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+  }
+}
+
 function getPushSubscription(userId) {
   return db.pushSubscriptions.find((item) => item.userId === userId) || null;
 }
@@ -3374,11 +3390,23 @@ app.post("/api/admin/credentials", authAdmin, async (req, res) => {
     return res.status(400).json({ error: "Choose current password, email OTP, or Google account verification." });
   }
 
+  const previousAdmin = { ...db.admin };
   db.admin.loginId = loginId;
   db.admin.email = email;
   if (passwordChanged) db.admin.passwordHash = await bcrypt.hash(newPassword, 10);
   db.admin.updatedAt = new Date().toISOString();
-  saveDb();
+  try {
+    await saveDbAndWait();
+  } catch (error) {
+    db.admin = previousAdmin;
+    try {
+      await saveDbAndWait();
+    } catch (rollbackError) {
+      console.error("Admin credential persistence rollback failed:", rollbackError.message || rollbackError);
+    }
+    console.error("Admin credential persistence failed:", error.message || error);
+    return res.status(503).json({ error: "Admin credentials could not be saved. No credential changes were applied." });
+  }
   res.json({
     ok: true,
     credentials: {
