@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v132-website-only-animations";
+const CACHE_VERSION = "calculator-pwa-v133-admin-login-on-main-form";
 const APP_SHELL = [
   "/",
   "/offline.html",

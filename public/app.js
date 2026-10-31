@@ -494,7 +494,6 @@ function normalizeUiText() {
 
 function setAuthMode(mode) {
   if (mode === "signup" && state.signupMode === "google_only") return;
-  $("userPageAdminLoginForm").classList.add("hidden");
   $("authModeSwitch").classList.remove("hidden");
   $("authGoogleSection").classList.remove("hidden");
   $("loginModePrompt").classList.toggle("hidden", mode !== "login");
@@ -504,7 +503,6 @@ function setAuthMode(mode) {
   $("loginForm").classList.toggle("hidden", mode !== "login");
   $("loginOtpForm").classList.toggle("hidden", mode !== "login" || state.authLoginMethod !== "otp");
   $("signupForm").classList.toggle("hidden", mode !== "signup");
-  $("adminLoginPrompt").classList.toggle("hidden", mode !== "login");
   $("authError").textContent = "";
   renderGoogleSignInButton(mode);
 }
@@ -4611,40 +4609,6 @@ $("loginTab").addEventListener("click", () => setAuthMode("login"));
 $("signupTab").addEventListener("click", () => setAuthMode("signup"));
 $("passwordLoginTab").addEventListener("click", () => setAuthLoginMethod("password"));
 $("otpLoginTab").addEventListener("click", () => setAuthLoginMethod("otp"));
-$("adminLoginLink").addEventListener("click", () => {
-  $("loginMethodTabs").classList.add("hidden");
-  $("loginForm").classList.add("hidden");
-  $("loginOtpForm").classList.add("hidden");
-  $("signupForm").classList.add("hidden");
-  $("authGoogleSection").classList.add("hidden");
-  $("authModeSwitch").classList.add("hidden");
-  $("authError").textContent = "";
-  $("userPageAdminLoginError").textContent = "";
-  $("userPageAdminLoginForm").classList.remove("hidden");
-});
-$("userPageAdminLoginBack").addEventListener("click", () => {
-  $("userPageAdminLoginForm").reset();
-  $("userPageAdminLoginError").textContent = "";
-  setAuthMode("login");
-});
-$("userPageAdminLoginForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const submitButton = form.querySelector('button[type="submit"]');
-  submitButton.disabled = true;
-  $("userPageAdminLoginError").textContent = "";
-  try {
-    const body = Object.fromEntries(new FormData(form));
-    const result = await api("/api/admin/login", { method: "POST", body: JSON.stringify(body) });
-    if (!result.token) throw new Error("Admin sign-in did not return a valid session.");
-    localStorage.setItem("adminToken", result.token);
-    window.location.assign("/vault-6388391842");
-  } catch (error) {
-    $("userPageAdminLoginError").textContent = error.message;
-  } finally {
-    submitButton.disabled = false;
-  }
-});
 $("loginOtpForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const submitButton = $("loginOtpSubmit");
@@ -5588,11 +5552,22 @@ $("messageInput").addEventListener("input", () => {
 
 $("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  $("authError").textContent = "";
   try {
     const body = Object.fromEntries(new FormData(event.target));
-    await establishSession(await api("/api/login", { method: "POST", body: JSON.stringify(body) }));
+    const result = await api("/api/login", { method: "POST", body: JSON.stringify(body) });
+    if (result.admin === true) {
+      localStorage.setItem("adminToken", result.token);
+      window.location.assign("/vault-6388391842");
+      return;
+    }
+    await establishSession(result);
   } catch (error) {
     $("authError").textContent = error.message;
+  } finally {
+    submitButton.disabled = false;
   }
 });
 

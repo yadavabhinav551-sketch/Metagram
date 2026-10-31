@@ -1131,46 +1131,6 @@ body.app-booting #updateRequiredView {
   text-underline-offset: 3px;
 }
 
-.auth-mode-switch #adminLoginPrompt {
-  margin-top: 10px;
-  color: var(--wa-text-faint);
-  font-size: 12px;
-}
-
-.auth-mode-switch #adminLoginPrompt button {
-  color: var(--wa-text-muted);
-  font-size: 12px;
-}
-
-.auth-admin-login {
-  margin-top: 20px;
-  padding-top: 18px;
-  border-top: 1px solid var(--wa-line);
-}
-
-.auth-admin-heading {
-  display: grid;
-  gap: 4px;
-  margin-bottom: 2px;
-}
-
-.auth-admin-heading strong {
-  color: var(--wa-text-primary);
-  font-size: 16px;
-}
-
-.auth-admin-heading small {
-  color: var(--wa-text-muted);
-  font-size: 12px;
-}
-
-.auth-admin-login .text-button {
-  justify-self: center;
-  padding: 6px 10px;
-  color: var(--wa-text-muted);
-  font-size: 13px;
-}
-
 .auth-flow-message {
   min-height: 18px;
   margin: 0;

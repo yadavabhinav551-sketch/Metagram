@@ -1723,6 +1723,15 @@ app.post("/api/auth/google/complete-profile", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   const { login, password = "" } = req.body;
+  const adminResult = await verifyAdminCredentials(login, password);
+  if (adminResult.ok) {
+    return res.json({
+      token: signAdmin(),
+      admin: true,
+      account: { loginId: db.admin.loginId, email: db.admin.email }
+    });
+  }
+
   const loginId = normalizeUserId(login);
   const normalizedLogin = String(login || "").trim().toLowerCase();
   const user = db.users.find((item) => (

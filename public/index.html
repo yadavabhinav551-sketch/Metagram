@@ -46,11 +46,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v131-website-only-animations" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v131-website-only-animations">
+    <link rel="preload" href="/styles.css?v=v132-admin-login-on-main-form" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v132-admin-login-on-main-form">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v130-visible-animations" defer></script>
+    <script src="/app.js?v=v132-admin-login-on-main-form" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -191,25 +191,7 @@
             <p id="loginModePrompt">Don't have an account? <button id="signupTab" type="button">Sign up</button></p>
             <p id="loginGoogleOnlyPrompt" class="hidden">New users can create an account with Google below.</p>
             <p id="signupModePrompt" class="hidden">Already have an account? <button id="loginTab" type="button">Login</button></p>
-            <p id="adminLoginPrompt" class="auth-admin-prompt">Administrator? <button id="adminLoginLink" type="button">Admin login</button></p>
           </div>
-          <form id="userPageAdminLoginForm" class="stack auth-admin-login hidden">
-            <div class="auth-admin-heading">
-              <strong>Administrator sign in</strong>
-              <small>Use your admin login ID or admin email.</small>
-            </div>
-            <label>
-              <span>Admin login ID or email</span>
-              <input name="loginId" autocomplete="username" required>
-            </label>
-            <label>
-              <span>Admin password</span>
-              <input name="password" type="password" autocomplete="current-password" required>
-            </label>
-            <p id="userPageAdminLoginError" class="error-text" role="alert" aria-live="polite"></p>
-            <button class="primary" type="submit">Sign in to admin</button>
-            <button id="userPageAdminLoginBack" class="text-button" type="button">Back to user login</button>
-          </form>
         </div>
         <div id="googleOnboardingOverlay" class="google-onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="googleOnboardingTitle">
           <section class="google-onboarding-card">
