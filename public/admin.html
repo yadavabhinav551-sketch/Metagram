@@ -3,266 +3,333 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#17201d">
+    <meta name="theme-color" content="#111827">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Calculator Admin">
-    <title>Calculator Admin</title>
+    <title>Metagram Admin</title>
     <link rel="manifest" href="/admin-manifest.json">
     <link rel="icon" href="/icons/icon-192.png">
     <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <script>
+      document.documentElement.dataset.adminTheme = localStorage.getItem("adminTheme") === "light" ? "light" : "dark";
+    </script>
     <link rel="preload" href="/styles.css?v=admin-login-on-main-form-56" as="style">
     <link rel="stylesheet" href="/styles.css?v=admin-login-on-main-form-56">
-    <link rel="stylesheet" href="/admin.css?v=website-animations-52">
+    <link rel="stylesheet" href="/admin.css?v=admin-console-redesign-2">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/admin.js?v=v127-admin-login-on-main-form" defer></script>
+    <script src="/admin.js?v=admin-console-redesign-2" defer></script>
   </head>
   <body class="admin-page">
     <main class="admin-shell">
-      <section id="adminLogin" class="auth-view">
-        <div class="auth-card">
-          <div class="brand-block compact">
-            <h1>Calculator Admin</h1>
-            <p>Restricted monitoring console.</p>
+      <section id="adminLogin" class="admin-login-view">
+        <div class="login-brand-panel">
+          <div class="brand-mark" aria-hidden="true">M</div>
+          <p class="eyebrow">METAGRAM · CONTROL CENTER</p>
+          <h1>Everything in<br>one clear view.</h1>
+          <p class="login-brand-copy">A secure workspace to manage people, conversations, activity and platform settings.</p>
+          <div class="login-feature-list">
+            <span>People & access</span>
+            <span>Conversations & media</span>
+            <span>Platform controls</span>
           </div>
-          <form id="adminLoginForm" class="stack">
-            <input name="loginId" placeholder="Admin Login ID" autocomplete="username" required>
-            <input name="password" placeholder="Admin Password" type="password" autocomplete="current-password" required>
-            <button class="primary" type="submit">Login</button>
-          </form>
-          <button class="admin-install-button install-control" type="button">Install Admin App</button>
-          <p id="adminError" class="error-text"></p>
+        </div>
+        <div class="login-form-panel">
+          <div class="login-form-wrap">
+            <span class="login-kicker">ADMINISTRATOR ACCESS</span>
+            <h2>Welcome back</h2>
+            <p>Sign in with your administrator credentials to continue.</p>
+            <form id="adminLoginForm" class="stack">
+              <label>
+                <span>Admin login ID</span>
+                <input name="loginId" placeholder="Enter your login ID" autocomplete="username" required>
+              </label>
+              <label>
+                <span>Password</span>
+                <input name="password" placeholder="Enter your password" type="password" autocomplete="current-password" required>
+              </label>
+              <button class="primary login-submit" type="submit">Sign in to dashboard</button>
+            </form>
+            <button class="admin-install-button install-control" type="button">Install Admin App</button>
+            <p id="adminError" class="error-text" role="alert"></p>
+            <small class="login-security-note">Protected administrator workspace</small>
+          </div>
         </div>
       </section>
 
       <section id="adminApp" class="admin-app hidden">
-        <header class="admin-header">
-          <div>
-            <strong>Calculator Admin</strong>
-            <span>Total visibility console</span>
+        <aside class="admin-sidebar">
+          <a class="admin-brand" href="/vault-6388391842" aria-label="Metagram Admin home">
+            <span class="brand-mark" aria-hidden="true">M</span>
+            <span><strong>metagram</strong><small>ADMIN CONSOLE</small></span>
+          </a>
+          <div class="sidebar-label">WORKSPACE</div>
+          <nav class="admin-navigation" aria-label="Admin sections">
+            <button class="admin-nav-item" type="button" data-admin-section="overview" aria-current="page">
+              <span class="nav-index">01</span><span>Overview</span>
+            </button>
+            <button class="admin-nav-item" type="button" data-admin-section="users">
+              <span class="nav-index">02</span><span>Users</span><span id="usersNavCount" class="nav-count">0</span>
+            </button>
+            <button class="admin-nav-item" type="button" data-admin-section="conversations">
+              <span class="nav-index">03</span><span>Conversations</span><span id="chatsNavCount" class="nav-count">0</span>
+            </button>
+            <button class="admin-nav-item" type="button" data-admin-section="activity">
+              <span class="nav-index">04</span><span>Activity & media</span>
+            </button>
+            <button class="admin-nav-item" type="button" data-admin-section="groups">
+              <span class="nav-index">05</span><span>Groups</span>
+            </button>
+          </nav>
+          <div class="sidebar-label sidebar-label-bottom">MANAGEMENT</div>
+          <nav class="admin-navigation" aria-label="Admin management">
+            <button class="admin-nav-item" type="button" data-admin-section="settings">
+              <span class="nav-index">06</span><span>Settings</span>
+            </button>
+          </nav>
+          <div class="sidebar-footer">
+            <span class="sidebar-status-dot"></span>
+            <span><strong>Admin workspace</strong><small>Secure session</small></span>
           </div>
-          <div class="admin-header-actions">
-            <button class="export-link install-control" type="button">Install App</button>
-            <a class="export-link" href="/api/admin/export" id="exportLink">Export data</a>
-            <a class="export-link" href="/api/admin/backup" id="backupLink">JSON backup</a>
-            <button class="export-link danger" id="adminLogoutBtn" type="button">Logout</button>
-          </div>
-        </header>
-        <section class="admin-grid">
-          <aside class="admin-panel users-panel">
-            <h2>Users</h2>
-            <div id="adminStats" class="admin-stats"></div>
-            <div id="adminUsers"></div>
-          </aside>
-          <section class="admin-panel transcript">
-            <div class="transcript-head">
-              <h2 id="transcriptTitle">Transcript</h2>
-              <label class="recording-view-control">
-                <span>Recording side</span>
-                <select id="recordingViewSelect">
-                  <option value="">All recordings</option>
-                </select>
-              </label>
-              <label class="recording-view-control">
-                <span>View as</span>
-                <select id="viewPerspectiveSelect">
-                  <option value="">All messages</option>
-                </select>
-              </label>
-              <button id="toggleConversationHiddenBtn" class="danger-action hidden" type="button">Hide conversation</button>
-              <button id="deleteAdminConversationBtn" class="danger-action" type="button" disabled>Delete from admin</button>
-              <button id="clearTranscriptBtn" class="danger-action" type="button" disabled>Clear chat</button>
+        </aside>
+
+        <div class="admin-workspace">
+          <header class="admin-topbar">
+            <div class="page-heading">
+              <span class="eyebrow">METAGRAM / ADMIN</span>
+              <h1 id="adminPageTitle">Overview</h1>
+              <p id="adminPageDescription">A live snapshot of your platform.</p>
             </div>
-            <div id="conversationInfo" class="conversation-info hidden"></div>
-            <div id="adminMessages" class="admin-messages">Select a chat.</div>
-          </section>
-          <aside class="admin-panel chats-panel">
-            <div class="chat-panel-controls">
-              <input id="conversationSearchInput" placeholder="Search conversations">
-              <label><input id="showHiddenConversationsToggle" type="checkbox"> Show hidden</label>
+            <div class="admin-header-actions">
+              <button class="header-action install-control" type="button">Install app</button>
+              <a class="header-action" href="/api/admin/export" id="exportLink">Export data</a>
+              <a class="header-action" href="/api/admin/backup" id="backupLink">JSON backup</a>
+              <button id="adminThemeToggle" class="theme-toggle" type="button" aria-label="Switch to light theme">
+                <span id="adminThemeIcon" aria-hidden="true">☼</span><span id="adminThemeLabel">Light theme</span>
+              </button>
+              <button class="header-action logout-action" id="adminLogoutBtn" type="button">Log out</button>
             </div>
-            <h2>Chats</h2>
-            <div id="adminConversations"></div>
-            <h2>User Statuses</h2>
-            <div id="adminStatuses"></div>
-            <h2>Media Usage</h2>
-            <div id="adminMediaUsage"></div>
-          </aside>
-          <aside class="admin-panel settings-panel">
-            <h2>Admin Settings</h2>
-            <div class="admin-cleanup-panel">
-              <strong>Cluster cleanup</strong>
-              <p>Remove all chat, media, status, group, and shared data from the selected cluster while keeping admin credentials and essential active users.</p>
-              <div class="cleanup-actions">
-                <button id="cleanupAppClusterBtn" class="danger-action" type="button">Clean app cluster</button>
-                <button id="cleanupAdminClusterBtn" class="danger-action" type="button">Clean admin cluster</button>
-                <button id="cleanupBothClustersBtn" class="danger-action" type="button">Clean both clusters</button>
+          </header>
+
+          <main class="admin-content">
+            <section class="admin-view" data-admin-view="overview">
+              <div class="view-intro">
+                <div><span class="eyebrow">YOUR PLATFORM</span><h2>Platform overview</h2><p>Key account, messaging and infrastructure metrics at a glance.</p></div>
+                <span class="live-indicator"><i></i> Live data</span>
               </div>
-            </div>
-            <section class="signup-policy-setting">
-              <strong>Account sign-up</strong>
-              <p>Choose which methods new users can use to create an account.</p>
-              <div class="signup-policy-options" role="group" aria-label="Allowed account sign-up methods">
-                <button class="signup-policy-choice" type="button" data-signup-mode="google_only" aria-pressed="false">
-                  <strong>Google only</strong>
-                  <small>New accounts must be created with Google.</small>
-                </button>
-                <button class="signup-policy-choice" type="button" data-signup-mode="google_and_otp" aria-pressed="false">
-                  <strong>Google + Email OTP</strong>
-                  <small>Allow Google sign-up or manual email verification.</small>
-                </button>
+              <div id="adminStats" class="admin-stats"></div>
+              <div class="overview-note panel">
+                <span class="overview-note-mark">i</span>
+                <div><strong>Stay in control</strong><p>Use the sections on the left to manage accounts, review conversations and adjust platform settings.</p></div>
+                <button class="text-action" type="button" data-admin-section="settings">Open settings <span aria-hidden="true">→</span></button>
               </div>
             </section>
-            <section class="signup-policy-setting email-delivery-test">
-              <strong>Email delivery</strong>
-              <p>Send a test message to the current admin email using the SMTP settings configured on Render.</p>
-              <button id="testSmtpDeliveryBtn" type="button">Test SMTP delivery</button>
-              <p id="smtpDeliveryTestStatus" class="settings-note" role="status" aria-live="polite"></p>
+
+            <section class="admin-view" data-admin-view="users" hidden>
+              <div class="view-intro">
+                <div><span class="eyebrow">ACCOUNT DIRECTORY</span><h2>Users</h2><p>Review account status, sign-in activity and privacy controls.</p></div>
+                <span id="usersViewCount" class="view-count">0 accounts</span>
+              </div>
+              <div id="adminUsers" class="admin-list user-list"></div>
             </section>
-            <section class="animation-settings" aria-labelledby="animationSettingsTitle">
-              <div class="animation-settings-heading">
-                <strong id="animationSettingsTitle">Website animations</strong>
-                <p>Control subtle motion effects across the website for all users.</p>
+
+            <section class="admin-view" data-admin-view="conversations" hidden>
+              <div class="view-intro">
+                <div><span class="eyebrow">MESSAGING</span><h2>Conversations</h2><p>Find a chat, inspect its transcript or manage its visibility.</p></div>
               </div>
-              <label class="setting-toggle animation-master-toggle">
-                <input type="checkbox" data-animation-setting="enabled">
-                <span>
-                  <strong>Enable all animations</strong>
-                  <small>Master switch for every motion effect on the site.</small>
-                </span>
-              </label>
-              <div class="animation-settings-options">
-                <label class="setting-toggle">
-                  <input type="checkbox" data-animation-setting="ambient">
-                  <span>
-                    <strong>Ambient backgrounds</strong>
-                    <small>Slow, soft movement behind the app screens.</small>
-                  </span>
-                </label>
-                <label class="setting-toggle">
-                  <input type="checkbox" data-animation-setting="surfaces">
-                  <span>
-                    <strong>Panel atmosphere</strong>
-                    <small>Subtle lighting on cards and chat headers.</small>
-                  </span>
-                </label>
-                <label class="setting-toggle">
-                  <input type="checkbox" data-animation-setting="accents">
-                  <span>
-                    <strong>Animated highlights</strong>
-                    <small>Gentle motion on the app mark and key actions.</small>
-                  </span>
-                </label>
-                <label class="setting-toggle">
-                  <input type="checkbox" data-animation-setting="interactions">
-                  <span>
-                    <strong>Smooth interactions</strong>
-                    <small>Polished hover, focus, and press transitions.</small>
-                  </span>
-                </label>
-              </div>
-              <small id="animationSettingsStatus" class="settings-note" role="status" aria-live="polite"></small>
-            </section>
-            <label class="setting-toggle">
-              <input id="secretCodeLoginToggle" type="checkbox">
-              <span>
-                <strong>Secret code login</strong>
-                <small>Allow User ID + hidden secret code login</small>
-              </span>
-            </label>
-            <div class="update-notify-box">
-              <label class="setting-toggle">
-                <input id="updateNotifyToggle" type="checkbox">
-                <span>
-                  <strong>Update notify</strong>
-                  <small>Force installed user apps to update before chat opens</small>
-                </span>
-              </label>
-              <input id="updateNotifyMessage" maxlength="180" placeholder="Update message for users">
-              <div class="update-notify-actions">
-                <button id="sendUpdateNotifyBtn" class="primary" type="button">Send update notify</button>
-                <button id="saveUpdateNotifyBtn" type="button">Save</button>
-              </div>
-              <small id="updateNotifyStatus" class="settings-note"></small>
-            </div>
-            <p id="settingsMessage" class="settings-message"></p>
-            <div class="restore-box">
-              <h2>Restore</h2>
-              <input id="restoreInput" type="file" accept="application/json,.json">
-              <button id="restoreBtn" class="danger-action" type="button">Restore backup</button>
-            </div>
-            <section class="admin-credentials-panel">
-              <h3>Admin credentials</h3>
-              <p>Current email: <strong id="adminCurrentEmail"></strong></p>
-              <p>Current login ID: <strong id="adminCurrentLoginId"></strong></p>
-              <form id="credentialsForm" class="stack">
-                <label>
-                  <span>New admin email <small>(optional)</small></span>
-                  <input id="adminCredentialEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="Leave blank to keep current email">
-                </label>
-                <label>
-                  <span>New login ID <small>(optional)</small></span>
-                  <input id="adminCredentialLoginId" name="loginId" autocomplete="username" maxlength="80" placeholder="Leave blank to keep current login ID">
-                </label>
-                <label>
-                  <span>New password <small>(optional, 8–128 characters)</small></span>
-                  <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" placeholder="Leave blank to keep current password">
-                </label>
-                <div class="admin-credential-methods" role="group" aria-label="Verify admin credential changes">
-                  <button class="admin-credential-method selected" type="button" data-credential-method="current_password" aria-pressed="true">Current password</button>
-                  <button class="admin-credential-method" type="button" data-credential-method="email_otp" aria-pressed="false">Email OTP</button>
-                  <button class="admin-credential-method" type="button" data-credential-method="google" aria-pressed="false">Google</button>
-                </div>
-                <div id="adminCurrentPasswordPanel" class="admin-credential-verification">
-                  <label>
-                    <span>Current admin password</span>
-                    <input name="currentPassword" type="password" autocomplete="current-password">
+              <div class="conversation-workspace">
+                <aside class="conversation-browser panel">
+                  <div class="section-heading"><div><h3>All conversations</h3><p>Sorted by message activity</p></div></div>
+                  <label class="conversation-search">
+                    <span class="sr-only">Search conversations</span>
+                    <input id="conversationSearchInput" placeholder="Search conversations">
                   </label>
-                </div>
-                <div id="adminEmailOtpPanel" class="admin-credential-verification hidden">
-                  <button id="sendAdminCredentialOtpBtn" type="button">Send verification code</button>
-                  <p id="adminCredentialOtpStatus" class="settings-note" role="status" aria-live="polite"></p>
-                  <label>
-                    <span>Code sent to current admin email</span>
-                    <input id="adminCurrentEmailCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
-                  </label>
-                  <label id="adminNewEmailCodeGroup" class="hidden">
-                    <span>Code sent to new admin email</span>
-                    <input id="adminNewEmailCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
-                  </label>
-                </div>
-                <div id="adminGooglePanel" class="admin-credential-verification hidden">
-                  <div id="adminGoogleCredentialButton" class="google-signin-button"></div>
-                  <small id="adminGoogleCredentialStatus" class="settings-note">Verify the Google account matching the admin email you want to use.</small>
-                </div>
-                <button class="primary" type="submit">Save admin credentials</button>
-              </form>
+                  <label class="filter-toggle"><input id="showHiddenConversationsToggle" type="checkbox"><span>Include hidden conversations</span></label>
+                  <div id="adminConversations" class="conversation-list"></div>
+                </aside>
+                <section class="transcript panel">
+                  <div class="transcript-head">
+                    <div class="transcript-heading"><span class="eyebrow">CHAT TRANSCRIPT</span><h3 id="transcriptTitle">Select a conversation</h3></div>
+                    <div class="transcript-controls">
+                      <label class="recording-view-control"><span>Recording side</span><select id="recordingViewSelect"><option value="">All recordings</option></select></label>
+                      <label class="recording-view-control"><span>View as</span><select id="viewPerspectiveSelect"><option value="">All messages</option></select></label>
+                    </div>
+                  </div>
+                  <div id="conversationInfo" class="conversation-info hidden"></div>
+                  <div id="adminMessages" class="admin-messages">Choose a conversation to view its messages.</div>
+                  <div class="transcript-actions">
+                    <button id="toggleConversationHiddenBtn" class="danger-action hidden" type="button">Hide conversation</button>
+                    <button id="deleteAdminConversationBtn" class="danger-action" type="button" disabled>Remove from admin</button>
+                    <button id="clearTranscriptBtn" class="danger-action" type="button" disabled>Clear messages</button>
+                  </div>
+                </section>
+              </div>
             </section>
-            <h2>Groups</h2>
-            <div id="adminGroups"></div>
-            <section id="groupEditor" class="admin-panel-group-editor hidden">
-              <h3>Edit group</h3>
-              <form id="groupEditForm" class="stack">
-                <input id="groupEditName" name="name" placeholder="Group or department name" required>
-                <select id="groupEditMembers" name="members" multiple></select>
-                <div class="group-editor-actions">
-                  <button class="primary" type="submit">Save group</button>
-                  <button id="messageGroupBtn" type="button">Message group</button>
-                  <button id="deleteGroupBtn" class="danger" type="button">Delete group</button>
-                  <button id="cancelEditGroupBtn" type="button">Cancel</button>
-                </div>
-              </form>
+
+            <section class="admin-view" data-admin-view="activity" hidden>
+              <div class="view-intro">
+                <div><span class="eyebrow">COMMUNITY PULSE</span><h2>Activity & media</h2><p>Recent user status updates and shared media usage.</p></div>
+              </div>
+              <div class="activity-grid">
+                <section class="panel content-panel"><div class="section-heading"><div><h3>User statuses</h3><p>Currently active updates</p></div></div><div id="adminStatuses" class="admin-list"></div></section>
+                <section class="panel content-panel"><div class="section-heading"><div><h3>Media usage</h3><p>Uploads and storage activity</p></div></div><div id="adminMediaUsage"></div></section>
+              </div>
             </section>
-            <form id="groupForm" class="stack">
-              <input name="name" placeholder="Group or department name" required>
-              <select name="members" id="groupMembers" multiple></select>
-              <button class="primary" type="submit">Create group</button>
-            </form>
-          </aside>
-        </section>
+
+            <section class="admin-view" data-admin-view="groups" hidden>
+              <div class="view-intro">
+                <div><span class="eyebrow">COMMUNITY MANAGEMENT</span><h2>Groups</h2><p>Create teams, manage their members and send group announcements.</p></div>
+              </div>
+              <div class="groups-layout">
+                <section class="panel content-panel">
+                  <div class="section-heading"><div><h3>Create a group</h3><p>Choose a name and select its members.</p></div></div>
+                  <form id="groupForm" class="stack group-form">
+                    <label><span>Group name</span><input name="name" placeholder="e.g. Product team" required></label>
+                    <label><span>Members</span><select name="members" id="groupMembers" multiple></select><small class="field-hint">Use Ctrl or Command to select multiple members.</small></label>
+                    <button class="primary" type="submit">Create group</button>
+                  </form>
+                </section>
+                <section class="panel content-panel">
+                  <div class="section-heading"><div><h3>Your groups</h3><p>Manage existing group spaces.</p></div></div>
+                  <div id="adminGroups" class="admin-list"></div>
+                  <section id="groupEditor" class="admin-panel-group-editor hidden">
+                    <div class="section-heading"><div><h3>Edit group</h3><p>Update its name and membership.</p></div></div>
+                    <form id="groupEditForm" class="stack">
+                      <label><span>Group name</span><input id="groupEditName" name="name" placeholder="Group name" required></label>
+                      <label><span>Members</span><select id="groupEditMembers" name="members" multiple></select></label>
+                      <div class="group-editor-actions">
+                        <button class="primary" type="submit">Save changes</button>
+                        <button id="messageGroupBtn" type="button">Send message</button>
+                        <button id="deleteGroupBtn" class="danger" type="button">Delete group</button>
+                        <button id="cancelEditGroupBtn" type="button">Cancel</button>
+                      </div>
+                    </form>
+                  </section>
+                </section>
+              </div>
+            </section>
+
+            <section class="admin-view" data-admin-view="settings" hidden>
+              <div class="view-intro">
+                <div><span class="eyebrow">CONTROL PANEL</span><h2>Settings</h2><p>Configure access, appearance, notifications and platform data.</p></div>
+              </div>
+              <p id="settingsMessage" class="settings-message" role="status" aria-live="polite"></p>
+              <div class="settings-grid">
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Appearance</h3><p>Choose a theme for this admin workspace only.</p></div></div>
+                  <div class="theme-choices" role="group" aria-label="Admin color theme">
+                    <button class="theme-choice" type="button" data-admin-theme-choice="light" aria-pressed="false"><span class="theme-preview theme-preview-light"></span><span><strong>Light</strong><small>Bright and clear</small></span></button>
+                    <button class="theme-choice" type="button" data-admin-theme-choice="dark" aria-pressed="false"><span class="theme-preview theme-preview-dark"></span><span><strong>Dark</strong><small>Easy on the eyes</small></span></button>
+                  </div>
+                </section>
+
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Account access</h3><p>Control how new users join and sign in.</p></div></div>
+                  <section class="signup-policy-setting">
+                    <strong>Sign-up methods</strong>
+                    <p>Choose which methods new users can use to create an account.</p>
+                    <div class="signup-policy-options" role="group" aria-label="Allowed account sign-up methods">
+                      <button class="signup-policy-choice" type="button" data-signup-mode="google_only" aria-pressed="false"><strong>Google only</strong><small>New accounts must be created with Google.</small></button>
+                      <button class="signup-policy-choice" type="button" data-signup-mode="google_and_otp" aria-pressed="false"><strong>Google + Email OTP</strong><small>Allow Google sign-up or manual email verification.</small></button>
+                    </div>
+                  </section>
+                  <label class="setting-toggle">
+                    <input id="secretCodeLoginToggle" type="checkbox">
+                    <span><strong>Secret code login</strong><small>Allow User ID + hidden secret code login.</small></span>
+                  </label>
+                </section>
+
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Email delivery</h3><p>Send a test message using the SMTP settings on your server.</p></div></div>
+                  <button id="testSmtpDeliveryBtn" type="button">Test SMTP delivery</button>
+                  <p id="smtpDeliveryTestStatus" class="settings-note" role="status" aria-live="polite"></p>
+                </section>
+
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Update notifications</h3><p>Notify users when a new app version is required.</p></div></div>
+                  <div class="update-notify-box">
+                    <label class="setting-toggle">
+                      <input id="updateNotifyToggle" type="checkbox">
+                      <span><strong>Require an app update</strong><small>Installed user apps must update before chat opens.</small></span>
+                    </label>
+                    <label><span>Message for users</span><input id="updateNotifyMessage" maxlength="180" placeholder="Update message for users"></label>
+                    <div class="update-notify-actions"><button id="sendUpdateNotifyBtn" class="primary" type="button">Send notification</button><button id="saveUpdateNotifyBtn" type="button">Save settings</button></div>
+                    <small id="updateNotifyStatus" class="settings-note"></small>
+                  </div>
+                </section>
+
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Website motion</h3><p>Control animation preferences across the website for all users.</p></div></div>
+                  <section class="animation-settings" aria-labelledby="animationSettingsTitle">
+                    <label class="setting-toggle animation-master-toggle">
+                      <input type="checkbox" data-animation-setting="enabled">
+                      <span><strong id="animationSettingsTitle">Enable animations</strong><small>Master switch for every motion effect on the site.</small></span>
+                    </label>
+                    <div class="animation-settings-options">
+                      <label class="setting-toggle"><input type="checkbox" data-animation-setting="ambient"><span><strong>Ambient backgrounds</strong><small>Slow movement behind app screens.</small></span></label>
+                      <label class="setting-toggle"><input type="checkbox" data-animation-setting="surfaces"><span><strong>Panel atmosphere</strong><small>Subtle lighting on cards and chat headers.</small></span></label>
+                      <label class="setting-toggle"><input type="checkbox" data-animation-setting="accents"><span><strong>Animated highlights</strong><small>Gentle motion on key actions.</small></span></label>
+                      <label class="setting-toggle"><input type="checkbox" data-animation-setting="interactions"><span><strong>Smooth interactions</strong><small>Hover, focus and press transitions.</small></span></label>
+                    </div>
+                    <small id="animationSettingsStatus" class="settings-note" role="status" aria-live="polite"></small>
+                  </section>
+                </section>
+
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Administrator credentials</h3><p>Update your sign-in details using a verified method.</p></div></div>
+                  <section class="admin-credentials-panel">
+                    <p>Current email <strong id="adminCurrentEmail"></strong></p>
+                    <p>Current login ID <strong id="adminCurrentLoginId"></strong></p>
+                    <form id="credentialsForm" class="stack">
+                      <label><span>New admin email <small>(optional)</small></span><input id="adminCredentialEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="Leave blank to keep current email"></label>
+                      <label><span>New login ID <small>(optional)</small></span><input id="adminCredentialLoginId" name="loginId" autocomplete="username" maxlength="80" placeholder="Leave blank to keep current login ID"></label>
+                      <label><span>New password <small>(optional, 8–128 characters)</small></span><input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" placeholder="Leave blank to keep current password"></label>
+                      <div class="admin-credential-methods" role="group" aria-label="Verify admin credential changes">
+                        <button class="admin-credential-method selected" type="button" data-credential-method="current_password" aria-pressed="true">Password</button>
+                        <button class="admin-credential-method" type="button" data-credential-method="email_otp" aria-pressed="false">Email OTP</button>
+                        <button class="admin-credential-method" type="button" data-credential-method="google" aria-pressed="false">Google</button>
+                      </div>
+                      <div id="adminCurrentPasswordPanel" class="admin-credential-verification"><label><span>Current admin password</span><input name="currentPassword" type="password" autocomplete="current-password"></label></div>
+                      <div id="adminEmailOtpPanel" class="admin-credential-verification hidden">
+                        <button id="sendAdminCredentialOtpBtn" type="button">Send verification code</button>
+                        <p id="adminCredentialOtpStatus" class="settings-note" role="status" aria-live="polite"></p>
+                        <label><span>Code sent to current admin email</span><input id="adminCurrentEmailCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code"></label>
+                        <label id="adminNewEmailCodeGroup" class="hidden"><span>Code sent to new admin email</span><input id="adminNewEmailCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code"></label>
+                      </div>
+                      <div id="adminGooglePanel" class="admin-credential-verification hidden"><div id="adminGoogleCredentialButton" class="google-signin-button"></div><small id="adminGoogleCredentialStatus" class="settings-note">Verify the Google account matching the admin email you want to use.</small></div>
+                      <button class="primary" type="submit">Save administrator credentials</button>
+                    </form>
+                  </section>
+                </section>
+
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Backup & restore</h3><p>Download a backup from the header or restore a saved JSON file.</p></div></div>
+                  <div class="restore-box">
+                    <label><span>Backup file</span><input id="restoreInput" type="file" accept="application/json,.json"></label>
+                    <button id="restoreBtn" class="danger-action" type="button">Restore backup</button>
+                  </div>
+                </section>
+
+                <section class="panel settings-card">
+                  <div class="section-heading"><div><h3>Data cleanup</h3><p>Permanent actions. Admin credentials and essential active users are retained.</p></div></div>
+                  <div class="admin-cleanup-panel">
+                    <strong>Clear cluster data</strong>
+                    <p>Remove chat, media, status, group and shared data from the selected cluster.</p>
+                    <div class="cleanup-actions">
+                      <button id="cleanupAppClusterBtn" class="danger-action" type="button">Clean app cluster</button>
+                      <button id="cleanupAdminClusterBtn" class="danger-action" type="button">Clean admin cluster</button>
+                      <button id="cleanupBothClustersBtn" class="danger-action" type="button">Clean both clusters</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </section>
+          </main>
+        </div>
       </section>
+
       <section id="adminMediaModal" class="modal-layer hidden">
         <div class="modal-card media-modal-card">
           <header>
@@ -270,9 +337,7 @@
             <button id="adminMediaCloseBtn" class="icon-button" type="button" title="Close">×</button>
           </header>
           <video id="adminMediaFullscreenVideo" controls playsinline class="media-fullscreen-video"></video>
-          <div class="media-modal-actions">
-            <a id="adminMediaDownloadLink" class="admin-media-link" href="#" download>Download</a>
-          </div>
+          <div class="media-modal-actions"><a id="adminMediaDownloadLink" class="admin-media-link" href="#" download>Download</a></div>
         </div>
       </section>
     </main>

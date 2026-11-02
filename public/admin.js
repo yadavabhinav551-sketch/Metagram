@@ -23,6 +23,63 @@ const adminState = {
 };
 
 const $ = (id) => document.getElementById(id);
+const ADMIN_SECTIONS = {
+  overview: { title: "Overview", description: "A live snapshot of your platform." },
+  users: { title: "Users", description: "Review accounts, access and privacy controls." },
+  conversations: { title: "Conversations", description: "Find chats and review their transcripts." },
+  activity: { title: "Activity & media", description: "Recent status updates and shared media usage." },
+  groups: { title: "Groups", description: "Organize members and manage group spaces." },
+  settings: { title: "Settings", description: "Configure access, appearance and platform data." }
+};
+
+function showAdminSection(sectionName, persist = true) {
+  const section = ADMIN_SECTIONS[sectionName] ? sectionName : "overview";
+  document.querySelectorAll("[data-admin-view]").forEach((view) => {
+    view.hidden = view.dataset.adminView !== section;
+  });
+  document.querySelectorAll("[data-admin-section]").forEach((button) => {
+    const active = button.dataset.adminSection === section;
+    if (button.classList.contains("admin-nav-item")) {
+      if (active) button.setAttribute("aria-current", "page");
+      else button.removeAttribute("aria-current");
+    }
+  });
+  $("adminPageTitle").textContent = ADMIN_SECTIONS[section].title;
+  $("adminPageDescription").textContent = ADMIN_SECTIONS[section].description;
+  if (persist) localStorage.setItem("adminSection", section);
+}
+
+function setAdminTheme(theme, persist = true) {
+  const selectedTheme = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.adminTheme = selectedTheme;
+  if (persist) localStorage.setItem("adminTheme", selectedTheme);
+  const nextTheme = selectedTheme === "light" ? "dark" : "light";
+  $("adminThemeToggle").setAttribute("aria-label", `Switch to ${nextTheme} theme`);
+  $("adminThemeIcon").textContent = selectedTheme === "light" ? "◐" : "☼";
+  $("adminThemeLabel").textContent = `${nextTheme === "light" ? "Light" : "Dark"} theme`;
+  document.querySelector('meta[name="theme-color"]').content = selectedTheme === "light" ? "#f3f5fb" : "#111827";
+  document.querySelectorAll("[data-admin-theme-choice]").forEach((button) => {
+    const active = button.dataset.adminThemeChoice === selectedTheme;
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
+document.addEventListener("click", (event) => {
+  const sectionButton = event.target.closest("[data-admin-section]");
+  if (sectionButton) showAdminSection(sectionButton.dataset.adminSection);
+});
+
+document.querySelectorAll("[data-admin-theme-choice]").forEach((button) => {
+  button.addEventListener("click", () => setAdminTheme(button.dataset.adminThemeChoice));
+});
+
+$("adminThemeToggle").addEventListener("click", () => {
+  const currentTheme = document.documentElement.dataset.adminTheme;
+  setAdminTheme(currentTheme === "light" ? "dark" : "light");
+});
+
+setAdminTheme(document.documentElement.dataset.adminTheme || "dark", false);
+
 const adminApi = async (url, options = {}) => {
   const response = await fetch(url, {
     ...options,
@@ -44,6 +101,7 @@ const adminApi = async (url, options = {}) => {
 function showAdminApp() {
   $("adminLogin").classList.add("hidden");
   $("adminApp").classList.remove("hidden");
+  showAdminSection(localStorage.getItem("adminSection") || "overview", false);
   $("exportLink").setAttribute("href", `/api/admin/export?token=${encodeURIComponent(adminState.token)}`);
   $("backupLink").setAttribute("href", `/api/admin/backup?token=${encodeURIComponent(adminState.token)}`);
 }
@@ -79,6 +137,9 @@ async function loadOverview() {
   adminState.groups = data.groups;
   adminState.stats = data.stats;
   adminState.settings = data.settings || { secretCodeLoginEnabled: false, signupMode: "google_and_otp", updateNotify: { enabled: false, version: 1, message: "" } };
+  $("usersNavCount").textContent = String(adminState.stats.totalUsers || 0);
+  $("chatsNavCount").textContent = String(adminState.stats.totalConversations || 0);
+  $("usersViewCount").textContent = `${adminState.stats.totalUsers || 0} accounts`;
   renderUsers();
   renderConversations();
   renderStatuses();
