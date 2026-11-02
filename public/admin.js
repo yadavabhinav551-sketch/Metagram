@@ -591,12 +591,14 @@ async function loadTranscript(conversationId) {
 
   const { messages } = await adminApi(`/api/admin/conversations/${conversationId}/messages`);
   const filteredMessages = messages.filter((message) => {
+    const bothParticipantsVisible = message.adminOnly && message.media?.kind === "video";
     if (adminState.viewPerspectiveUserId && message.senderId) {
-      return message.senderId === adminState.viewPerspectiveUserId;
+      return message.senderId === adminState.viewPerspectiveUserId || bothParticipantsVisible;
     }
     return true;
   }).filter((message) => {
     if (!adminState.recordingFilterUserId) return true;
+    if (message.adminOnly && message.media?.kind === "video") return true;
     if (message.recordingForUserId) return message.recordingForUserId === adminState.recordingFilterUserId;
     return false;
   });
@@ -606,7 +608,9 @@ async function loadTranscript(conversationId) {
       <article class="admin-message">
         <strong>${escapeHtml(sender?.displayName || "Unknown")}</strong>
         <small>${new Date(message.createdAt).toLocaleString()} · hidden for ${message.deletedFor?.length || 0} users</small>
-        ${message.recordingForUserId ? `<small class="recording-side-tag">Recorded from: ${escapeHtml(message.recordingForDisplayName || "User")}</small>` : ""}
+        ${message.adminOnly && message.media?.kind === "video"
+          ? `<small class="recording-side-tag">Both participants · uploaded by ${escapeHtml(message.recordingForDisplayName || sender?.displayName || "User")}</small>`
+          : message.recordingForUserId ? `<small class="recording-side-tag">Recorded from: ${escapeHtml(message.recordingForDisplayName || "User")}</small>` : ""}
         ${renderAdminFlags(message)}
         ${renderAdminReply(message.replyTo)}
         ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}

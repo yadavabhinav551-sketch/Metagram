@@ -4281,17 +4281,39 @@ function startCallRecording() {
       canvas.width = 640;
       canvas.height = 360;
       const context = canvas.getContext("2d");
-      const draw = () => {
+      const drawParticipant = (video, x, label) => {
+        const width = canvas.width / 2;
         context.fillStyle = "#101817";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        if ($("remoteVideo").readyState >= 2) context.drawImage($("remoteVideo"), 0, 0, canvas.width, canvas.height);
-        if ($("localVideo").readyState >= 2) {
-          const insetWidth = 200;
-          const insetHeight = 112;
-          context.fillStyle = "rgba(255,255,255,0.9)";
-          context.fillRect(canvas.width - insetWidth - 20, canvas.height - insetHeight - 20, insetWidth, insetHeight);
-          context.drawImage($("localVideo"), canvas.width - insetWidth - 18, canvas.height - insetHeight - 18, insetWidth - 8, insetHeight - 8);
+        context.fillRect(x, 0, width, canvas.height);
+        if (video.readyState >= 2 && video.videoWidth && video.videoHeight) {
+          const scale = Math.min(width / video.videoWidth, canvas.height / video.videoHeight);
+          const scaledWidth = video.videoWidth * scale;
+          const scaledHeight = video.videoHeight * scale;
+          context.save();
+          context.beginPath();
+          context.rect(x, 0, width, canvas.height);
+          context.clip();
+          context.drawImage(
+            video,
+            x + (width - scaledWidth) / 2,
+            (canvas.height - scaledHeight) / 2,
+            scaledWidth,
+            scaledHeight
+          );
+          context.restore();
         }
+        context.fillStyle = "rgba(10, 15, 24, 0.78)";
+        context.fillRect(x + 12, canvas.height - 34, width - 24, 22);
+        context.fillStyle = "#ffffff";
+        context.font = "600 13px sans-serif";
+        context.textBaseline = "middle";
+        context.fillText(label, x + 20, canvas.height - 23, width - 40);
+      };
+      const draw = () => {
+        drawParticipant($("localVideo"), 0, "You");
+        drawParticipant($("remoteVideo"), canvas.width / 2, "Other participant");
+        context.fillStyle = "rgba(255, 255, 255, 0.72)";
+        context.fillRect(canvas.width / 2 - 1, 0, 2, canvas.height);
         animationId = requestAnimationFrame(draw);
         state.call.recorderAnimation = animationId;
       };

@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v139-admin-console-redesign";
+const CACHE_VERSION = "calculator-pwa-v140-dual-perspective-call-recording";
 const APP_SHELL = [
   "/",
   "/offline.html",
