@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v135-otp-email-delivery";
+const CACHE_VERSION = "calculator-pwa-v136-smtp-diagnostics";
 const APP_SHELL = [
   "/",
   "/offline.html",

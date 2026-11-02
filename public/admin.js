@@ -977,6 +977,26 @@ $("sendAdminCredentialOtpBtn").addEventListener("click", async () => {
   }
 });
 
+$("testSmtpDeliveryBtn").addEventListener("click", async () => {
+  const button = $("testSmtpDeliveryBtn");
+  button.disabled = true;
+  $("smtpDeliveryTestStatus").textContent = "Testing SMTP and sending a message to the current admin email...";
+  try {
+    const result = await adminApi("/api/admin/email/test", {
+      method: "POST",
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(20_000)
+    });
+    $("smtpDeliveryTestStatus").textContent = `SMTP test email sent to ${result.email}. Check the inbox and spam folder.`;
+  } catch (error) {
+    $("smtpDeliveryTestStatus").textContent = error.name === "TimeoutError" || error.name === "AbortError"
+      ? "SMTP test timed out. Check SMTP host/port, then check whether Render allows outbound SMTP on that port."
+      : error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("secretCodeLoginToggle").addEventListener("change", async (event) => {
   const enabled = event.target.checked;
   $("settingsMessage").textContent = "Saving...";
