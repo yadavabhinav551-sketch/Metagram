@@ -117,7 +117,7 @@ function emailDeliveryError(error) {
   }
   if (["ECONNECTION", "ETIMEDOUT", "ESOCKET", "ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH"].includes(code)
     || /timed?\s*out|connection.*closed/i.test(String(error?.message || ""))) {
-    return "SMTP connection timed out or closed before authentication completed. Check the diagnostic details below; the password has not been verified yet.";
+    return "SMTP connection timed out or closed before authentication completed. To see the connection details, open Admin > Test SMTP delivery. The password has not been verified yet.";
   }
   return `SMTP email delivery failed${code ? ` (${code})` : ""}${responseCode ? ` [${responseCode}]` : ""}. Check the Render service logs for the provider response.`;
 }
