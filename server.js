@@ -1609,6 +1609,14 @@ app.post("/api/auth/google", async (req, res) => {
     return res.status(401).json({ error: "Could not verify this Google account. Please try again." });
   }
 
+  if (identity.email === String(db.admin.email || "").trim().toLowerCase()) {
+    return res.json({
+      token: signAdmin(),
+      admin: true,
+      account: { loginId: db.admin.loginId, email: db.admin.email }
+    });
+  }
+
   const user = db.users.find((item) => (
     item.googleSubject === identity.googleSubject
     || String(item.email || "").trim().toLowerCase() === identity.email

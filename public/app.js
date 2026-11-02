@@ -661,6 +661,11 @@ async function handleGoogleCredential(response) {
       $("googleOnboardingOverlay").classList.remove("hidden");
       return;
     }
+    if (result.admin === true) {
+      localStorage.setItem("adminToken", result.token);
+      window.location.assign("/vault-6388391842");
+      return;
+    }
     await establishSession(result);
   } catch (error) {
     $("authError").textContent = error.message;
