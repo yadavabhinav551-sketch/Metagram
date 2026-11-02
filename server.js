@@ -63,6 +63,9 @@ const EMAIL_AUTH_OTP_TTL_MS = 10 * 60 * 1000;
 const EMAIL_AUTH_OTP_REQUEST_INTERVAL_MS = 60 * 1000;
 const SIGNUP_MODE_GOOGLE_ONLY = "google_only";
 const SIGNUP_MODE_GOOGLE_AND_OTP = "google_and_otp";
+const LEGACY_DEFAULT_ADMIN_LOGIN = "6388391842";
+const LEGACY_DEFAULT_ADMIN_PASSWORD = "123456";
+const MIGRATED_DEFAULT_ADMIN_PASSWORD = "1234546";
 const DEFAULT_ANIMATIONS = Object.freeze({
   enabled: true,
   ambient: true,
@@ -232,6 +235,7 @@ let adminMongoKeepaliveTimer = null;
 let selfPingTimer = null;
 let googleSigningKeys = null;
 let googleSigningKeysExpiresAt = 0;
+let hasPersistedAdminState = false;
 
 const defaultDb = {
   users: [],
@@ -310,9 +314,11 @@ async function loadDb() {
       const existing = await stateCollection.findOne({ key: "main" });
       if (existing) {
         const { _id, key, ...state } = existing;
+        hasPersistedAdminState = true;
         console.log(`Using MongoDB Atlas app database "${MONGODB_DB}".`);
         initialDb = normalizeDb(state);
       } else {
+        hasPersistedAdminState = fs.existsSync(dbFile);
         initialDb = loadLocalDb();
         await stateCollection.insertOne({ key: "main", ...initialDb });
         console.log(`Initialized MongoDB Atlas app database "${MONGODB_DB}" from local data.`);
@@ -324,6 +330,8 @@ async function loadDb() {
   } else {
     if (!fs.existsSync(dbFile)) {
       fs.writeFileSync(dbFile, JSON.stringify(defaultDb, null, 2));
+    } else {
+      hasPersistedAdminState = true;
     }
     console.log("Using local JSON database. Set MONGODB_URI in production.");
     initialDb = normalizeDb(JSON.parse(fs.readFileSync(dbFile, "utf8")));
@@ -344,6 +352,7 @@ async function loadDb() {
       const existingAdmin = await adminStateCollection.findOne({ key: "main" });
       if (existingAdmin) {
         const { _id, key, ...adminState } = existingAdmin;
+        hasPersistedAdminState = true;
         console.log(`Using MongoDB Atlas admin database "${MONGODB_ADMIN_DB}".`);
         return normalizeDb({ ...initialDb, admin: { ...initialDb.admin, ...(adminState.admin || {}) } });
       }
@@ -364,19 +373,6 @@ async function loadDb() {
 
 let db = await loadDb();
 
-async function migrateDefaultAdminCredentials() {
-  const defaultOldAdminLogin = "6388391842";
-  const defaultOldAdminPassword = "123456";
-  if (db.admin.loginId === defaultOldAdminLogin && await bcrypt.compare(defaultOldAdminPassword, db.admin.passwordHash)) {
-    db.admin.email = "yadavabhinav551@gmail.com";
-    db.admin.passwordHash = await bcrypt.hash("1234546", 10);
-    db.admin.updatedAt = new Date().toISOString();
-    saveDb();
-    console.log("Migrated default admin credentials to mobile/email/password.");
-  }
-}
-
-await migrateDefaultAdminCredentials();
 async function ensureDefaultAdmin() {
   try {
     const desiredLogin = "6388391842";
@@ -399,6 +395,23 @@ async function ensureDefaultAdmin() {
 }
 
 await ensureDefaultAdmin();
+async function restoreMigratedDefaultAdminPassword() {
+  if (
+    !hasPersistedAdminState ||
+    String(db.admin.loginId || "").trim() !== LEGACY_DEFAULT_ADMIN_LOGIN
+    || !db.admin.passwordHash
+    || !(await bcrypt.compare(MIGRATED_DEFAULT_ADMIN_PASSWORD, db.admin.passwordHash))
+  ) {
+    return;
+  }
+
+  db.admin.passwordHash = await bcrypt.hash(LEGACY_DEFAULT_ADMIN_PASSWORD, 10);
+  db.admin.updatedAt = new Date().toISOString();
+  await saveDbAndWait();
+  console.log("Restored legacy password for the unchanged default admin account.");
+}
+
+await restoreMigratedDefaultAdminPassword();
 const privacyUnlockAttempts = new Map();
 
 function saveDb() {
