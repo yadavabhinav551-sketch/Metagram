@@ -117,9 +117,37 @@ function emailDeliveryError(error) {
   }
   if (["ECONNECTION", "ETIMEDOUT", "ESOCKET", "ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH"].includes(code)
     || /timed?\s*out|connection.*closed/i.test(String(error?.message || ""))) {
-    return "Render could not connect to the SMTP server. Check SMTP_HOST=smtp.gmail.com and try port 465 with SMTP_SECURE=true, or port 587 with SMTP_SECURE=false. If both time out, outbound SMTP is unavailable from this Render service; app code cannot bypass that network restriction.";
+    return "SMTP connection timed out or closed before authentication completed. Check the diagnostic details below; the password has not been verified yet.";
   }
   return `SMTP email delivery failed${code ? ` (${code})` : ""}${responseCode ? ` [${responseCode}]` : ""}. Check the Render service logs for the provider response.`;
+}
+
+function emailDeliveryDiagnostics(error) {
+  let host = SMTP_HOST;
+  let port = SMTP_PORT;
+  let secure = SMTP_SECURE;
+  if (SMTP_URL) {
+    try {
+      const url = new URL(SMTP_URL);
+      host = url.hostname;
+      port = Number(url.port || (url.protocol === "smtps:" ? 465 : 587));
+      secure = url.protocol === "smtps:";
+    } catch {
+      host = "configured SMTP_URL";
+    }
+  }
+  return {
+    transport: "smtp",
+    host: host || "not configured",
+    port,
+    secure,
+    code: String(error?.code || "UNKNOWN").slice(0, 40),
+    responseCode: Number(error?.responseCode) || null,
+    command: String(error?.command || "").replace(/[^A-Z0-9 ]/gi, "").slice(0, 40) || null,
+    syscall: String(error?.syscall || "").replace(/[^A-Z0-9 ]/gi, "").slice(0, 40) || null,
+    address: String(error?.address || "").replace(/[^A-Fa-f0-9:.%_-]/g, "").slice(0, 80) || null,
+    portAttempted: Number(error?.port) || null
+  };
 }
 
 async function sendEmailMessage(email, { subject, text, html }) {
@@ -1489,11 +1517,7 @@ async function issueEmailAuthOtp(req, res, email, purpose, payload = null) {
   } catch (error) {
     emailAuthOtpRequests.delete(rateLimitKey);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
-      console.error("Email authentication code delivery failed:", {
-        code: error.code || null,
-        responseCode: error.responseCode || null,
-        command: error.command || null
-      });
+      console.error("Email authentication code delivery failed:", emailDeliveryDiagnostics(error));
     }
     res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
       error: emailDeliveryError(error)
@@ -2172,11 +2196,7 @@ app.post("/api/me/hidden-secret/recovery/request", authUser, requirePrivacyUnloc
     hiddenSecretRecoveryCodes.delete(req.user.id);
     hiddenSecretRecoveryRequests.delete(req.user.id);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
-      console.error("Hidden chat recovery email failed:", {
-        code: error.code || null,
-        responseCode: error.responseCode || null,
-        command: error.command || null
-      });
+      console.error("Hidden chat recovery email failed:", emailDeliveryDiagnostics(error));
     }
     return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
       error: emailDeliveryError(error)
@@ -3367,11 +3387,7 @@ app.post("/api/admin/credentials/email-otp", authAdmin, async (req, res) => {
   } catch (error) {
     adminCredentialOtpRequests.delete(requestKey);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
-      console.error("Admin credential code delivery failed:", {
-        code: error.code || null,
-        responseCode: error.responseCode || null,
-        command: error.command || null
-      });
+      console.error("Admin credential code delivery failed:", emailDeliveryDiagnostics(error));
     }
     return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
       error: emailDeliveryError(error)
@@ -3422,14 +3438,11 @@ app.post("/api/admin/email/test", authAdmin, async (_req, res) => {
   } catch (error) {
     adminEmailTestRequests.delete(recipient);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
-      console.error("Admin email delivery test failed:", {
-        code: error.code || null,
-        responseCode: error.responseCode || null,
-        command: error.command || null
-      });
+      console.error("Admin email delivery test failed:", emailDeliveryDiagnostics(error));
     }
     return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
-      error: emailDeliveryError(error)
+      error: emailDeliveryError(error),
+      diagnostic: emailDeliveryDiagnostics(error)
     });
   }
 });

@@ -33,7 +33,11 @@ const adminApi = async (url, options = {}) => {
     }
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Request failed.");
+  if (!response.ok) {
+    const error = new Error(data.error || "Request failed.");
+    error.diagnostic = data.diagnostic || null;
+    throw error;
+  }
   return data;
 };
 
@@ -989,9 +993,14 @@ $("testSmtpDeliveryBtn").addEventListener("click", async () => {
     });
     $("smtpDeliveryTestStatus").textContent = `SMTP test email sent to ${result.email}. Check the inbox and spam folder.`;
   } catch (error) {
-    $("smtpDeliveryTestStatus").textContent = error.name === "TimeoutError" || error.name === "AbortError"
-      ? "SMTP test timed out. Check SMTP host/port, then check whether Render allows outbound SMTP on that port."
+    const diagnostic = error.diagnostic;
+    const detail = diagnostic
+      ? ` Details: ${diagnostic.host}:${diagnostic.port}, secure=${diagnostic.secure}, code=${diagnostic.code}, command=${diagnostic.command || "n/a"}, syscall=${diagnostic.syscall || "n/a"}, address=${diagnostic.address || "n/a"}.`
+      : "";
+    const message = error.name === "TimeoutError" || error.name === "AbortError"
+      ? "SMTP test request timed out before the server returned a result."
       : error.message;
+    $("smtpDeliveryTestStatus").textContent = `${message}${detail}`;
   } finally {
     button.disabled = false;
   }
