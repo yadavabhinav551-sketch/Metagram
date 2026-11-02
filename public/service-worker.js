@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v134-admin-google-login";
+const CACHE_VERSION = "calculator-pwa-v135-otp-email-delivery";
 const APP_SHELL = [
   "/",
   "/offline.html",

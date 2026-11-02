@@ -373,6 +373,9 @@ const api = async (url, options = {}) => {
     }
     return data;
   } catch (error) {
+    if (error.name === "TimeoutError" || error.name === "AbortError") {
+      throw new Error("The request timed out. If this was an email code request, wait a moment before trying again.");
+    }
     if (error.status) throw error;
     error.offline = true;
     throw error;
@@ -685,9 +688,11 @@ function signupFormPayload() {
 
 async function requestSignupEmailCode(payload = state.signupOtpPayload) {
   if (!payload) throw new Error("Fill in your account details first.");
+  $("signupMessage").textContent = "Sending email code...";
   const response = await api("/api/auth/email/signup/request", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(90_000)
   });
   state.signupOtpPayload = payload;
   state.signupOtpEmail = response.email;
@@ -714,9 +719,11 @@ function resetSignupEmailCode() {
 
 async function requestLoginEmailCode() {
   const email = $("loginOtpEmail").value.trim();
+  $("loginOtpMessage").textContent = "Sending email code...";
   const response = await api("/api/auth/email/login/request", {
     method: "POST",
-    body: JSON.stringify({ email })
+    body: JSON.stringify({ email }),
+    signal: AbortSignal.timeout(90_000)
   });
   state.loginOtpSent = true;
   state.loginOtpEmail = response.email;
@@ -4617,6 +4624,7 @@ $("otpLoginTab").addEventListener("click", () => setAuthLoginMethod("otp"));
 $("loginOtpForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const submitButton = $("loginOtpSubmit");
+  const isSendingCode = !state.loginOtpSent;
   submitButton.disabled = true;
   $("loginOtpMessage").textContent = "";
   try {
@@ -4637,15 +4645,20 @@ $("loginOtpForm").addEventListener("submit", async (event) => {
     $("loginOtpMessage").textContent = error.message;
   } finally {
     submitButton.disabled = false;
+    if (isSendingCode && !state.loginOtpSent) submitButton.textContent = "Send email code";
   }
 });
 $("loginOtpChangeEmail").addEventListener("click", resetLoginEmailCode);
 $("loginOtpResend").addEventListener("click", async () => {
+  const resendButton = $("loginOtpResend");
+  resendButton.disabled = true;
   $("loginOtpMessage").textContent = "";
   try {
     await requestLoginEmailCode();
   } catch (error) {
     $("loginOtpMessage").textContent = error.message;
+  } finally {
+    resendButton.disabled = false;
   }
 });
 $("logoutBtn").addEventListener("click", () => {

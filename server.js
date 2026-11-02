@@ -55,6 +55,7 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "").toLowerCase() === "tru
 const SMTP_USER = String(process.env.SMTP_USER || "");
 const SMTP_PASS = String(process.env.SMTP_PASS || "");
 const SMTP_FROM = String(process.env.SMTP_FROM || "").trim();
+const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const emailAuthOtps = new Map();
 const emailAuthOtpRequests = new Map();
 const adminCredentialOtps = new Map();
@@ -102,24 +103,47 @@ function execFilePromise(command, args) {
 }
 
 async function sendEmailOtp(email, code, purpose) {
-  if ((!SMTP_URL && !SMTP_HOST) || !SMTP_FROM) {
-    const error = new Error("Email OTP delivery is not configured. Configure SMTP_URL (or SMTP_HOST) and SMTP_FROM.");
+  if ((!RESEND_API_KEY && !SMTP_URL && !SMTP_HOST) || !SMTP_FROM) {
+    const error = new Error("Email OTP delivery is not configured. Set RESEND_API_KEY or SMTP settings, and SMTP_FROM.");
     error.code = "SMTP_NOT_CONFIGURED";
     throw error;
   }
-  const transport = nodemailer.createTransport(SMTP_URL || {
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    ...(SMTP_USER && SMTP_PASS ? { auth: { user: SMTP_USER, pass: SMTP_PASS } } : {})
+  const subject = `Metagram ${purpose} code`;
+  const text = `Your Metagram ${purpose} code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`;
+  const html = `<p>Your Metagram ${purpose} code is <strong>${code}</strong>.</p><p>It expires in 10 minutes. If you did not request this, ignore this email.</p>`;
+  if (RESEND_API_KEY) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ from: SMTP_FROM, to: [email], subject, text, html }),
+      signal: AbortSignal.timeout(12_000)
+    });
+    if (!response.ok) {
+      const details = (await response.text()).slice(0, 500);
+      throw new Error(`Resend email delivery failed (${response.status}): ${details}`);
+    }
+    return;
+  }
+
+  const transport = nodemailer.createTransport({
+    ...(SMTP_URL ? { url: SMTP_URL } : {
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      ...(SMTP_USER && SMTP_PASS ? { auth: { user: SMTP_USER, pass: SMTP_PASS } } : {})
+    }),
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000
   });
-  await transport.sendMail({
-    from: SMTP_FROM,
-    to: email,
-    subject: `Metagram ${purpose} code`,
-    text: `Your Metagram ${purpose} code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`,
-    html: `<p>Your Metagram ${purpose} code is <strong>${code}</strong>.</p><p>It expires in 10 minutes. If you did not request this, ignore this email.</p>`
-  });
+  try {
+    await transport.sendMail({ from: SMTP_FROM, to: email, subject, text, html });
+  } finally {
+    transport.close();
+  }
 }
 
 async function sendHiddenSecretRecoveryCode(email, code) {
@@ -1436,13 +1460,14 @@ async function issueEmailAuthOtp(req, res, email, purpose, payload = null) {
   try {
     await sendEmailOtp(email, code, purpose === "signup" ? "sign-up verification" : "sign-in");
   } catch (error) {
+    emailAuthOtpRequests.delete(rateLimitKey);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
       console.error("Email authentication code delivery failed:", error.message || error);
     }
     res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
       error: error.code === "SMTP_NOT_CONFIGURED"
         ? error.message
-        : "Could not send the email code. Check the email service configuration and try again."
+        : "Could not send the email code. Check SMTP_FROM and email-service credentials. If SMTP times out on Render, configure RESEND_API_KEY for HTTPS delivery."
     });
     return false;
   }
@@ -2116,13 +2141,14 @@ app.post("/api/me/hidden-secret/recovery/request", authUser, requirePrivacyUnloc
     await sendHiddenSecretRecoveryCode(email, code);
   } catch (error) {
     hiddenSecretRecoveryCodes.delete(req.user.id);
+    hiddenSecretRecoveryRequests.delete(req.user.id);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
       console.error("Hidden chat recovery email failed:", error.message || error);
     }
     return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
       error: error.code === "SMTP_NOT_CONFIGURED"
         ? error.message
-        : "Could not send the recovery email. Check the mail service configuration and try again."
+        : "Could not send the recovery email. Check SMTP_FROM and email-service credentials. If SMTP times out on Render, configure RESEND_API_KEY for HTTPS delivery."
     });
   }
   req.user.hiddenChatSecretResetRequestedAt = new Date().toISOString();
@@ -3308,13 +3334,14 @@ app.post("/api/admin/credentials/email-otp", authAdmin, async (req, res) => {
     await sendEmailOtp(currentEmail, currentCode, "admin credential change");
     if (newEmailCode) await sendEmailOtp(requestedEmail, newEmailCode, "new admin email verification");
   } catch (error) {
+    adminCredentialOtpRequests.delete(requestKey);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
       console.error("Admin credential code delivery failed:", error.message || error);
     }
     return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
       error: error.code === "SMTP_NOT_CONFIGURED"
         ? error.message
-        : "Could not send the verification code. Check the email service configuration and try again."
+        : "Could not send the verification code. Check SMTP_FROM and email-service credentials. If SMTP times out on Render, configure RESEND_API_KEY for HTTPS delivery."
     });
   }
 
