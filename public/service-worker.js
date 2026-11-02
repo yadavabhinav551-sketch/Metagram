@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v137-smtp-connection-details";
+const CACHE_VERSION = "calculator-pwa-v138-smtp-port-fallback";
 const APP_SHELL = [
   "/",
   "/offline.html",

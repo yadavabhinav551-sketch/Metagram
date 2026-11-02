@@ -136,17 +136,25 @@ function emailDeliveryDiagnostics(error) {
       host = "configured SMTP_URL";
     }
   }
+  const attempt = error?.smtpAttempt;
   return {
     transport: "smtp",
     host: host || "not configured",
-    port,
-    secure,
+    port: Number(attempt?.port) || port,
+    secure: typeof attempt?.secure === "boolean" ? attempt.secure : secure,
     code: String(error?.code || "UNKNOWN").slice(0, 40),
     responseCode: Number(error?.responseCode) || null,
     command: String(error?.command || "").replace(/[^A-Z0-9 ]/gi, "").slice(0, 40) || null,
     syscall: String(error?.syscall || "").replace(/[^A-Z0-9 ]/gi, "").slice(0, 40) || null,
     address: String(error?.address || "").replace(/[^A-Fa-f0-9:.%_-]/g, "").slice(0, 80) || null,
-    portAttempted: Number(error?.port) || null
+    portAttempted: Number(error?.port) || null,
+    attempts: Array.isArray(error?.smtpAttempts)
+      ? error.smtpAttempts.slice(0, 2).map((item) => ({
+        port: item.port,
+        secure: item.secure,
+        code: String(item.code || "UNKNOWN").slice(0, 40)
+      }))
+      : undefined
   };
 }
 
@@ -174,21 +182,43 @@ async function sendEmailMessage(email, { subject, text, html }) {
     return;
   }
 
-  const transport = nodemailer.createTransport({
-    ...(SMTP_URL ? { url: SMTP_URL } : {
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      secure: SMTP_SECURE,
-      ...(SMTP_USER && SMTP_PASS ? { auth: { user: SMTP_USER, pass: SMTP_PASS } } : {})
-    }),
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 15_000
-  });
+  const smtpAttempts = [];
+  const sendWithSmtp = async (port, secure, requireTLS = false) => {
+    const transport = nodemailer.createTransport({
+      ...(SMTP_URL ? { url: SMTP_URL } : {
+        host: SMTP_HOST,
+        port,
+        secure,
+        ...(SMTP_USER && SMTP_PASS ? { auth: { user: SMTP_USER, pass: SMTP_PASS } } : {})
+      }),
+      ...(requireTLS ? { requireTLS: true } : {}),
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000
+    });
+    try {
+      await transport.sendMail({ from: SMTP_FROM, to: email, subject, text, html });
+    } catch (error) {
+      if (!SMTP_URL) {
+        smtpAttempts.push({
+          port,
+          secure,
+          code: error.code || "UNKNOWN"
+        });
+        error.smtpAttempt = { port, secure };
+        error.smtpAttempts = smtpAttempts;
+      }
+      throw error;
+    } finally {
+      transport.close();
+    }
+  };
   try {
-    await transport.sendMail({ from: SMTP_FROM, to: email, subject, text, html });
-  } finally {
-    transport.close();
+    await sendWithSmtp(SMTP_PORT, SMTP_SECURE);
+  } catch (error) {
+    const alternatePort = SMTP_PORT === 465 ? 587 : SMTP_PORT === 587 ? 465 : null;
+    if (SMTP_URL || !alternatePort || error.command !== "CONN") throw error;
+    await sendWithSmtp(alternatePort, alternatePort === 465, alternatePort === 587);
   }
 }
 

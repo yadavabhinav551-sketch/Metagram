@@ -995,7 +995,7 @@ $("testSmtpDeliveryBtn").addEventListener("click", async () => {
   } catch (error) {
     const diagnostic = error.diagnostic;
     const detail = diagnostic
-      ? ` Details: ${diagnostic.host}:${diagnostic.port}, secure=${diagnostic.secure}, code=${diagnostic.code}, command=${diagnostic.command || "n/a"}, syscall=${diagnostic.syscall || "n/a"}, address=${diagnostic.address || "n/a"}.`
+      ? ` Details: ${diagnostic.host}:${diagnostic.port}, secure=${diagnostic.secure}, code=${diagnostic.code}, command=${diagnostic.command || "n/a"}, syscall=${diagnostic.syscall || "n/a"}, address=${diagnostic.address || "n/a"}.${diagnostic.attempts?.length > 1 ? ` Attempts: ${diagnostic.attempts.map((attempt) => `${attempt.port}/${attempt.secure ? "TLS" : "STARTTLS"}=${attempt.code}`).join(", ")}.` : ""}`
       : "";
     const message = error.name === "TimeoutError" || error.name === "AbortError"
       ? "SMTP test request timed out before the server returned a result."
