@@ -563,6 +563,207 @@ body.app-booting #updateRequiredView {
   background: var(--wa-card);
 }
 
+.profile-header.profile-account-summary {
+  flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 154px;
+  background:
+    radial-gradient(ellipse at 4% 0, rgba(91, 114, 255, 0.12), transparent 44%),
+    rgba(32, 44, 51, 0.58);
+}
+
+.profile-summary-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 18px;
+}
+
+.profile-summary-identity .profile-avatar {
+  width: 88px;
+  height: 88px;
+  font-size: 30px;
+}
+
+.profile-summary-copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.profile-summary-copy strong {
+  overflow: hidden;
+  font-size: 21px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-summary-copy span,
+.profile-summary-copy small {
+  overflow: hidden;
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-summary-copy > span:first-of-type {
+  color: var(--wa-emerald);
+  font-weight: 700;
+}
+
+.profile-summary-actions {
+  display: grid;
+  min-width: 180px;
+  align-content: center;
+  gap: 9px;
+}
+
+.profile-summary-actions button,
+.profile-action-card button.primary,
+.profile-action-card button.secondary {
+  min-height: 42px;
+  padding: 0 15px;
+  border: 1px solid var(--wa-line);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.profile-summary-actions .primary,
+.profile-action-card button.primary {
+  border-color: var(--wa-emerald);
+  background: var(--wa-emerald);
+  color: #fff;
+}
+
+.profile-summary-actions .primary:hover,
+.profile-action-card button.primary:hover {
+  background: var(--wa-emerald-hover);
+}
+
+.profile-summary-actions .secondary,
+.profile-action-card button.secondary {
+  background: var(--wa-card);
+  color: var(--wa-text-primary);
+}
+
+.profile-action-card {
+  width: min(100%, 620px);
+  gap: 18px;
+}
+
+.profile-action-card > header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.profile-action-card > header strong {
+  font-size: 17px;
+}
+
+.profile-action-card > header small,
+.profile-action-card .profile-action-section > small,
+.profile-action-card .profile-action-section > strong {
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.profile-action-card .profile-action-section {
+  display: grid;
+  gap: 14px;
+  padding: 15px;
+  border: 1px solid var(--wa-line);
+  border-radius: 14px;
+  background: rgba(32, 44, 51, 0.42);
+}
+
+.profile-action-card .profile-grid label,
+.profile-action-card .profile-action-section label {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  color: var(--wa-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.profile-action-card .profile-grid label > span,
+.profile-action-card .profile-action-section label > span {
+  color: var(--wa-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.profile-action-card input:not([type="checkbox"]) {
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(134, 150, 160, 0.2);
+  border-radius: 10px;
+  background: rgba(11, 20, 26, 0.72);
+  font-size: 14px;
+}
+
+.profile-edit-layout {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.profile-edit-layout .profile-avatar {
+  width: 76px;
+  height: 76px;
+}
+
+.profile-action-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.profile-action-card > .error-text {
+  min-height: 0;
+  margin: -8px 0 0;
+  text-align: left;
+}
+
+.profile-forgot-password {
+  justify-self: start;
+  padding: 0;
+  color: var(--wa-emerald);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-action-card .profile-email-verification {
+  margin: 0;
+}
+
+.profile-action-card .profile-email-verification small {
+  color: var(--wa-text-muted);
+}
+
+.profile-action-card #passwordChangeForm {
+  display: grid;
+  gap: 14px;
+}
+
+.profile-action-card #passwordRecoveryGoogleOption {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-action-card #passwordRecoveryGoogleOption > small {
+  color: var(--wa-text-muted);
+}
+
+.profile-action-card #passwordResetGoogleButton {
+  justify-content: start;
+}
+
 .profile-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 190px;
@@ -3305,6 +3506,34 @@ input:focus, select:focus {
     grid-template-columns: 1fr;
   }
 
+  .profile-header.profile-account-summary {
+    grid-template-columns: 1fr;
+    min-height: 184px;
+  }
+
+  .profile-summary-actions {
+    grid-template-columns: 1fr 1fr;
+    min-width: 0;
+  }
+
+  .profile-summary-copy strong {
+    font-size: 18px;
+  }
+
+  .profile-edit-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-edit-layout .profile-avatar-block {
+    grid-template-columns: auto auto;
+    align-items: center;
+    justify-content: start;
+  }
+
+  .profile-action-card {
+    padding: 16px;
+  }
+
   .profile-card {
     gap: 12px;
     padding: 16px;
@@ -3473,6 +3702,15 @@ input:focus, select:focus {
 
 :root[data-theme="light"] .profile-settings-card {
   background: rgba(255, 255, 255, 0.84);
+}
+
+:root[data-theme="light"] .profile-account-summary,
+:root[data-theme="light"] .profile-action-card .profile-action-section {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+:root[data-theme="light"] .profile-action-card input:not([type="checkbox"]) {
+  background: #ffffff;
 }
 
 :root[data-theme="light"] .profile-email-verification,

@@ -46,11 +46,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v132-admin-login-on-main-form" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v132-admin-login-on-main-form">
+    <link rel="preload" href="/styles.css?v=v144-stale-cache-fallback" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v144-stale-cache-fallback">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v133-dual-perspective-call-recording" defer></script>
+    <script src="/app.js?v=v144-stale-cache-fallback" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -604,38 +604,22 @@
             </div>
             <button id="closeProfileBtn" class="icon-button profile-close-button" type="button" title="Close" aria-label="Close profile settings">✕</button>
           </header>
-          <section class="profile-header profile-settings-card" aria-label="Your profile">
-            <div class="profile-avatar-block">
+          <section class="profile-header profile-settings-card profile-account-summary" aria-label="Your profile">
+            <div class="profile-summary-identity">
               <div class="profile-preview">
                 <span class="avatar profile-avatar" id="profileAvatarPreview">U</span>
               </div>
-              <label class="file-input-label profile-photo-button">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3v12H4V7Z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
-                Change photo
-                <input name="avatar" id="profileAvatarInput" type="file" accept="image/*">
-              </label>
+              <div class="profile-summary-copy">
+                <strong id="profileSummaryName">Your name</strong>
+                <span id="profileSummaryUserId">@username</span>
+                <span id="profileSummaryEmail"></span>
+                <span id="profileSummaryMobile"></span>
+                <small id="profileSummaryStatus"></small>
+              </div>
             </div>
-            <div class="profile-grid">
-              <label>
-                <span>Display name</span>
-                <input name="displayName" id="profileName" autocomplete="name" required>
-              </label>
-              <label>
-                <span>User ID</span>
-                <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
-              </label>
-              <label>
-                <span>Phone number</span>
-                <input name="mobile" id="profileMobile" type="tel" autocomplete="tel" inputmode="tel" required>
-              </label>
-              <label>
-                <span>Verified email</span>
-                <input id="profileEmail" type="email" autocomplete="email" readonly>
-              </label>
-              <label>
-                <span>About</span>
-                <input name="statusText" id="profileStatusInput" maxlength="140" placeholder="What are you up to?">
-              </label>
+            <div class="profile-summary-actions">
+              <button id="openProfileEditBtn" class="primary" type="button">Edit profile details</button>
+              <button id="openPasswordChangeBtn" class="secondary" type="button">Change password</button>
             </div>
           </section>
 
@@ -650,37 +634,6 @@
               </select>
             </label>
             <small class="theme-preference-hint">This preference is saved on this device and does not change your account settings.</small>
-          </fieldset>
-
-          <fieldset class="profile-section profile-settings-card">
-            <legend><span class="profile-section-icon" aria-hidden="true">01</span><span><strong>Password &amp; security</strong><small>Update your sign-in password</small></span></legend>
-            <div class="profile-email-verification">
-              <div>
-                <strong>Verify your email to save account changes</strong>
-                <small id="profileEmailVerificationStatus" role="status" aria-live="polite">Google verification is required before changing your profile, password, photo, or calculator lock password.</small>
-              </div>
-              <div id="profileGoogleVerifyButton" class="google-signin-button"></div>
-              <div id="profileEmailOtpVerification" class="profile-otp-verification hidden">
-                <button id="sendProfileEmailOtpBtn" class="text-button" type="button">Send code to verified email</button>
-                <div id="profileEmailOtpCodeGroup" class="profile-otp-code-group hidden">
-                  <label>
-                    <span>Email verification code</span>
-                    <input id="profileEmailOtpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
-                  </label>
-                  <button id="verifyProfileEmailOtpBtn" class="text-button" type="button">Verify code</button>
-                </div>
-              </div>
-            </div>
-            <div class="profile-password-grid">
-            <label>
-              <span>Current password</span>
-              <input name="oldPassword" type="password" autocomplete="current-password" placeholder="Required to change password">
-            </label>
-            <label>
-              <span>New password</span>
-              <input name="newPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep same">
-            </label>
-            </div>
           </fieldset>
 
           <fieldset class="profile-section profile-settings-card">
@@ -760,6 +713,147 @@
             </button>
           </div>
         </form>
+      </section>
+
+      <section id="profileEditModal" class="modal-layer hidden">
+        <form id="profileEditForm" class="modal-card profile-action-card">
+          <header>
+            <div>
+              <strong>Edit profile details</strong>
+              <small>Update the information people see on your profile.</small>
+            </div>
+            <button id="closeProfileEditBtn" class="icon-button" type="button" title="Close" aria-label="Close profile editor">✕</button>
+          </header>
+          <div class="profile-edit-layout">
+            <div class="profile-avatar-block">
+              <div class="profile-preview">
+                <span class="avatar profile-avatar" id="profileEditAvatarPreview">U</span>
+              </div>
+              <label class="file-input-label profile-photo-button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3v12H4V7Z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
+                Change photo
+                <input name="avatar" id="profileAvatarInput" type="file" accept="image/*">
+              </label>
+            </div>
+            <div class="profile-grid">
+              <label>
+                <span>Display name</span>
+                <input name="displayName" id="profileName" autocomplete="name" minlength="2" maxlength="80" required>
+              </label>
+              <label>
+                <span>User ID</span>
+                <input name="userId" id="profileUserId" autocomplete="username" pattern="[a-z0-9._]{3,30}" required>
+              </label>
+              <label>
+                <span>Phone number</span>
+                <input name="mobile" id="profileMobile" type="tel" autocomplete="tel" inputmode="tel" required>
+              </label>
+              <label>
+                <span>Email address</span>
+                <input name="email" id="profileEmail" type="email" autocomplete="email" required>
+              </label>
+              <label>
+                <span>About</span>
+                <input name="statusText" id="profileStatusInput" maxlength="140" placeholder="What are you up to?">
+              </label>
+            </div>
+          </div>
+          <div id="profileContactSecurity" class="profile-action-section hidden">
+            <strong>Confirm contact changes</strong>
+            <small>Enter your current password first. We’ll send a code to your current email and, when changing it, another code to the new address.</small>
+            <label>
+              <span>Current password</span>
+              <input id="profileContactPassword" type="password" autocomplete="current-password">
+            </label>
+            <div id="profileContactOtpFields" class="profile-grid hidden">
+              <label>
+                <span>Code sent to your current email</span>
+                <input id="profileCurrentEmailOtp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+              </label>
+              <label id="profileNewEmailOtpField" class="hidden">
+                <span>Code sent to your new email</span>
+                <input id="profileNewEmailOtp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+              </label>
+            </div>
+          </div>
+          <div id="profileEmailVerification" class="profile-email-verification hidden">
+            <div>
+              <strong>Verify your email to change your photo</strong>
+              <small id="profileEmailVerificationStatus" role="status" aria-live="polite">Use Google or an email code to confirm your account.</small>
+            </div>
+            <div id="profileGoogleVerifyButton" class="google-signin-button"></div>
+            <div id="profileEmailOtpVerification" class="profile-otp-verification hidden">
+              <button id="sendProfileEmailOtpBtn" class="text-button" type="button">Send code to verified email</button>
+              <div id="profileEmailOtpCodeGroup" class="profile-otp-code-group hidden">
+                <label>
+                  <span>Email verification code</span>
+                  <input id="profileEmailOtpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+                </label>
+                <button id="verifyProfileEmailOtpBtn" class="text-button" type="button">Verify code</button>
+              </div>
+            </div>
+          </div>
+          <p id="profileEditMessage" class="error-text" role="status" aria-live="polite"></p>
+          <footer class="profile-action-footer">
+            <button id="cancelProfileEditBtn" class="secondary" type="button">Cancel</button>
+            <button id="saveProfileEditBtn" class="primary" type="submit">Save profile</button>
+          </footer>
+        </form>
+      </section>
+
+      <section id="passwordChangeModal" class="modal-layer hidden">
+        <div class="modal-card profile-action-card">
+          <header>
+            <div>
+              <strong>Change password</strong>
+              <small>Keep your account protected with a strong password.</small>
+            </div>
+            <button id="closePasswordChangeBtn" class="icon-button" type="button" title="Close" aria-label="Close password dialog">✕</button>
+          </header>
+          <form id="passwordChangeForm" class="profile-action-section">
+            <div id="passwordChangeFields" class="profile-grid">
+              <label>
+                <span>Current password</span>
+                <input id="passwordCurrent" type="password" autocomplete="current-password" required>
+              </label>
+              <label>
+                <span>New password</span>
+                <input id="passwordNext" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+              </label>
+              <label>
+                <span>Confirm new password</span>
+                <input id="passwordConfirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
+              </label>
+            </div>
+            <button id="changePasswordSubmit" class="primary" type="submit">Update password</button>
+          </form>
+          <button id="forgotPasswordBtn" class="text-button profile-forgot-password" type="button">Forgot your current password?</button>
+          <div id="passwordRecoveryPanel" class="profile-action-section hidden">
+            <strong>Recover your password</strong>
+            <small id="passwordRecoveryHint">Choose an available way to verify your account.</small>
+            <div id="passwordRecoveryOtpOption">
+              <button id="sendPasswordResetOtpBtn" class="secondary" type="button">Send a code to my verified email</button>
+              <label id="passwordResetOtpField" class="hidden">
+                <span>Email verification code</span>
+                <input id="passwordResetOtp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+              </label>
+            </div>
+            <div id="passwordRecoveryGoogleOption">
+              <small>Or verify the Google account linked to your verified email:</small>
+              <div id="passwordResetGoogleButton" class="google-signin-button"></div>
+            </div>
+            <label>
+              <span>New password</span>
+              <input id="recoveryPasswordNext" type="password" autocomplete="new-password" minlength="8" maxlength="128">
+            </label>
+            <label>
+              <span>Confirm new password</span>
+              <input id="recoveryPasswordConfirm" type="password" autocomplete="new-password" minlength="8" maxlength="128">
+            </label>
+            <button id="recoverPasswordSubmit" class="primary" type="button">Reset password with email code</button>
+          </div>
+          <p id="passwordChangeMessage" class="error-text" role="status" aria-live="polite"></p>
+        </div>
       </section>
 
       <section id="shareModal" class="modal-layer hidden">

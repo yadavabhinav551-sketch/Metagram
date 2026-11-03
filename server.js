@@ -58,6 +58,9 @@ const SMTP_FROM = String(process.env.SMTP_FROM || "").trim();
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const emailAuthOtps = new Map();
 const emailAuthOtpRequests = new Map();
+const profileContactOtps = new Map();
+const profileContactOtpRequests = new Map();
+const profileContactPasswordFailures = new Map();
 const adminCredentialOtps = new Map();
 const adminCredentialOtpRequests = new Map();
 const adminEmailTestRequests = new Map();
@@ -914,6 +917,19 @@ function emailVerificationTokenIsValid(user, token) {
   }
 }
 
+function profileContactTokenIsValid(user, token) {
+  if (!user?.email || !token || db.admin.emailOtpEnabled === false) return false;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return payload.role === "profile-contact-change"
+      && payload.id === user.id
+      && payload.email === String(user.email).trim().toLowerCase()
+      && payload.mobile === String(user.mobile || "").trim();
+  } catch {
+    return false;
+  }
+}
+
 function requirePrivacyUnlocked(req, res, next) {
   if (verifyPrivacyToken(req.user, req.headers["x-privacy-token"])) return next();
   res.status(423).json({ error: "Privacy session required." });
@@ -1560,6 +1576,8 @@ async function issueEmailAuthOtp(req, res, email, purpose, payload = null) {
       ? "sign-up verification"
       : purpose === "profile-update"
         ? "profile change verification"
+        : purpose === "password-reset"
+          ? "password recovery"
         : "sign-in";
     await sendEmailOtp(email, code, emailPurpose);
   } catch (error) {
@@ -2134,20 +2152,242 @@ app.post("/api/me/profile-otp/verify", authUser, requirePrivacyUnlocked, (req, r
   });
 });
 
+app.post("/api/me/contact-otp/request", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Contact changes by email code are disabled by the administrator." });
+  }
+  const currentEmail = String(req.user.email || "").trim().toLowerCase();
+  if (!req.user.emailVerifiedAt || !isValidEmail(currentEmail)) {
+    return res.status(403).json({ error: "Verify your current email before changing account contact details." });
+  }
+  const currentPassword = String(req.body.currentPassword || "");
+  if (!req.user.passwordHash || !currentPassword) {
+    return res.status(400).json({ error: "Your current password is required before changing your email or phone number." });
+  }
+  if (currentPassword.length > 128) {
+    return res.status(400).json({ error: "Current password must be 128 characters or fewer." });
+  }
+  const now = Date.now();
+  let passwordFailures = profileContactPasswordFailures.get(req.user.id);
+  if (passwordFailures?.lockedUntil > now) {
+    return res.status(429).json({ error: "Too many incorrect password attempts. Try again in 15 minutes." });
+  }
+  if (!passwordFailures || passwordFailures.resetAt <= now) {
+    passwordFailures = { attempts: 0, resetAt: now + 15 * 60 * 1000, lockedUntil: 0 };
+    profileContactPasswordFailures.set(req.user.id, passwordFailures);
+  }
+  if (!(await bcrypt.compare(currentPassword, req.user.passwordHash))) {
+    passwordFailures.attempts += 1;
+    if (passwordFailures.attempts >= 5) {
+      passwordFailures.lockedUntil = now + 15 * 60 * 1000;
+      return res.status(429).json({ error: "Too many incorrect password attempts. Try again in 15 minutes." });
+    }
+    return res.status(403).json({ error: "Current password is incorrect." });
+  }
+  profileContactPasswordFailures.delete(req.user.id);
+
+  const requestedEmail = req.body.email === undefined
+    ? currentEmail
+    : String(req.body.email || "").trim().toLowerCase();
+  const requestedMobile = req.body.mobile === undefined
+    ? String(req.user.mobile || "").trim()
+    : String(req.body.mobile || "").trim();
+  const emailChanged = requestedEmail !== currentEmail;
+  const mobileChanged = normalizeMobile(requestedMobile) !== normalizeMobile(req.user.mobile);
+  if (!emailChanged && !mobileChanged) {
+    return res.status(400).json({ error: "No email address or phone number changes were provided." });
+  }
+  if (emailChanged && !isValidEmail(requestedEmail)) {
+    return res.status(400).json({ error: "Enter a valid new email address." });
+  }
+  if (emailChanged && !isAvailableEmail(requestedEmail, req.user.id)) {
+    return res.status(409).json({ error: "This email address is already linked to another account." });
+  }
+  const normalizedMobile = normalizeMobile(requestedMobile);
+  if (normalizedMobile.length < 7 || normalizedMobile.length > 15) {
+    return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+  }
+  if (mobileChanged && !isAvailableMobile(requestedMobile, req.user.id)) {
+    return res.status(409).json({ error: "This phone number is already linked to another account." });
+  }
+  const lastRequestedAt = profileContactOtpRequests.get(req.user.id) || 0;
+  const waitSeconds = Math.ceil((EMAIL_AUTH_OTP_REQUEST_INTERVAL_MS - (now - lastRequestedAt)) / 1000);
+  if (waitSeconds > 0) {
+    return res.status(429).json({ error: `Wait ${waitSeconds} seconds before requesting another code.` });
+  }
+
+  const currentCode = String(crypto.randomInt(100000, 1000000));
+  const newEmailCode = emailChanged ? String(crypto.randomInt(100000, 1000000)) : null;
+  profileContactOtpRequests.set(req.user.id, now);
+  try {
+    await sendEmailOtp(currentEmail, currentCode, "account contact change");
+    if (newEmailCode) await sendEmailOtp(requestedEmail, newEmailCode, "new email address verification");
+  } catch (error) {
+    if (error.code !== "SMTP_NOT_CONFIGURED") {
+      console.error("Profile contact verification code delivery failed:", emailDeliveryDiagnostics(error));
+    }
+    return res.status(error.code === "SMTP_NOT_CONFIGURED" ? 503 : 502).json({
+      error: emailDeliveryError(error)
+    });
+  }
+  profileContactOtps.set(req.user.id, {
+    currentEmail,
+    requestedEmail,
+    requestedMobile,
+    currentCodeHash: crypto.createHash("sha256").update(currentCode).digest("hex"),
+    newEmailCodeHash: newEmailCode
+      ? crypto.createHash("sha256").update(newEmailCode).digest("hex")
+      : null,
+    expiresAt: Date.now() + EMAIL_AUTH_OTP_TTL_MS,
+    attempts: 0
+  });
+  res.json({
+    ok: true,
+    currentEmail,
+    newEmail: newEmailCode ? requestedEmail : null,
+    expiresInSeconds: EMAIL_AUTH_OTP_TTL_MS / 1000
+  });
+});
+
+app.post("/api/me/contact-otp/verify", authUser, requirePrivacyUnlocked, (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Contact changes by email code are disabled by the administrator." });
+  }
+  const entry = profileContactOtps.get(req.user.id);
+  if (!entry || Date.now() >= entry.expiresAt) {
+    profileContactOtps.delete(req.user.id);
+    return res.status(401).json({ error: "Contact verification expired. Request new email codes." });
+  }
+  const submittedEmail = req.body.email === undefined
+    ? String(req.user.email || "").trim().toLowerCase()
+    : String(req.body.email || "").trim().toLowerCase();
+  const submittedMobile = req.body.mobile === undefined
+    ? String(req.user.mobile || "").trim()
+    : String(req.body.mobile || "").trim();
+  if (
+    entry.currentEmail !== String(req.user.email || "").trim().toLowerCase()
+    || entry.requestedEmail !== submittedEmail
+    || entry.requestedMobile !== submittedMobile
+  ) {
+    profileContactOtps.delete(req.user.id);
+    return res.status(409).json({ error: "Contact details changed after codes were sent. Request new codes." });
+  }
+
+  entry.attempts += 1;
+  const matchesCode = (submittedCode, expectedHash) => {
+    const code = String(submittedCode || "").trim();
+    if (!/^\d{6}$/.test(code) || !expectedHash) return false;
+    const submittedHash = crypto.createHash("sha256").update(code).digest("hex");
+    return crypto.timingSafeEqual(Buffer.from(submittedHash, "hex"), Buffer.from(expectedHash, "hex"));
+  };
+  const currentCodeValid = matchesCode(req.body.currentCode, entry.currentCodeHash);
+  const newEmailCodeValid = entry.newEmailCodeHash
+    ? matchesCode(req.body.newEmailCode, entry.newEmailCodeHash)
+    : true;
+  if (!currentCodeValid || !newEmailCodeValid) {
+    if (entry.attempts >= 5) profileContactOtps.delete(req.user.id);
+    return res.status(401).json({
+      error: entry.attempts >= 5
+        ? "Too many incorrect attempts. Request new email codes."
+        : "One or more email codes are incorrect."
+    });
+  }
+
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const contactChangeToken = jwt.sign({
+    role: "profile-contact-change",
+    id: req.user.id,
+    currentEmail: entry.currentEmail,
+    email: entry.requestedEmail,
+    mobile: entry.requestedMobile,
+    iat: issuedAt
+  }, JWT_SECRET, { expiresIn: "10m" });
+  profileContactOtps.delete(req.user.id);
+  res.json({
+    contactChangeToken,
+    expiresAt: new Date((issuedAt + 10 * 60) * 1000).toISOString()
+  });
+});
+
+app.post("/api/me/password/change", authUser, requirePrivacyUnlocked, async (req, res) => {
+  const currentPassword = String(req.body.currentPassword || "");
+  const newPassword = String(req.body.newPassword || "");
+  if (!req.user.passwordHash || !currentPassword) {
+    return res.status(400).json({ error: "Current password is required." });
+  }
+  if (!(await bcrypt.compare(currentPassword, req.user.passwordHash))) {
+    return res.status(403).json({ error: "Current password is incorrect." });
+  }
+  if (newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ error: "New password must be between 8 and 128 characters." });
+  }
+  req.user.passwordHash = await bcrypt.hash(newPassword, 10);
+  saveDb();
+  res.json({ user: ownUser(req.user) });
+});
+
+app.post("/api/me/password-reset/request", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email-code password recovery is disabled by the administrator. Use Google verification." });
+  }
+  const email = String(req.user.email || "").trim().toLowerCase();
+  if (!req.user.emailVerifiedAt || !isValidEmail(email)) {
+    return res.status(403).json({ error: "A verified email address is required to recover your password." });
+  }
+  return issueEmailAuthOtp(req, res, email, "password-reset", { userId: req.user.id });
+});
+
+app.post("/api/me/password-reset/verify", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email-code password recovery is disabled by the administrator." });
+  }
+  const email = String(req.user.email || "").trim().toLowerCase();
+  const newPassword = String(req.body.newPassword || "");
+  if (newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ error: "New password must be between 8 and 128 characters." });
+  }
+  const result = verifyEmailAuthOtp(email, "password-reset", req.body.code);
+  if (result.error) return res.status(401).json({ error: result.error });
+  if (result.entry.payload?.userId !== req.user.id) {
+    return res.status(401).json({ error: "This recovery code does not match your account. Request a new code." });
+  }
+  req.user.passwordHash = await bcrypt.hash(newPassword, 10);
+  saveDb();
+  res.json({ user: ownUser(req.user) });
+});
+
+app.post("/api/me/password-reset/google", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({ error: "Google password recovery is unavailable on this server." });
+  }
+  let identity;
+  try {
+    identity = await verifyGoogleIdToken(req.body.credential, { maxAgeSeconds: 5 * 60 });
+  } catch (error) {
+    console.error("Google password recovery verification failed:", error.message || error);
+    return res.status(401).json({ error: "Google could not verify this account. Please try again." });
+  }
+  const currentEmail = String(req.user.email || "").trim().toLowerCase();
+  if (
+    !req.user.emailVerifiedAt
+    || identity.email !== currentEmail
+    || (req.user.googleSubject && req.user.googleSubject !== identity.googleSubject)
+  ) {
+    return res.status(403).json({ error: "Verify the Google account linked to this profile's verified email." });
+  }
+  const newPassword = String(req.body.newPassword || "");
+  if (newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ error: "New password must be between 8 and 128 characters." });
+  }
+  req.user.passwordHash = await bcrypt.hash(newPassword, 10);
+  saveDb();
+  res.json({ user: ownUser(req.user) });
+});
+
 app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   const { displayName, mobile, oldPassword, newPassword, reactionEmojis, statusText, messageAutoDelete } = req.body;
-  const requiresEmailVerification = [
-    "displayName",
-    "userId",
-    "mobile",
-    "statusText",
-    "newPassword",
-    "notificationEnabled",
-    "messageAutoDelete"
-  ]
-    .some((key) => req.body[key] !== undefined);
-  if (requiresEmailVerification && !emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])) {
-    return res.status(403).json({ error: "Verify your account email with Google or an email code before saving profile or password changes." });
+  if (newPassword !== undefined || oldPassword !== undefined) {
+    return res.status(400).json({ error: "Use the dedicated password change flow." });
   }
   let nextUserId = null;
   if (req.body.userId !== undefined) {
@@ -2158,12 +2398,43 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
       return res.status(409).json({ error: "User ID already exists." });
     }
   }
-  if (displayName && displayName.trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
-  if (displayName && displayName.trim().length > 80) return res.status(400).json({ error: "Name must be 80 characters or fewer." });
+  if (displayName !== undefined && String(displayName).trim().length < 2) return res.status(400).json({ error: "Name must be at least 2 characters." });
+  if (displayName !== undefined && String(displayName).trim().length > 80) return res.status(400).json({ error: "Name must be 80 characters or fewer." });
+  const currentEmail = String(req.user.email || "").trim().toLowerCase();
+  const nextEmail = req.body.email === undefined
+    ? currentEmail
+    : String(req.body.email || "").trim().toLowerCase();
+  const nextMobile = mobile === undefined ? String(req.user.mobile || "").trim() : String(mobile).trim();
+  const emailChanged = nextEmail !== currentEmail;
+  const mobileChanged = normalizeMobile(nextMobile) !== normalizeMobile(req.user.mobile);
+  if (emailChanged || mobileChanged) {
+    let contactPayload;
+    try {
+      contactPayload = jwt.verify(req.headers["x-profile-contact-change"], JWT_SECRET);
+    } catch {
+      return res.status(403).json({ error: "Verify your current password and email codes before changing your email or phone number." });
+    }
+    if (
+      db.admin.emailOtpEnabled === false
+      || contactPayload.role !== "profile-contact-change"
+      || contactPayload.id !== req.user.id
+      || contactPayload.currentEmail !== currentEmail
+      || contactPayload.email !== nextEmail
+      || contactPayload.mobile !== nextMobile
+    ) {
+      return res.status(403).json({ error: "Contact verification does not match these changes. Request new email codes." });
+    }
+  }
+  if (req.body.email !== undefined && (!isValidEmail(nextEmail) || !req.user.emailVerifiedAt)) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+  if (emailChanged && !isAvailableEmail(nextEmail, req.user.id)) {
+    return res.status(409).json({ error: "This email address is already linked to another account." });
+  }
   if (mobile !== undefined && (normalizeMobile(mobile).length < 7 || normalizeMobile(mobile).length > 15)) {
     return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
   }
-  if (mobile && !isAvailableMobile(mobile, req.user.id)) {
+  if (mobile !== undefined && !isAvailableMobile(mobile, req.user.id)) {
     return res.status(409).json({ error: "Mobile number already exists." });
   }
   if (reactionEmojis !== undefined && !Array.isArray(reactionEmojis)) return res.status(400).json({ error: "Reaction emojis must be a list." });
@@ -2171,15 +2442,16 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   if (messageAutoDelete !== undefined && (!messageAutoDelete || typeof messageAutoDelete !== "object")) {
     return res.status(400).json({ error: "Auto delete setting is invalid." });
   }
-  if (newPassword) {
-    if (!oldPassword) return res.status(400).json({ error: "Old password is required." });
-    if (newPassword.length < 8 || newPassword.length > 128) return res.status(400).json({ error: "New password must be between 8 and 128 characters." });
-    if (!(await bcrypt.compare(oldPassword, req.user.passwordHash))) return res.status(403).json({ error: "Old password is incorrect." });
-    req.user.passwordHash = await bcrypt.hash(newPassword, 10);
-  }
   if (nextUserId) req.user.userId = nextUserId;
   if (displayName) req.user.displayName = displayName.trim();
-  if (mobile !== undefined) req.user.mobile = String(mobile).trim();
+  if (req.body.email !== undefined) {
+    req.user.email = nextEmail;
+    if (emailChanged) {
+      req.user.googleSubject = null;
+      req.user.emailVerifiedAt = new Date().toISOString();
+    }
+  }
+  if (mobile !== undefined) req.user.mobile = nextMobile;
   if (statusText !== undefined) {
     req.user.statusText = String(statusText || "").trim();
     req.user.statusUpdatedAt = req.user.statusText ? new Date().toISOString() : null;
@@ -2207,7 +2479,10 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
 });
 
 app.post("/api/me/avatar", authUser, requirePrivacyUnlocked, (req, res, next) => {
-  if (!emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])) {
+  if (
+    !emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])
+    && !profileContactTokenIsValid(req.user, req.headers["x-profile-contact-change"])
+  ) {
     return res.status(403).json({ error: "Verify your account email with Google before changing your profile photo." });
   }
   next();

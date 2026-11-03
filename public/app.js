@@ -18,6 +18,10 @@ const state = {
   emailVerificationExpiresAt: 0,
   emailVerificationMethod: "",
   profileEmailOtpSent: false,
+  profileContactChallengeRequested: false,
+  profileContactChangeToken: "",
+  profileContactChangeExpiresAt: 0,
+  passwordResetOtpSent: false,
   pendingVerificationToken: "",
   pendingVerificationPrivacyToken: "",
   user: null,
@@ -367,6 +371,7 @@ const api = async (url, options = {}) => {
         ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
         ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
         ...(state.emailVerificationToken ? { "X-Email-Verification": state.emailVerificationToken } : {}),
+        ...(state.profileContactChangeToken ? { "X-Profile-Contact-Change": state.profileContactChangeToken } : {}),
         ...(options.headers || {})
       }
     });
@@ -531,6 +536,12 @@ function applySignupMode(mode) {
 function applyEmailOtpEnabled(enabled) {
   state.emailOtpEnabled = enabled !== false;
   $("profileEmailOtpVerification").classList.toggle("hidden", !state.emailOtpEnabled);
+  $("passwordRecoveryOtpOption").classList.toggle("hidden", !state.emailOtpEnabled);
+  $("passwordRecoveryHint").textContent = state.emailOtpEnabled
+    ? "Recover with an email code or verify the Google account linked to your verified email."
+    : "Email-code recovery is disabled. Verify the Google account linked to your verified email.";
+  $("recoverPasswordSubmit").classList.toggle("hidden", !state.emailOtpEnabled);
+  $("recoverPasswordSubmit").disabled = !state.emailOtpEnabled || !state.passwordResetOtpSent;
   $("loginMethodTabs").classList.toggle("hidden", !state.emailOtpEnabled);
   $("otpLoginTab").classList.toggle("hidden", !state.emailOtpEnabled);
   $("manualSignupPasswordGroup").classList.toggle("hidden", state.emailOtpEnabled);
@@ -672,12 +683,44 @@ function renderProfileGoogleVerifyButton() {
     : `Verify the Google email you want to link to this account before saving changes.${authorizedOriginHint}`;
 }
 
+function renderPasswordResetGoogleButton() {
+  const button = $("passwordResetGoogleButton");
+  button.replaceChildren();
+  state.googleFlow = "password-reset";
+  if (!state.googleClientId) {
+    $("passwordRecoveryHint").textContent = "Google password recovery is not configured on this server.";
+    return;
+  }
+  if (!window.google?.accounts?.id) {
+    $("passwordRecoveryHint").textContent = "Google sign-in is loading. Try again in a moment.";
+    return;
+  }
+  if (!state.googleInitialized) {
+    window.google.accounts.id.initialize({
+      client_id: state.googleClientId,
+      callback: handleGoogleCredential,
+      auto_select: false
+    });
+    state.googleInitialized = true;
+  }
+  window.google.accounts.id.renderButton(button, {
+    theme: "outline",
+    size: "large",
+    shape: "rectangular",
+    text: "continue_with",
+    width: Math.max(220, Math.min(360, Math.floor($("passwordChangeModal").clientWidth - 64)))
+  });
+}
+
 const googleIdentityScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
 let authGoogleResizeTimer = null;
 googleIdentityScript?.addEventListener("load", () => renderGoogleSignInButton());
 googleIdentityScript?.addEventListener("load", () => {
-  if (!$("profileModal").classList.contains("hidden")) renderProfileGoogleVerifyButton();
+  if (!$("profileEditModal").classList.contains("hidden")) renderProfileGoogleVerifyButton();
   if (!$("firstLoginEmailVerificationOverlay").classList.contains("hidden")) renderFirstLoginGoogleVerifyButton();
+  if (!$("passwordChangeModal").classList.contains("hidden") && !$("passwordRecoveryPanel").classList.contains("hidden")) {
+    renderPasswordResetGoogleButton();
+  }
 });
 window.addEventListener("resize", () => {
   clearTimeout(authGoogleResizeTimer);
@@ -688,7 +731,7 @@ window.addEventListener("resize", () => {
 googleIdentityScript?.addEventListener("error", () => {
   $("googleSignInUnavailable").textContent = "Google sign-in could not load. Check your internet connection and try again.";
   $("googleSignInUnavailable").classList.remove("hidden");
-  if (!$("profileModal").classList.contains("hidden")) {
+  if (!$("profileEditModal").classList.contains("hidden")) {
     $("profileEmailVerificationStatus").textContent = "Google sign-in could not load. Check your internet connection and try again.";
   }
   if (!$("firstLoginEmailVerificationOverlay").classList.contains("hidden")) {
@@ -715,8 +758,35 @@ async function handleGoogleCredential(response) {
     }
     return;
   }
+  if (state.googleFlow === "password-reset") {
+    state.googleFlow = null;
+    $("passwordChangeMessage").textContent = "Verifying your Google account...";
+    try {
+      const newPassword = $("recoveryPasswordNext").value;
+      const confirmPassword = $("recoveryPasswordConfirm").value;
+      if (newPassword.length < 8 || newPassword.length > 128) {
+        throw new Error("New password must be between 8 and 128 characters.");
+      }
+      if (newPassword !== confirmPassword) throw new Error("New password and confirmation do not match.");
+      const result = await api("/api/me/password-reset/google", {
+        method: "POST",
+        body: JSON.stringify({ credential: response.credential, newPassword })
+      });
+      state.user = result.user;
+      cacheCurrentUser();
+      $("passwordChangeModal").classList.add("hidden");
+      $("profileMessage").textContent = "Password updated.";
+      $("profileMessage").classList.add("success-text");
+      $("recoveryPasswordNext").value = "";
+      $("recoveryPasswordConfirm").value = "";
+    } catch (error) {
+      $("passwordChangeMessage").textContent = error.message;
+      if (!$("passwordChangeModal").classList.contains("hidden")) renderPasswordResetGoogleButton();
+    }
+    return;
+  }
   const isProfileEmailVerification = Boolean(
-    state.token && !$("profileModal").classList.contains("hidden")
+    state.token && !$("profileEditModal").classList.contains("hidden")
   );
   if (isProfileEmailVerification) {
     state.googleFlow = null;
@@ -730,8 +800,14 @@ async function handleGoogleCredential(response) {
       state.emailVerificationToken = result.emailVerificationToken;
       state.emailVerificationExpiresAt = Date.parse(result.expiresAt);
       state.emailVerificationMethod = "google";
-      state.user.email = result.email;
-      $("profileEmail").value = result.email;
+      state.user = result.user;
+      $("profileSummaryName").textContent = state.user.displayName || "Your name";
+      $("profileSummaryUserId").textContent = state.user.userId ? `@${state.user.userId}` : "";
+      $("profileSummaryEmail").textContent = state.user.email || "No email address";
+      $("profileSummaryMobile").textContent = state.user.mobile || "No phone number";
+      $("profileSummaryStatus").textContent = state.user.statusText || "No status added";
+      renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
+      renderAvatarInto($("profileEditAvatarPreview"), state.user, state.user.displayName);
       verificationMessage = "Email verified. Save your changes within 10 minutes.";
       $("profileMessage").textContent = "";
       $("profileMessage").classList.remove("success-text");
@@ -740,7 +816,7 @@ async function handleGoogleCredential(response) {
       state.emailVerificationExpiresAt = 0;
       verificationMessage = error.message;
     }
-    if (!$("profileModal").classList.contains("hidden")) {
+    if (!$("profileEditModal").classList.contains("hidden")) {
       renderProfileGoogleVerifyButton();
       $("profileEmailVerificationStatus").textContent = verificationMessage;
     }
@@ -889,6 +965,22 @@ async function establishSession({ token, privacyToken, user }) {
   }
 }
 
+function syncProfileIdentity() {
+  if (!state.user) return;
+  $("profileName").value = state.user.displayName || "";
+  $("profileUserId").value = state.user.userId || "";
+  $("profileMobile").value = state.user.mobile || "";
+  $("profileEmail").value = state.user.email || "";
+  $("profileStatusInput").value = state.user.statusText || "";
+  $("profileSummaryName").textContent = state.user.displayName || "Your name";
+  $("profileSummaryUserId").textContent = state.user.userId ? `@${state.user.userId}` : "";
+  $("profileSummaryEmail").textContent = state.user.email || "No email address";
+  $("profileSummaryMobile").textContent = state.user.mobile || "No phone number";
+  $("profileSummaryStatus").textContent = state.user.statusText || "No status added";
+  renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
+  renderAvatarInto($("profileEditAvatarPreview"), state.user, state.user.displayName);
+}
+
 function showChat() {
   if (state.updateBlocked) return;
   $("updateRequiredView").classList.add("hidden");
@@ -900,12 +992,7 @@ function showChat() {
   $("meName").textContent = state.user.displayName;
   $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
   ensureTopbarControlsVisible();
-  $("profileName").value = state.user.displayName;
-  $("profileUserId").value = state.user.userId || "";
-  $("profileMobile").value = state.user.mobile || "";
-  $("profileEmail").value = state.user.email || "";
-  $("profileStatusInput").value = state.user.statusText || "";
-  renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
+  syncProfileIdentity();
   syncPrivacySettings();
   syncMessageAutoDeleteSettings();
   clearPrivacyAwayLock();
@@ -1140,7 +1227,7 @@ async function checkRequiredUpdate(updateNotify = null) {
     if (config.googleClientId !== undefined) {
       state.googleClientId = config.googleClientId;
       renderGoogleSignInButton();
-      if (!$("profileModal").classList.contains("hidden")) {
+      if (!$("profileEditModal").classList.contains("hidden")) {
         renderProfileGoogleVerifyButton();
       }
     }
@@ -4958,34 +5045,100 @@ document.addEventListener("keydown", (event) => {
 $("profileBtn").addEventListener("click", () => {
   closeTopbarMenu();
   $("themePreference").value = getThemePreference();
-  $("profileName").value = state.user.displayName;
-  $("profileUserId").value = state.user.userId || "";
-  $("profileMobile").value = state.user.mobile || "";
-  $("profileEmail").value = state.user.email || "";
-  $("profileStatusInput").value = state.user.statusText || "";
+  syncProfileIdentity();
   $("profileAvatarInput").value = "";
-  renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
   $("privacyCodeInput").value = "";
   state.emailVerificationToken = "";
   state.emailVerificationExpiresAt = 0;
   state.emailVerificationMethod = "";
+  state.profileContactChangeToken = "";
+  state.profileContactChangeExpiresAt = 0;
   resetProfileEmailOtp();
   $("profileEmailVerificationStatus").textContent = "";
+  $("profileEmailVerification").classList.add("hidden");
+  $("profileEditModal").classList.add("hidden");
+  $("passwordChangeModal").classList.add("hidden");
   syncPrivacySettings();
   syncNotificationSettings();
   syncMessageAutoDeleteSettings();
   $("profileMessage").textContent = "";
   $("profileMessage").classList.remove("success-text");
   $("profileModal").classList.remove("hidden");
-  renderProfileGoogleVerifyButton();
 });
 $("closeProfileBtn").addEventListener("click", () => {
+  $("profileEditModal").classList.add("hidden");
+  $("passwordChangeModal").classList.add("hidden");
   state.emailVerificationToken = "";
   state.emailVerificationExpiresAt = 0;
   state.emailVerificationMethod = "";
+  state.profileContactChangeToken = "";
+  state.profileContactChangeExpiresAt = 0;
   resetProfileEmailOtp();
-  if (state.googleFlow === "email-verify") state.googleFlow = null;
+  state.profileContactChallengeRequested = false;
+  if (["email-verify", "password-reset"].includes(state.googleFlow)) state.googleFlow = null;
   $("profileModal").classList.add("hidden");
+});
+$("openProfileEditBtn").addEventListener("click", () => {
+  syncProfileIdentity();
+  $("profileAvatarInput").value = "";
+  $("profileEditMessage").textContent = "";
+  $("profileContactPassword").value = "";
+  $("profileContactPassword").required = false;
+  $("profileCurrentEmailOtp").value = "";
+  $("profileNewEmailOtp").value = "";
+  $("profileContactSecurity").classList.add("hidden");
+  $("profileContactOtpFields").classList.add("hidden");
+  $("profileCurrentEmailOtp").required = false;
+  $("profileNewEmailOtp").required = false;
+  $("profileContactOtpFields").querySelectorAll("input").forEach((input) => { input.required = false; });
+  state.profileContactChallengeRequested = false;
+  state.profileContactChangeToken = "";
+  state.profileContactChangeExpiresAt = 0;
+  $("saveProfileEditBtn").textContent = "Save profile";
+  $("profileEmailVerification").classList.add("hidden");
+  resetProfileEmailOtp();
+  $("profileEditModal").classList.remove("hidden");
+  $("profileName").focus();
+});
+const profileContactChanged = () => (
+  $("profileEmail").value.trim().toLowerCase() !== String(state.user?.email || "").trim().toLowerCase()
+  || $("profileMobile").value.trim().replace(/\D/g, "") !== String(state.user?.mobile || "").replace(/\D/g, "")
+);
+const updateProfileContactSecurityVisibility = () => {
+  const changed = profileContactChanged();
+  $("profileContactSecurity").classList.toggle("hidden", !changed);
+  $("profileContactPassword").required = changed && !state.profileContactChallengeRequested;
+  if (!changed) {
+    state.profileContactChallengeRequested = false;
+    state.profileContactChangeToken = "";
+    $("profileContactOtpFields").classList.add("hidden");
+    $("profileContactOtpFields").querySelectorAll("input").forEach((input) => {
+      input.value = "";
+      input.required = false;
+    });
+  } else {
+    $("profileNewEmailOtpField").classList.toggle(
+      "hidden",
+      $("profileEmail").value.trim().toLowerCase() === String(state.user?.email || "").trim().toLowerCase()
+    );
+    $("profileNewEmailOtp").required = !$("profileNewEmailOtpField").classList.contains("hidden")
+      && state.profileContactChallengeRequested;
+  }
+};
+["profileEmail", "profileMobile"].forEach((id) => {
+  $(id).addEventListener("input", updateProfileContactSecurityVisibility);
+});
+$("closeProfileEditBtn").addEventListener("click", () => {
+  $("profileEditModal").classList.add("hidden");
+  state.profileContactChallengeRequested = false;
+  state.profileContactChangeToken = "";
+  $("saveProfileEditBtn").textContent = "Save profile";
+  $("profileContactOtpFields").classList.add("hidden");
+  $("profileContactPassword").value = "";
+});
+$("cancelProfileEditBtn").addEventListener("click", () => $("closeProfileEditBtn").click());
+$("profileEditModal").addEventListener("click", (event) => {
+  if (event.target === $("profileEditModal")) $("closeProfileEditBtn").click();
 });
 $("sendProfileEmailOtpBtn").addEventListener("click", async () => {
   const button = $("sendProfileEmailOtpBtn");
@@ -5001,6 +5154,255 @@ $("sendProfileEmailOtpBtn").addEventListener("click", async () => {
     $("profileEmailOtpCode").focus();
   } catch (error) {
     $("profileEmailVerificationStatus").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("profileAvatarInput").addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (!file) {
+    renderAvatarInto($("profileEditAvatarPreview"), state.user, state.user.displayName);
+    $("profileEmailVerification").classList.add("hidden");
+    return;
+  }
+  $("profileEditAvatarPreview").innerHTML = `<img src="${URL.createObjectURL(file)}" alt="Profile preview">`;
+  $("profileEmailVerification").classList.remove("hidden");
+  $("profileEmailVerificationStatus").textContent = state.emailVerificationToken
+    ? "Email verified. Save your profile photo within 10 minutes."
+    : "Verify your account before saving a new profile photo.";
+  if (state.emailOtpEnabled) $("profileEmailOtpVerification").classList.remove("hidden");
+  renderProfileGoogleVerifyButton();
+});
+$("profileEditForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("saveProfileEditBtn");
+  button.disabled = true;
+  $("profileEditMessage").textContent = "";
+  const body = {
+    displayName: $("profileName").value.trim(),
+    userId: $("profileUserId").value.trim(),
+    mobile: $("profileMobile").value.trim(),
+    email: $("profileEmail").value.trim(),
+    statusText: $("profileStatusInput").value.trim()
+  };
+  const hasContactChange = profileContactChanged();
+  const avatarFile = $("profileAvatarInput").files?.[0];
+  try {
+    if (hasContactChange) {
+      if (!state.emailOtpEnabled) {
+        throw new Error("Email and phone changes require email-code verification. Ask the administrator to enable OTP.");
+      }
+      if (!state.profileContactChallengeRequested) {
+        const request = await api("/api/me/contact-otp/request", {
+          method: "POST",
+          body: JSON.stringify({
+            currentPassword: $("profileContactPassword").value,
+            email: body.email,
+            mobile: body.mobile
+          })
+        });
+        state.profileContactChallengeRequested = true;
+        $("profileContactPassword").required = false;
+        $("profileContactOtpFields").classList.remove("hidden");
+        $("profileCurrentEmailOtp").required = true;
+        $("profileNewEmailOtp").required = Boolean(request.newEmail);
+        $("profileContactSecurity").querySelector("small").textContent = request.newEmail
+          ? `Codes were sent to ${request.currentEmail} and ${request.newEmail}. They expire in 10 minutes.`
+          : `A code was sent to ${request.currentEmail}. It expires in 10 minutes.`;
+        $("saveProfileEditBtn").textContent = "Verify codes and save";
+        $("profileCurrentEmailOtp").focus();
+        return;
+      }
+      const verified = await api("/api/me/contact-otp/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          email: body.email,
+          mobile: body.mobile,
+          currentCode: $("profileCurrentEmailOtp").value.trim(),
+          newEmailCode: $("profileNewEmailOtp").value.trim()
+        })
+      });
+      state.profileContactChangeToken = verified.contactChangeToken;
+      state.profileContactChangeExpiresAt = Date.parse(verified.expiresAt);
+    }
+
+    const emailVerificationValid = Boolean(
+      state.emailVerificationToken
+      && Number.isFinite(state.emailVerificationExpiresAt)
+      && state.emailVerificationExpiresAt > Date.now()
+    );
+    const contactVerificationValid = Boolean(
+      state.profileContactChangeToken
+      && Number.isFinite(state.profileContactChangeExpiresAt)
+      && state.profileContactChangeExpiresAt > Date.now()
+    );
+    if (avatarFile && !emailVerificationValid && !contactVerificationValid) {
+      $("profileEmailVerification").classList.remove("hidden");
+      throw new Error("Verify your email with Google or an email code before saving a new profile photo.");
+    }
+
+    const result = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
+    state.user = result.user;
+    if (avatarFile) {
+      const avatarBody = new FormData();
+      avatarBody.append("avatar", avatarFile);
+      const avatarResponse = await fetch("/api/me/avatar", {
+        method: "POST",
+        headers: {
+          ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+          ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
+          ...(state.emailVerificationToken ? { "X-Email-Verification": state.emailVerificationToken } : {}),
+          ...(state.profileContactChangeToken ? { "X-Profile-Contact-Change": state.profileContactChangeToken } : {})
+        },
+        body: avatarBody
+      });
+      const avatarData = await avatarResponse.json().catch(() => ({}));
+      if (!avatarResponse.ok) throw new Error(avatarData.error || "Profile photo upload failed.");
+      state.user = avatarData.user;
+    }
+    cacheCurrentUser();
+    syncProfileIdentity();
+    $("profileEditModal").classList.add("hidden");
+    $("profileMessage").textContent = "Profile details updated.";
+    $("profileMessage").classList.add("success-text");
+    $("profileContactPassword").value = "";
+    $("profileAvatarInput").value = "";
+    state.profileContactChallengeRequested = false;
+    state.profileContactChangeToken = "";
+    state.profileContactChangeExpiresAt = 0;
+    state.emailVerificationToken = "";
+    state.emailVerificationExpiresAt = 0;
+    state.emailVerificationMethod = "";
+    resetProfileEmailOtp();
+    state.googleFlow = null;
+  } catch (error) {
+    if (error.status === 409 || (error.status === 401 && /expired|too many/i.test(error.message))) {
+      state.profileContactChallengeRequested = false;
+      $("profileContactOtpFields").classList.add("hidden");
+      $("profileContactPassword").required = true;
+      $("profileCurrentEmailOtp").required = false;
+      $("profileNewEmailOtp").required = false;
+      $("saveProfileEditBtn").textContent = "Save profile";
+    }
+    $("profileEditMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("openPasswordChangeBtn").addEventListener("click", () => {
+  $("passwordChangeForm").reset();
+  $("passwordRecoveryPanel").classList.add("hidden");
+  $("passwordChangeForm").classList.remove("hidden");
+  $("forgotPasswordBtn").classList.remove("hidden");
+  $("passwordChangeMessage").textContent = "";
+  $("passwordResetOtpField").classList.add("hidden");
+  $("passwordResetOtp").value = "";
+  $("recoverPasswordSubmit").disabled = true;
+  $("recoveryPasswordNext").value = "";
+  $("recoveryPasswordConfirm").value = "";
+  state.passwordResetOtpSent = false;
+  $("passwordChangeModal").classList.remove("hidden");
+  $("passwordCurrent").focus();
+});
+function closePasswordChangeDialog() {
+  $("passwordChangeModal").classList.add("hidden");
+  state.passwordResetOtpSent = false;
+  if (state.googleFlow === "password-reset") {
+    state.googleFlow = null;
+    if (!$("profileEditModal").classList.contains("hidden")) renderProfileGoogleVerifyButton();
+  }
+}
+$("closePasswordChangeBtn").addEventListener("click", closePasswordChangeDialog);
+$("passwordChangeModal").addEventListener("click", (event) => {
+  if (event.target === $("passwordChangeModal")) closePasswordChangeDialog();
+});
+$("forgotPasswordBtn").addEventListener("click", () => {
+  $("passwordChangeForm").classList.add("hidden");
+  $("forgotPasswordBtn").classList.add("hidden");
+  $("passwordRecoveryPanel").classList.remove("hidden");
+  $("passwordChangeMessage").textContent = "";
+  $("recoverPasswordSubmit").textContent = "Reset password with email code";
+  $("recoverPasswordSubmit").disabled = true;
+  renderPasswordResetGoogleButton();
+});
+$("sendPasswordResetOtpBtn").addEventListener("click", async () => {
+  const button = $("sendPasswordResetOtpBtn");
+  button.disabled = true;
+  try {
+    const result = await api("/api/me/password-reset/request", { method: "POST", body: "{}" });
+    state.passwordResetOtpSent = true;
+    $("passwordResetOtpField").classList.remove("hidden");
+    $("passwordResetOtp").required = true;
+    $("recoverPasswordSubmit").textContent = "Reset password with email code";
+    $("recoverPasswordSubmit").disabled = false;
+    $("passwordRecoveryHint").textContent = `A recovery code was sent to ${result.email}. It expires in 10 minutes.`;
+    $("passwordResetOtp").focus();
+  } catch (error) {
+    state.profileContactChangeToken = "";
+    state.profileContactChangeExpiresAt = 0;
+    $("passwordChangeMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("recoverPasswordSubmit").addEventListener("click", async () => {
+  $("passwordChangeMessage").textContent = "";
+  const newPassword = $("recoveryPasswordNext").value;
+  if (newPassword.length < 8 || newPassword.length > 128) {
+    $("passwordChangeMessage").textContent = "New password must be between 8 and 128 characters.";
+    return;
+  }
+  if (newPassword !== $("recoveryPasswordConfirm").value) {
+    $("passwordChangeMessage").textContent = "New password and confirmation do not match.";
+    return;
+  }
+  if (!state.emailOtpEnabled || !state.passwordResetOtpSent) {
+    $("passwordChangeMessage").textContent = "Request an email recovery code first, or verify your Google account.";
+    return;
+  }
+  const button = $("recoverPasswordSubmit");
+  button.disabled = true;
+  try {
+    const result = await api("/api/me/password-reset/verify", {
+      method: "POST",
+      body: JSON.stringify({ code: $("passwordResetOtp").value.trim(), newPassword })
+    });
+    state.user = result.user;
+    cacheCurrentUser();
+    closePasswordChangeDialog();
+    $("profileMessage").textContent = "Password updated.";
+    $("profileMessage").classList.add("success-text");
+  } catch (error) {
+    $("passwordChangeMessage").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("passwordChangeForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const newPassword = $("passwordNext").value;
+  if (newPassword !== $("passwordConfirm").value) {
+    $("passwordChangeMessage").textContent = "New password and confirmation do not match.";
+    return;
+  }
+  const button = $("changePasswordSubmit");
+  button.disabled = true;
+  $("passwordChangeMessage").textContent = "";
+  try {
+    const result = await api("/api/me/password/change", {
+      method: "POST",
+      body: JSON.stringify({
+        currentPassword: $("passwordCurrent").value,
+        newPassword
+      })
+    });
+    state.user = result.user;
+    cacheCurrentUser();
+    closePasswordChangeDialog();
+    $("profileMessage").textContent = "Password updated.";
+    $("profileMessage").classList.add("success-text");
+  } catch (error) {
+    $("passwordChangeMessage").textContent = error.message;
   } finally {
     button.disabled = false;
   }
@@ -5061,14 +5463,6 @@ document.addEventListener("click", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeUserActionMenu();
-});
-$("profileAvatarInput").addEventListener("change", (event) => {
-  const file = event.target.files?.[0];
-  if (!file) {
-    renderAvatarInto($("profileAvatarPreview"), state.user, state.user.displayName);
-    return;
-  }
-  $("profileAvatarPreview").innerHTML = `<img src="${URL.createObjectURL(file)}" alt="Profile preview">`;
 });
 document.querySelectorAll(".install-control").forEach((button) => {
   button.addEventListener("click", () => {
@@ -5879,12 +6273,6 @@ $("profileForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.target);
   const body = {
-    displayName: form.get("displayName"),
-    userId: form.get("userId"),
-    mobile: form.get("mobile"),
-    statusText: form.get("statusText"),
-    oldPassword: form.get("oldPassword"),
-    newPassword: form.get("newPassword"),
     notificationEnabled: $("notificationToggle")?.checked === true,
     messageAutoDelete: {
       enabled: $("messageAutoDeleteToggle").checked,
@@ -5897,58 +6285,30 @@ $("profileForm").addEventListener("submit", async (event) => {
     autoLockMinutes: Number(form.get("privacyAutoLock") || 0),
     panicShortcut: form.get("privacyPanicShortcut") || "button"
   };
-  if (!body.newPassword) {
-    delete body.oldPassword;
-    delete body.newPassword;
-  }
   try {
-    if (
+    if (privacyBody.code && (
       !state.emailVerificationToken
       || !Number.isFinite(state.emailVerificationExpiresAt)
       || state.emailVerificationExpiresAt <= Date.now()
-    ) {
-      state.emailVerificationToken = "";
-      state.emailVerificationExpiresAt = 0;
-      state.emailVerificationMethod = "";
-      throw new Error("Verify your email with Google or an email code before saving changes.");
+    )) {
+      throw new Error("Verify your email with Google or an email code before changing the calculator lock password.");
     }
     const profileResult = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
     state.user = profileResult.user;
-    const avatarFile = $("profileAvatarInput").files?.[0];
-    if (avatarFile) {
-      const avatarBody = new FormData();
-      avatarBody.append("avatar", avatarFile);
-      const avatarResponse = await fetch("/api/me/avatar", {
-        method: "POST",
-        headers: {
-          ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-          ...(state.privacyToken ? { "X-Privacy-Token": state.privacyToken } : {}),
-          ...(state.emailVerificationToken ? { "X-Email-Verification": state.emailVerificationToken } : {})
-        },
-        body: avatarBody
-      });
-      const avatarData = await avatarResponse.json().catch(() => ({}));
-      if (!avatarResponse.ok) throw new Error(avatarData.error || "Profile photo upload failed.");
-      state.user = avatarData.user;
-    }
     const privacyResult = await api("/api/privacy/settings", { method: "PATCH", body: JSON.stringify(privacyBody) });
     state.user = privacyResult.user;
     cacheCurrentUser();
     if (/^\d{6}$/.test(privacyBody.code)) cacheOfflineUnlockCode(privacyBody.code);
     if (privacyEnabled() && !state.privacyToken) {
-      event.target.oldPassword.value = "";
-      event.target.newPassword.value = "";
       $("privacyCodeInput").value = "";
       $("profileMessage").textContent = "";
       showCalculatorPrivacy();
       return;
     }
     showChat();
-    event.target.oldPassword.value = "";
-    event.target.newPassword.value = "";
     $("profileAvatarInput").value = "";
     $("privacyCodeInput").value = "";
-    $("profileMessage").textContent = "Profile updated.";
+    $("profileMessage").textContent = "Preferences saved.";
     $("profileMessage").classList.add("success-text");
     state.emailVerificationToken = "";
     state.emailVerificationExpiresAt = 0;

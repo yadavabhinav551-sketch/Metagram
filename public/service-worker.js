@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v142-profile-admin-otp-verification";
+const CACHE_VERSION = "calculator-pwa-v144-stale-cache-fallback";
 const APP_SHELL = [
   "/",
   "/offline.html",
@@ -94,10 +94,16 @@ async function networkFirst(request, fallbackUrl) {
   const cache = await caches.open(CACHE_VERSION);
   try {
     const response = await fetch(request);
+    if (response.status >= 500) {
+      return (await cache.match(request, { ignoreSearch: true }))
+        || await caches.match(fallbackUrl, { ignoreSearch: true })
+        || response;
+    }
     cache.put(request, response.clone());
     return response;
   } catch {
-    return (await cache.match(request)) || await caches.match(fallbackUrl);
+    return (await cache.match(request, { ignoreSearch: true }))
+      || await caches.match(fallbackUrl, { ignoreSearch: true });
   }
 }
 
