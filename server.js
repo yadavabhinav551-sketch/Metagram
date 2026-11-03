@@ -4574,6 +4574,22 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   res.json({ user: adminUser(user) });
 });
 
+app.post("/api/admin/users/:id/user-id/check-availability", authAdmin, (req, res) => {
+  const user = db.users.find((item) => item.id === req.params.id);
+  if (!user || user.deleted) return res.status(404).json({ error: "Active user not found." });
+
+  const result = validateUserId(req.body.userId);
+  if (result.error) return res.status(400).json({ error: result.error });
+  if (isAvailableUserId(result.userId, user.id)) {
+    return res.json({ available: true, userId: result.userId, suggestions: [] });
+  }
+  return res.json({
+    available: false,
+    userId: result.userId,
+    suggestions: suggestAvailableUserIds(result.userId, user.id)
+  });
+});
+
 app.patch("/api/admin/users/:id/account-details", authAdmin, async (req, res) => {
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user || user.deleted) return res.status(404).json({ error: "Active user not found." });

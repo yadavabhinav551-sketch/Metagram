@@ -325,6 +325,13 @@ function resetAdminUserAccountEditor() {
   $("adminUserAccountValue").disabled = false;
   $("adminUserAccountPassword").disabled = false;
   $("adminUserAccountSaveBtn").disabled = false;
+  $("adminUserIdAvailability").classList.add("hidden");
+  $("adminUserIdAvailabilityStatus").textContent = "";
+  $("adminUserIdAvailabilityStatus").dataset.state = "";
+  $("adminUserIdSuggestions").replaceChildren();
+  $("adminUserIdSuggestions").classList.add("hidden");
+  $("adminUserIdCheckAvailabilityBtn").disabled = false;
+  $("adminUserIdCheckAvailabilityBtn").textContent = "Check availability";
   adminState.accountEdit = null;
 }
 
@@ -338,8 +345,8 @@ function openAdminUserAccountEditor(user, field) {
   const detail = fields[field];
   if (!detail) return;
   const fieldLabels = { userId: "user ID", email: "email address", mobile: "mobile number", password: "password" };
-  adminState.accountEdit = { userId: user.id, field, label: fieldLabels[field] };
-  $("adminUserAccountTitle").textContent = `Change user ${fieldLabels[field]}`;
+  adminState.accountEdit = { userId: user.id, field, label: fieldLabels[field], checkedUserId: null };
+  $("adminUserAccountTitle").textContent = `Change ${fieldLabels[field]}`;
   $("adminUserAccountDescription").textContent = `Updating ${user.displayName || user.userId}. This changes only the selected chat account, not admin login credentials.`;
   $("adminUserAccountValueLabel").textContent = detail.label;
   $("adminUserAccountValue").type = detail.type;
@@ -347,6 +354,12 @@ function openAdminUserAccountEditor(user, field) {
   $("adminUserAccountValue").autocomplete = detail.autocomplete;
   $("adminUserAccountValue").minLength = field === "password" ? 8 : 0;
   $("adminUserAccountValue").maxLength = field === "password" ? 128 : field === "userId" ? 30 : 254;
+  $("adminUserAccountValue").pattern = field === "userId" ? "[a-z0-9](?:[a-z0-9._]{1,28}[a-z0-9])?" : "";
+  $("adminUserIdAvailability").classList.toggle("hidden", field !== "userId");
+  $("adminUserIdAvailabilityStatus").textContent = "";
+  $("adminUserIdAvailabilityStatus").dataset.state = "";
+  $("adminUserIdSuggestions").replaceChildren();
+  $("adminUserIdSuggestions").classList.add("hidden");
   $("adminUserAccountMessage").textContent = "";
   $("adminUserAccountMessage").classList.remove("error-text");
   $("adminUserEditStatus").textContent = "";
@@ -956,6 +969,11 @@ $("adminUserAccountForm").addEventListener("submit", async (event) => {
   $("adminUserAccountMessage").textContent = "Verifying admin password and saving this user profile…";
   $("adminUserAccountMessage").classList.remove("error-text");
   try {
+    if (field === "userId" && !(await checkAdminUserIdAvailability())) {
+      $("adminUserAccountMessage").textContent = "";
+      return;
+    }
+    $("adminUserAccountMessage").textContent = "Saving this user profile…";
     const result = await adminApi(`/api/admin/users/${userId}/account-details`, {
       method: "PATCH",
       body: JSON.stringify({
@@ -976,6 +994,73 @@ $("adminUserAccountForm").addEventListener("submit", async (event) => {
   }
 });
 
+$("adminUserAccountValue").addEventListener("input", () => {
+  if (adminState.accountEdit?.field !== "userId") return;
+  adminState.accountEdit.checkedUserId = null;
+  $("adminUserIdAvailabilityStatus").textContent = "";
+  $("adminUserIdAvailabilityStatus").dataset.state = "";
+  $("adminUserIdSuggestions").replaceChildren();
+  $("adminUserIdSuggestions").classList.add("hidden");
+});
+
+async function checkAdminUserIdAvailability() {
+  const input = $("adminUserAccountValue");
+  const button = $("adminUserIdCheckAvailabilityBtn");
+  const status = $("adminUserIdAvailabilityStatus");
+  const suggestions = $("adminUserIdSuggestions");
+  const currentUserId = input.value.trim().toLowerCase();
+  const markUnavailable = (message) => {
+    adminState.accountEdit.checkedUserId = null;
+    status.textContent = message;
+    status.dataset.state = "unavailable";
+    return false;
+  };
+  suggestions.replaceChildren();
+  suggestions.classList.add("hidden");
+  status.dataset.state = "";
+  if (!input.checkValidity()) {
+    return markUnavailable("Use 3–30 lowercase letters, numbers, dots, or underscores. Start and end with a letter or number.");
+  }
+
+  button.disabled = true;
+  button.textContent = "Checking…";
+  input.disabled = true;
+  status.textContent = "Checking user ID availability…";
+  try {
+    const result = await adminApi(`/api/admin/users/${adminState.accountEdit.userId}/user-id/check-availability`, {
+      method: "POST",
+      body: JSON.stringify({ userId: currentUserId })
+    });
+    if (!result.available) {
+      markUnavailable(`User ID @${result.userId} is already in use.`);
+      for (const suggestion of result.suggestions || []) {
+        const suggestionButton = document.createElement("button");
+        suggestionButton.type = "button";
+        suggestionButton.textContent = `@${suggestion}`;
+        suggestionButton.addEventListener("click", async () => {
+          input.value = suggestion;
+          adminState.accountEdit.checkedUserId = null;
+          await checkAdminUserIdAvailability();
+        });
+        suggestions.append(suggestionButton);
+      }
+      suggestions.classList.toggle("hidden", !suggestions.childElementCount);
+      return false;
+    }
+    adminState.accountEdit.checkedUserId = currentUserId;
+    status.textContent = `@${result.userId} is available.`;
+    status.dataset.state = "available";
+    return true;
+  } catch (error) {
+    return markUnavailable(error.message || "Could not check user ID availability.");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Check availability";
+    input.disabled = false;
+  }
+}
+
+$("adminUserIdCheckAvailabilityBtn").addEventListener("click", checkAdminUserIdAvailability);
 $("adminUserAccountCancelBtn").addEventListener("click", resetAdminUserAccountEditor);
 $("adminUserAccountCloseBtn").addEventListener("click", resetAdminUserAccountEditor);
 $("adminUserAccountModal").addEventListener("click", (event) => {

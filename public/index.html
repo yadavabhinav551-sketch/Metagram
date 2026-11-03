@@ -46,11 +46,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v148-manual-signup-availability" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v148-manual-signup-availability">
+    <link rel="preload" href="/styles.css?v=v149-account-change-otp-validity" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v149-account-change-otp-validity">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v148-manual-signup-availability" defer></script>
+    <script src="/app.js?v=v149-account-change-otp-validity" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -818,7 +818,7 @@
               <small id="accountChangeOtpHint">A code will be sent to your verified email.</small>
               <label id="accountChangeOtpCodeGroup" class="hidden">
                 <span>Email verification code</span>
-                <input id="accountChangeOtpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+                <input id="accountChangeOtpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code" disabled>
               </label>
             </div>
             <div id="accountChangeGooglePanel" class="profile-account-verification hidden">

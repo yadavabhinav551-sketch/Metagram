@@ -5321,8 +5321,10 @@ function syncAccountChangeMethodControls() {
     : "Enter the current password for this account.";
   $("accountChangePassword").required = requiresPassword;
   $("accountChangeOtpPanel").classList.toggle("hidden", method !== "otp");
-  $("accountChangeOtpCodeGroup").classList.toggle("hidden", method !== "otp" || !state.accountChangeOtpSent);
-  $("accountChangeOtpCode").required = method === "otp" && state.accountChangeOtpSent;
+  const otpCodeRequired = method === "otp" && state.accountChangeOtpSent;
+  $("accountChangeOtpCodeGroup").classList.toggle("hidden", !otpCodeRequired);
+  $("accountChangeOtpCode").required = otpCodeRequired;
+  $("accountChangeOtpCode").disabled = !otpCodeRequired;
   $("accountChangeGooglePanel").classList.toggle("hidden", method !== "google");
   $("saveAccountFieldBtn").classList.toggle("hidden", method === "google");
   $("saveAccountFieldBtn").textContent = method === "otp" && state.accountChangeOtpSent
@@ -5369,6 +5371,7 @@ function openAccountFieldEditor(field) {
   $("accountFieldMessage").classList.add("error-text");
   $("accountChangeOtpCodeGroup").classList.add("hidden");
   $("accountChangeOtpCode").required = false;
+  $("accountChangeOtpCode").disabled = true;
   $("accountChangePassword").required = false;
   syncAccountChangeMethodOptions();
   syncAccountChangeMethodControls();
@@ -5381,6 +5384,7 @@ function closeAccountFieldEditor() {
   $("accountFieldForm").reset();
   $("accountChangeOtpCodeGroup").classList.add("hidden");
   $("accountChangeOtpCode").required = false;
+  $("accountChangeOtpCode").disabled = true;
   state.accountField = null;
   state.accountChangeOtpSent = false;
   if (state.googleFlow === "profile-account-change") state.googleFlow = null;
@@ -5422,6 +5426,7 @@ $("accountFieldValue").addEventListener("input", () => {
     $("accountChangeOtpCode").value = "";
     $("accountChangeOtpCodeGroup").classList.add("hidden");
     $("accountChangeOtpCode").required = false;
+    $("accountChangeOtpCode").disabled = true;
     syncAccountChangeMethodControls();
   }
   if ($("accountChangeMethod").value === "otp") {
@@ -5460,11 +5465,9 @@ $("accountFieldForm").addEventListener("submit", async (event) => {
         body: JSON.stringify({ field, value, currentPassword })
       });
       state.accountChangeOtpSent = true;
-      $("accountChangeOtpCodeGroup").classList.remove("hidden");
-      $("accountChangeOtpCode").required = true;
+      syncAccountChangeMethodControls();
       $("accountChangeOtpHint").textContent = `A verification code was sent to ${result.email}. It expires in 10 minutes.`;
       $("accountChangeOtpCode").focus();
-      syncAccountChangeMethodControls();
       return;
     } else {
       result = await api("/api/me/account-details/otp/verify", {
@@ -5484,6 +5487,7 @@ $("accountFieldForm").addEventListener("submit", async (event) => {
       state.accountChangeOtpSent = false;
       $("accountChangeOtpCodeGroup").classList.add("hidden");
       $("accountChangeOtpCode").required = false;
+      $("accountChangeOtpCode").disabled = true;
     }
   } finally {
     button.disabled = false;
