@@ -692,6 +692,21 @@ function isAvailableEmail(email, excludedUserId = null) {
   ));
 }
 
+function signupConflictMessage({ email = "", mobile = "", userId = "" }, excludedUserId = null) {
+  const conflicts = [];
+  if (email && !isAvailableEmail(email, excludedUserId)) conflicts.push("email address");
+  if (mobile && !isAvailableMobile(mobile, excludedUserId)) conflicts.push("phone number");
+  if (userId && !isAvailableUserId(userId, excludedUserId)) conflicts.push("username");
+  if (!conflicts.length) return "";
+  if (conflicts.length === 1) {
+    if (conflicts[0] === "email address") return "Email address is already registered. Use another email.";
+    if (conflicts[0] === "phone number") return "Phone number is already registered. Use another phone number.";
+    return "Username is already taken. Choose a different username.";
+  }
+  const lastConflict = conflicts.pop();
+  return `These details are already in use: ${conflicts.join(", ")} and ${lastConflict}. Choose different details.`;
+}
+
 function validUserId(value = "") {
   return /^[a-z0-9](?:[a-z0-9._]{1,28}[a-z0-9])?$/.test(value) && !value.includes("..");
 }
@@ -1651,8 +1666,9 @@ app.post("/api/auth/email/signup/request", async (req, res) => {
   if (calculatorLockPassword && !validPrivacyCode(calculatorLockPassword)) {
     return res.status(400).json({ error: "Optional calculator lock password must be exactly 6 digits." });
   }
-  if (!isAvailableEmail(email) || !isAvailableMobile(mobile) || !isAvailableUserId(userIdResult.userId)) {
-    return res.status(409).json({ error: "Email, phone number, or user ID already exists. Sign in or choose different details." });
+  const conflict = signupConflictMessage({ email, mobile, userId: userIdResult.userId });
+  if (conflict) {
+    return res.status(409).json({ error: conflict });
   }
   return issueEmailAuthOtp(req, res, email, "signup", {
     email,
@@ -1675,14 +1691,16 @@ app.post("/api/auth/email/signup/complete", async (req, res) => {
   if (result.error) return res.status(401).json({ error: result.error });
   const signup = result.entry.payload;
   if (!signup || signup.email !== email) return res.status(400).json({ error: "Sign-up details expired. Request a new email code." });
-  if (!isAvailableEmail(email) || !isAvailableMobile(signup.mobile) || !isAvailableUserId(signup.userId)) {
-    return res.status(409).json({ error: "Email, phone number, or user ID was registered while you were signing up. Please sign in or update your details." });
+  const conflict = signupConflictMessage({ email, mobile: signup.mobile, userId: signup.userId });
+  if (conflict) {
+    return res.status(409).json({ error: conflict });
   }
   const privacyCodeHash = signup.calculatorLockPassword
     ? await bcrypt.hash(signup.calculatorLockPassword, 10)
     : null;
-  if (!isAvailableEmail(email) || !isAvailableMobile(signup.mobile) || !isAvailableUserId(signup.userId)) {
-    return res.status(409).json({ error: "Email, phone number, or user ID was registered while you were signing up. Please sign in or update your details." });
+  const conflictAfterHash = signupConflictMessage({ email, mobile: signup.mobile, userId: signup.userId });
+  if (conflictAfterHash) {
+    return res.status(409).json({ error: conflictAfterHash });
   }
   const user = {
     id: crypto.randomUUID(),
@@ -1746,16 +1764,18 @@ app.post("/api/auth/manual-signup", async (req, res) => {
   if (calculatorLockPassword && !validPrivacyCode(calculatorLockPassword)) {
     return res.status(400).json({ error: "Optional calculator lock password must be exactly 6 digits." });
   }
-  if (!isAvailableEmail(email) || !isAvailableMobile(mobile) || !isAvailableUserId(userIdResult.userId)) {
-    return res.status(409).json({ error: "Email, phone number, or user ID already exists. Sign in or choose different details." });
+  const conflict = signupConflictMessage({ email, mobile, userId: userIdResult.userId });
+  if (conflict) {
+    return res.status(409).json({ error: conflict });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
   const privacyCodeHash = calculatorLockPassword
     ? await bcrypt.hash(calculatorLockPassword, 10)
     : null;
-  if (!isAvailableEmail(email) || !isAvailableMobile(mobile) || !isAvailableUserId(userIdResult.userId)) {
-    return res.status(409).json({ error: "Email, phone number, or user ID was registered while you were creating the account." });
+  const conflictAfterHash = signupConflictMessage({ email, mobile, userId: userIdResult.userId });
+  if (conflictAfterHash) {
+    return res.status(409).json({ error: conflictAfterHash });
   }
   const now = new Date().toISOString();
   const user = {
@@ -1888,6 +1908,48 @@ app.post("/api/auth/google", async (req, res) => {
   res.json({ setupToken, email: identity.email, displayName: user?.displayName || identity.displayName });
 });
 
+app.post("/api/auth/google/check-user-id", (req, res) => {
+  let setup;
+  try {
+    setup = jwt.verify(req.body.setupToken, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: "Google sign-in expired. Please choose your Google account again." });
+  }
+  if (setup.role !== "google-onboarding" || !setup.email || !setup.googleSubject) {
+    return res.status(401).json({ error: "Google sign-in is required to check username availability." });
+  }
+
+  const userIdResult = validateUserId(req.body.userId);
+  if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
+  const linkedUser = db.users.find((item) => (
+    item.googleSubject === setup.googleSubject
+    || String(item.email || "").trim().toLowerCase() === String(setup.email).toLowerCase()
+  ));
+  const user = setup.existingUserId
+    ? db.users.find((item) => item.id === setup.existingUserId)
+    : linkedUser;
+  if (setup.existingUserId && (!user || user.deleted || user.blocked || user.suspended)) {
+    return res.status(403).json({ error: "Account is not active." });
+  }
+
+  const userId = userIdResult.userId;
+  if (isAvailableUserId(userId, user?.id)) {
+    return res.json({ available: true, userId, suggestions: [] });
+  }
+
+  const suggestions = [];
+  const base = userId.replace(/[._]+$/, "") || userId;
+  for (const suffix of ["1", "2", "3", "_1", "_2", "2026"]) {
+    const stem = base.slice(0, 30 - suffix.length).replace(/[._]+$/, "");
+    const candidate = `${stem}${suffix}`;
+    if (validUserId(candidate) && isAvailableUserId(candidate, user?.id) && !suggestions.includes(candidate)) {
+      suggestions.push(candidate);
+      if (suggestions.length === 4) break;
+    }
+  }
+  return res.json({ available: false, userId, suggestions });
+});
+
 app.post("/api/auth/google/complete-profile", async (req, res) => {
   let setup;
   try {
@@ -1932,8 +1994,9 @@ app.post("/api/auth/google/complete-profile", async (req, res) => {
   if (!setup.existingUserId && user && profileIsComplete(user)) {
     return res.status(409).json({ error: "This Google account already has a profile. Sign in with Google." });
   }
-  if (!isAvailableUserId(userId, user?.id) || !isAvailableMobile(mobile, user?.id)) {
-    return res.status(409).json({ error: "User ID or phone number already exists. Choose a different one." });
+  const conflict = signupConflictMessage({ email: setup.email, mobile, userId }, user?.id);
+  if (conflict) {
+    return res.status(409).json({ error: conflict });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -1950,8 +2013,9 @@ app.post("/api/auth/google/complete-profile", async (req, res) => {
   if (accountCreatedDuringSetup) {
     return res.status(409).json({ error: "This Google account already has a profile. Sign in with Google." });
   }
-  if (!isAvailableUserId(userId, user?.id) || !isAvailableMobile(mobile, user?.id)) {
-    return res.status(409).json({ error: "User ID or phone number already exists. Choose a different one." });
+  const conflictAfterHash = signupConflictMessage({ email: setup.email, mobile, userId }, user?.id);
+  if (conflictAfterHash) {
+    return res.status(409).json({ error: conflictAfterHash });
   }
   const updatedUser = user || {
     id: crypto.randomUUID(),

@@ -4,6 +4,8 @@ const state = {
   googleClientId: "",
   googleInitialized: false,
   googleSetupToken: "",
+  googleOnboardingUserIdChecked: "",
+  googleOnboardingAvailabilityRequest: 0,
   googleFlow: null,
   signupMode: "google_and_otp",
   emailOtpEnabled: true,
@@ -610,6 +612,68 @@ function renderGoogleSignInButton(mode = ($("signupTab")?.classList.contains("ac
   });
 }
 
+async function checkGoogleOnboardingUserId() {
+  const input = $("googleOnboardingUserId");
+  const checkButton = $("googleOnboardingCheckUserId");
+  const status = $("googleOnboardingUserIdStatus");
+  const suggestions = $("googleOnboardingUserIdSuggestions");
+  const userId = input.value.trim().toLowerCase();
+  input.value = userId;
+  state.googleOnboardingUserIdChecked = "";
+  suggestions.replaceChildren();
+  suggestions.classList.add("hidden");
+  status.dataset.state = "";
+  if (!input.checkValidity()) {
+    status.textContent = "Use 3–30 lowercase letters, numbers, dots, or underscores. Start and end with a letter or number.";
+    status.dataset.state = "error";
+    input.focus();
+    return false;
+  }
+
+  const requestId = ++state.googleOnboardingAvailabilityRequest;
+  checkButton.disabled = true;
+  checkButton.textContent = "Checking...";
+  status.textContent = "Checking username availability...";
+  try {
+    const result = await api("/api/auth/google/check-user-id", {
+      method: "POST",
+      body: JSON.stringify({ setupToken: state.googleSetupToken, userId })
+    });
+    if (requestId !== state.googleOnboardingAvailabilityRequest || input.value.trim().toLowerCase() !== userId) {
+      return false;
+    }
+    if (result.available) {
+      state.googleOnboardingUserIdChecked = userId;
+      status.textContent = `@${userId} is available.`;
+      status.dataset.state = "available";
+      return true;
+    }
+
+    status.textContent = `@${userId} is already taken. Try one of these:`;
+    status.dataset.state = "unavailable";
+    for (const suggestion of result.suggestions || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.userIdSuggestion = suggestion;
+      button.textContent = `@${suggestion}`;
+      suggestions.append(button);
+    }
+    suggestions.classList.toggle("hidden", !suggestions.childElementCount);
+    return false;
+  } catch (error) {
+    if (requestId === state.googleOnboardingAvailabilityRequest) {
+      status.textContent = error.message;
+      status.dataset.state = "error";
+    }
+    return false;
+  } finally {
+    if (requestId === state.googleOnboardingAvailabilityRequest) {
+      checkButton.disabled = false;
+      checkButton.textContent = "Check availability";
+    }
+  }
+}
+
 function renderFirstLoginGoogleVerifyButton() {
   const button = $("firstLoginGoogleVerifyButton");
   button.replaceChildren();
@@ -830,6 +894,12 @@ async function handleGoogleCredential(response) {
     });
     if (result.setupToken) {
       state.googleSetupToken = result.setupToken;
+      state.googleOnboardingUserIdChecked = "";
+      $("googleOnboardingUserId").value = "";
+      $("googleOnboardingUserIdStatus").textContent = "";
+      $("googleOnboardingUserIdStatus").dataset.state = "";
+      $("googleOnboardingUserIdSuggestions").replaceChildren();
+      $("googleOnboardingUserIdSuggestions").classList.add("hidden");
       $("googleOnboardingEmail").textContent = `Verified Google account: ${result.email}`;
       $("googleOnboardingForm").elements.displayName.value = result.displayName || "";
       $("googleOnboardingOverlay").classList.remove("hidden");
@@ -6233,12 +6303,17 @@ $("signupOtpResend").addEventListener("click", async () => {
 
 $("googleOnboardingForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!event.currentTarget.reportValidity()) return;
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
   const submitButton = $("googleOnboardingSubmit");
   submitButton.disabled = true;
   $("googleOnboardingError").textContent = "";
   try {
-    const body = Object.fromEntries(new FormData(event.currentTarget));
+    if (state.googleOnboardingUserIdChecked !== $("googleOnboardingUserId").value.trim().toLowerCase()
+      && !await checkGoogleOnboardingUserId()) {
+      return;
+    }
+    const body = Object.fromEntries(new FormData(form));
     const result = await api("/api/auth/google/complete-profile", {
       method: "POST",
       body: JSON.stringify({ ...body, setupToken: state.googleSetupToken })
@@ -6251,6 +6326,27 @@ $("googleOnboardingForm").addEventListener("submit", async (event) => {
   } finally {
     submitButton.disabled = false;
   }
+});
+
+$("googleOnboardingCheckUserId").addEventListener("click", () => {
+  checkGoogleOnboardingUserId();
+});
+$("googleOnboardingUserId").addEventListener("input", () => {
+  state.googleOnboardingUserIdChecked = "";
+  state.googleOnboardingAvailabilityRequest += 1;
+  $("googleOnboardingUserIdStatus").textContent = "";
+  $("googleOnboardingUserIdStatus").dataset.state = "";
+  $("googleOnboardingUserIdSuggestions").replaceChildren();
+  $("googleOnboardingUserIdSuggestions").classList.add("hidden");
+  $("googleOnboardingCheckUserId").disabled = false;
+  $("googleOnboardingCheckUserId").textContent = "Check availability";
+});
+$("googleOnboardingUserIdSuggestions").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-user-id-suggestion]");
+  if (!button) return;
+  $("googleOnboardingUserId").value = button.dataset.userIdSuggestion;
+  $("googleOnboardingUserId").dispatchEvent(new Event("input", { bubbles: true }));
+  checkGoogleOnboardingUserId();
 });
 
 $("googleOnboardingOverlay").addEventListener("click", (event) => {

@@ -1680,6 +1680,50 @@ input:focus, select:focus {
   font-weight: 400;
 }
 
+.user-id-availability-check {
+  justify-self: start;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+.user-id-availability-status {
+  min-height: 18px;
+  margin: -6px 0 0;
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.user-id-availability-status[data-state="available"] {
+  color: var(--wa-emerald);
+}
+
+.user-id-availability-status[data-state="unavailable"],
+.user-id-availability-status[data-state="error"] {
+  color: var(--wa-danger);
+}
+
+.user-id-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -6px;
+}
+
+.user-id-suggestions button {
+  padding: 7px 10px;
+  border: 1px solid var(--wa-line);
+  border-radius: var(--radius-full);
+  background: var(--wa-card);
+  color: var(--wa-emerald);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.user-id-suggestions button:hover {
+  border-color: var(--wa-emerald);
+}
+
 .google-onboarding-card .error-text {
   margin: 0;
 }

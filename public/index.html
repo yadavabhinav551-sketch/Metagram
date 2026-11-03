@@ -46,11 +46,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v145-google-signup-onboarding" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v145-google-signup-onboarding">
+    <link rel="preload" href="/styles.css?v=v147-signup-conflict-errors" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v147-signup-conflict-errors">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v145-google-signup-onboarding" defer></script>
+    <script src="/app.js?v=v147-signup-conflict-errors" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -218,8 +218,11 @@
               </label>
               <label>
                 <span>Username</span>
-                <input name="userId" autocomplete="username" placeholder="username.like_instagram" pattern="[a-z0-9._]{3,30}" minlength="3" maxlength="30" required>
+                <input id="googleOnboardingUserId" name="userId" autocomplete="username" autocapitalize="off" placeholder="username.like_instagram" pattern="[a-z0-9._]{3,30}" minlength="3" maxlength="30" required>
               </label>
+              <button id="googleOnboardingCheckUserId" class="secondary user-id-availability-check" type="button">Check availability</button>
+              <p id="googleOnboardingUserIdStatus" class="user-id-availability-status" role="status" aria-live="polite"></p>
+              <div id="googleOnboardingUserIdSuggestions" class="user-id-suggestions hidden" aria-label="Suggested usernames"></div>
               <label>
                 <span>Login password</span>
                 <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
