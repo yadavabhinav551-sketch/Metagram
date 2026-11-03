@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v148-manual-signup-availability";
+const CACHE_VERSION = "calculator-pwa-v150-profile-account-field-verification";
 const APP_SHELL = [
   "/",
   "/offline.html",

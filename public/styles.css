@@ -679,6 +679,59 @@ body.app-booting #updateRequiredView {
   background: rgba(32, 44, 51, 0.42);
 }
 
+.profile-account-edit-options {
+  gap: 10px !important;
+}
+
+.profile-account-edit-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--wa-line);
+}
+
+.profile-account-edit-row > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.profile-account-edit-row > span > strong {
+  color: var(--wa-text-primary);
+  font-size: 13px;
+}
+
+.profile-account-edit-row > span > small,
+.profile-account-verification > small {
+  overflow-wrap: anywhere;
+  color: var(--wa-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.profile-account-edit-row button {
+  flex: 0 0 auto;
+}
+
+.profile-account-verification {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-action-card select {
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(134, 150, 160, 0.2);
+  border-radius: 10px;
+  background: rgba(11, 20, 26, 0.72);
+  color: var(--wa-text-primary);
+  font-size: 14px;
+}
+
 .profile-action-card .profile-grid label,
 .profile-action-card .profile-action-section label {
   display: grid;
@@ -786,6 +839,14 @@ body.app-booting #updateRequiredView {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
   gap: 14px;
+}
+
+.privacy-code-status {
+  grid-column: 1 / -1;
+  margin-top: -8px;
+  color: var(--wa-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .profile-email-verification {
@@ -3754,6 +3815,10 @@ input:focus, select:focus {
 }
 
 :root[data-theme="light"] .profile-action-card input:not([type="checkbox"]) {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .profile-action-card select {
   background: #ffffff;
 }
 

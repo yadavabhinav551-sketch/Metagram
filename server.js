@@ -62,6 +62,7 @@ const manualSignupAvailabilityRequests = new Map();
 const profileContactOtps = new Map();
 const profileContactOtpRequests = new Map();
 const profileContactPasswordFailures = new Map();
+const privacyCodePasswordFailures = new Map();
 const adminCredentialOtps = new Map();
 const adminCredentialOtpRequests = new Map();
 const adminEmailTestRequests = new Map();
@@ -1610,7 +1611,9 @@ async function issueEmailAuthOtp(req, res, email, purpose, payload = null) {
         ? "profile change verification"
         : purpose === "password-reset"
           ? "password recovery"
-        : "sign-in";
+          : purpose === "profile-account-change"
+            ? "account detail change verification"
+          : "sign-in";
     await sendEmailOtp(email, code, emailPurpose);
   } catch (error) {
     emailAuthOtpRequests.delete(rateLimitKey);
@@ -2205,13 +2208,9 @@ app.post("/api/me/verify-email", authUser, async (req, res) => {
     return res.status(401).json({ error: "Google could not verify this email. Please try again." });
   }
 
-  const currentEmail = String(req.user.email || "").trim().toLowerCase();
   const pendingVerification = Boolean(req.user.emailVerificationRequired);
-  if (!pendingVerification && currentEmail && currentEmail !== identity.email) {
-    return res.status(403).json({ error: "Sign in with the Google account linked to this profile's email address." });
-  }
-  if (!pendingVerification && req.user.googleSubject && req.user.googleSubject !== identity.googleSubject) {
-    return res.status(403).json({ error: "This profile is linked to a different Google account." });
+  if (!pendingVerification) {
+    return res.status(403).json({ error: "Use the account details editor to change your email address." });
   }
   if (db.users.some((user) => (
     user.id !== req.user.id
@@ -2506,10 +2505,182 @@ app.post("/api/me/password-reset/google", authUser, requirePrivacyUnlocked, asyn
   res.json({ user: ownUser(req.user) });
 });
 
+function validateAccountDetailChange(user, field, submittedValue) {
+  const value = field === "email"
+    ? String(submittedValue || "").trim().toLowerCase()
+    : field === "userId"
+      ? normalizeUserId(submittedValue)
+      : String(submittedValue || "").trim();
+  if (!["email", "mobile", "userId"].includes(field)) {
+    return { error: "Choose an email, mobile number, or user ID to change." };
+  }
+  if (field === "email") {
+    if (!isValidEmail(value)) return { error: "Enter a valid email address." };
+    if (value === String(user.email || "").trim().toLowerCase()) return { error: "This is already your current email address." };
+    if (!isAvailableEmail(value, user.id)) return { error: "This email address is already linked to another account.", status: 409 };
+  } else if (field === "mobile") {
+    const digits = normalizeMobile(value);
+    if (digits.length < 7 || digits.length > 15) return { error: "Enter a valid phone number with 7 to 15 digits." };
+    if (digits === normalizeMobile(user.mobile)) return { error: "This is already your current mobile number." };
+    if (!isAvailableMobile(value, user.id)) return { error: "This phone number is already linked to another account.", status: 409 };
+  } else {
+    const result = validateUserId(value);
+    if (result.error) return { error: result.error };
+    if (result.userId === normalizeUserId(user.userId)) return { error: "This is already your current user ID." };
+    if (!isAvailableUserId(result.userId, user.id)) return { error: "User ID is already taken. Choose a different one.", status: 409 };
+    return { value: result.userId };
+  }
+  return { value };
+}
+
+async function verifyAccountDetailPassword(req, res, submittedPassword) {
+  const password = String(submittedPassword || "");
+  if (!req.user.passwordHash || !password || password.length > 128) {
+    res.status(400).json({ error: "Enter your current account password." });
+    return false;
+  }
+  const now = Date.now();
+  let failures = profileContactPasswordFailures.get(req.user.id);
+  if (failures?.lockedUntil > now) {
+    res.status(429).json({ error: "Too many incorrect password attempts. Try again in 15 minutes." });
+    return false;
+  }
+  if (!failures || failures.resetAt <= now) {
+    failures = { attempts: 0, resetAt: now + 15 * 60 * 1000, lockedUntil: 0 };
+    profileContactPasswordFailures.set(req.user.id, failures);
+  }
+  if (!(await bcrypt.compare(password, req.user.passwordHash))) {
+    failures.attempts += 1;
+    if (failures.attempts >= 5) {
+      failures.lockedUntil = now + 15 * 60 * 1000;
+      res.status(429).json({ error: "Too many incorrect password attempts. Try again in 15 minutes." });
+    } else {
+      res.status(403).json({ error: "Current password is incorrect." });
+    }
+    return false;
+  }
+  profileContactPasswordFailures.delete(req.user.id);
+  return true;
+}
+
+function saveAccountDetailChange(user, field, value, googleIdentity = null) {
+  if (field === "email") {
+    user.email = value;
+    user.emailVerifiedAt = new Date().toISOString();
+    user.emailVerificationRequired = false;
+    user.googleSubject = googleIdentity?.googleSubject || null;
+  } else if (field === "mobile") {
+    user.mobile = value;
+  } else {
+    user.userId = value;
+  }
+}
+
+app.patch("/api/me/account-details", authUser, requirePrivacyUnlocked, async (req, res) => {
+  const { field } = req.body;
+  if (!["mobile", "userId"].includes(field)) {
+    return res.status(400).json({ error: "Use email-code or Google verification to change your email address." });
+  }
+  if (!await verifyAccountDetailPassword(req, res, req.body.currentPassword)) return;
+  const result = validateAccountDetailChange(req.user, field, req.body.value);
+  if (result.error) return res.status(result.status || 400).json({ error: result.error });
+  saveAccountDetailChange(req.user, field, result.value);
+  saveDb();
+  res.json({ user: ownUser(req.user) });
+});
+
+app.post("/api/me/account-details/otp/request", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email-code verification is disabled by the administrator." });
+  }
+  const { field } = req.body;
+  const result = validateAccountDetailChange(req.user, field, req.body.value);
+  if (result.error) return res.status(result.status || 400).json({ error: result.error });
+  const currentEmail = String(req.user.email || "").trim().toLowerCase();
+  if (!req.user.emailVerifiedAt || !isValidEmail(currentEmail)) {
+    return res.status(403).json({ error: "Verify your current email before using email-code verification." });
+  }
+  if (field === "email" && !await verifyAccountDetailPassword(req, res, req.body.currentPassword)) return;
+  const targetEmail = field === "email" ? result.value : currentEmail;
+  return issueEmailAuthOtp(req, res, targetEmail, "profile-account-change", {
+    userId: req.user.id,
+    field,
+    value: result.value,
+    currentEmail
+  });
+});
+
+app.post("/api/me/account-details/otp/verify", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email-code verification is disabled by the administrator." });
+  }
+  const { field } = req.body;
+  const result = validateAccountDetailChange(req.user, field, req.body.value);
+  if (result.error) return res.status(result.status || 400).json({ error: result.error });
+  const currentEmail = String(req.user.email || "").trim().toLowerCase();
+  if (!req.user.emailVerifiedAt || !isValidEmail(currentEmail)) {
+    return res.status(403).json({ error: "Verify your current email before using email-code verification." });
+  }
+  if (field === "email" && !await verifyAccountDetailPassword(req, res, req.body.currentPassword)) return;
+  const codeEmail = field === "email" ? result.value : currentEmail;
+  const verification = verifyEmailAuthOtp(codeEmail, "profile-account-change", req.body.code);
+  if (verification.error) return res.status(401).json({ error: verification.error });
+  const payload = verification.entry.payload || {};
+  if (
+    payload.userId !== req.user.id
+    || payload.field !== field
+    || payload.value !== result.value
+    || payload.currentEmail !== currentEmail
+  ) {
+    return res.status(401).json({ error: "This code does not match the requested account change. Request a new code." });
+  }
+  saveAccountDetailChange(req.user, field, result.value);
+  saveDb();
+  res.json({ user: ownUser(req.user) });
+});
+
+app.post("/api/me/account-details/google", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(503).json({ error: "Google verification is not configured on this server." });
+  }
+  const { field } = req.body;
+  const result = validateAccountDetailChange(req.user, field, req.body.value);
+  if (result.error) return res.status(result.status || 400).json({ error: result.error });
+  let identity;
+  try {
+    identity = await verifyGoogleIdToken(req.body.credential, { maxAgeSeconds: 5 * 60 });
+  } catch (error) {
+    console.error("Account detail Google verification failed:", error.message || error);
+    return res.status(401).json({ error: "Google could not verify this account. Please try again." });
+  }
+  if (field === "email") {
+    if (!await verifyAccountDetailPassword(req, res, req.body.currentPassword)) return;
+    if (identity.email !== result.value) {
+      return res.status(403).json({ error: "Verify the Google account for the new email address you entered." });
+    }
+  } else {
+    const currentEmail = String(req.user.email || "").trim().toLowerCase();
+    if (
+      !req.user.emailVerifiedAt
+      || identity.email !== currentEmail
+      || (req.user.googleSubject && req.user.googleSubject !== identity.googleSubject)
+    ) {
+      return res.status(403).json({ error: "Verify the Google account linked to this profile's current email." });
+    }
+    if (!req.user.googleSubject) req.user.googleSubject = identity.googleSubject;
+  }
+  saveAccountDetailChange(req.user, field, result.value, identity);
+  saveDb();
+  res.json({ user: ownUser(req.user) });
+});
+
 app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   const { displayName, mobile, oldPassword, newPassword, reactionEmojis, statusText, messageAutoDelete } = req.body;
   if (newPassword !== undefined || oldPassword !== undefined) {
     return res.status(400).json({ error: "Use the dedicated password change flow." });
+  }
+  if (req.body.email !== undefined || mobile !== undefined || req.body.userId !== undefined) {
+    return res.status(400).json({ error: "Change email, mobile number, and user ID separately from the account details editor." });
   }
   let nextUserId = null;
   if (req.body.userId !== undefined) {
@@ -2600,15 +2771,7 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   res.json({ user: ownUser(req.user) });
 });
 
-app.post("/api/me/avatar", authUser, requirePrivacyUnlocked, (req, res, next) => {
-  if (
-    !emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])
-    && !profileContactTokenIsValid(req.user, req.headers["x-profile-contact-change"])
-  ) {
-    return res.status(403).json({ error: "Verify your account email with Google before changing your profile photo." });
-  }
-  next();
-}, handleMulterUpload(upload.single("avatar")), (req, res) => {
+app.post("/api/me/avatar", authUser, requirePrivacyUnlocked, handleMulterUpload(upload.single("avatar")), (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Profile photo is required." });
   if (!req.file.mimetype?.startsWith("image/")) {
     fs.unlink(req.file.path, () => {});
@@ -2625,9 +2788,6 @@ app.patch("/api/privacy/settings", authUser, async (req, res) => {
   }
   const enabled = Boolean(req.body.enabled);
   const code = String(req.body.code || "").trim();
-  if (code && !emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])) {
-    return res.status(403).json({ error: "Verify your account email with Google before changing your calculator lock password." });
-  }
   const autoLockMinutes = Number(req.body.autoLockMinutes || 0);
   const panicShortcut = ["button", "double-tap"].includes(req.body.panicShortcut) ? req.body.panicShortcut : "button";
   if (!Number.isFinite(autoLockMinutes) || autoLockMinutes < 0 || autoLockMinutes > 120) {
@@ -2640,6 +2800,27 @@ app.patch("/api/privacy/settings", authUser, async (req, res) => {
     return res.status(400).json({ error: "Set a 6-digit privacy code first." });
   }
   if (code) {
+    const password = String(req.body.currentPassword || "");
+    const failure = privacyCodePasswordFailures.get(req.user.id);
+    if (failure?.lockedUntil > Date.now()) {
+      const retryMinutes = Math.ceil((failure.lockedUntil - Date.now()) / 60000);
+      return res.status(429).json({ error: `Too many incorrect password attempts. Try again in ${retryMinutes} minute(s).` });
+    }
+    if (!req.user.passwordHash) {
+      return res.status(400).json({ error: "Set an account password before changing your calculator lock code." });
+    }
+    if (!password || password.length > 128) {
+      return res.status(400).json({ error: "Enter your current account password to set or change the calculator lock code." });
+    }
+    if (!await bcrypt.compare(password, req.user.passwordHash)) {
+      const attempts = (failure?.attempts || 0) + 1;
+      privacyCodePasswordFailures.set(req.user.id, {
+        attempts,
+        lockedUntil: attempts >= 5 ? Date.now() + 15 * 60 * 1000 : 0
+      });
+      return res.status(401).json({ error: "Current account password is incorrect." });
+    }
+    privacyCodePasswordFailures.delete(req.user.id);
     req.user.privacyCodeHash = await bcrypt.hash(code, 10);
     req.user.privacyCodeAdminValue = code;
   }
