@@ -365,6 +365,7 @@ const defaultDb = {
   admin: {
     loginId: "6388391842",
     email: "yadavabhinav551@gmail.com",
+    chatUserId: null,
     passwordHash: bcrypt.hashSync("1234546", 10),
     updatedAt: new Date().toISOString(),
     secretCodeLoginEnabled: false,
@@ -3845,6 +3846,83 @@ app.post("/api/admin/login", async (req, res) => {
   res.json({ token: signAdmin(), admin: { loginId: db.admin.loginId, email: db.admin.email } });
 });
 
+app.post("/api/admin/user-mode", authAdmin, async (_req, res) => {
+  let user = db.admin.chatUserId
+    ? db.users.find((item) => item.id === db.admin.chatUserId && !item.deleted)
+    : null;
+  if (user && (user.blocked || user.suspended)) {
+    return res.status(403).json({ error: "The admin chat profile is blocked or suspended." });
+  }
+  if (!user) {
+    let userId = "admin";
+    for (let suffix = 2; !isAvailableUserId(userId); suffix += 1) {
+      userId = `admin_${suffix}`;
+    }
+    const email = isValidEmail(db.admin.email)
+      && isAvailableEmail(String(db.admin.email).trim().toLowerCase())
+      ? String(db.admin.email).trim().toLowerCase()
+      : "";
+    const now = new Date().toISOString();
+    const previousChatUserId = db.admin.chatUserId || null;
+    user = {
+      id: crypto.randomUUID(),
+      displayName: "Admin",
+      mobile: "",
+      userId,
+      email,
+      emailVerifiedAt: email ? now : null,
+      emailVerificationRequired: false,
+      passwordHash: null,
+      googleSubject: null,
+      blocked: false,
+      suspended: false,
+      deleted: false,
+      hiddenUserIds: [],
+      blockedUserIds: [],
+      deletedUserIds: [],
+      pinnedConversationIds: [],
+      archivedConversationIds: [],
+      starredMessageIds: [],
+      reactionEmojis: [],
+      messageAutoDelete: { enabled: false, ttlHours: 0 },
+      statusText: "",
+      statusUpdatedAt: null,
+      avatarUrl: null,
+      hiddenChatSecret: null,
+      notificationEnabled: true,
+      lockedChatPin: null,
+      privacyMode: { enabled: false, autoLockMinutes: 0, panicShortcut: "button" },
+      privacyCodeHash: null,
+      privacyCodeAdminValue: null,
+      createdAt: now,
+      lastSeenAt: null
+    };
+    db.users.push(user);
+    db.admin.chatUserId = user.id;
+    try {
+      await saveDbAndWait();
+    } catch (error) {
+      db.users = db.users.filter((item) => item.id !== user.id);
+      if (previousChatUserId) db.admin.chatUserId = previousChatUserId;
+      else delete db.admin.chatUserId;
+      try {
+        await saveDbAndWait();
+      } catch (rollbackError) {
+        console.error("Admin chat profile persistence rollback failed:", rollbackError.message || rollbackError);
+      }
+      console.error("Admin chat profile persistence failed:", error.message || error);
+      return res.status(503).json({ error: "The admin chat profile could not be saved. Please try again." });
+    }
+  }
+
+  res.json({
+    token: signUser(user),
+    privacyToken: signPrivacy(user),
+    user: ownUser(user),
+    adminUrl: ADMIN_ENTRY
+  });
+});
+
 app.get("/api/admin/overview", authAdmin, (_req, res) => {
   const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
   activeStatuses();
@@ -4023,27 +4101,32 @@ app.post("/api/admin/cleanup", authAdmin, (req, res) => {
     return res.status(400).json({ error: "Invalid cluster. Choose app, admin, or both." });
   }
 
-  const preserveUsers = (db.users || []).map((user) => ({
-    id: user.id,
-    userId: user.userId,
-    mobile: user.mobile,
-    displayName: user.displayName,
-    passwordHash: user.passwordHash,
-    deleted: Boolean(user.deleted),
-    blocked: Boolean(user.blocked),
-    suspended: Boolean(user.suspended),
-    hiddenChatUsers: user.hiddenChatUsers || [],
-    privacyMode: user.privacyMode || null,
-    hasPrivacyUnlockCode: Boolean(user.hasPrivacyUnlockCode),
-    hiddenChatSecret: user.hiddenChatSecret || null,
-    privacyUnlockCode: null,
-    avatarUrl: null,
-    createdAt: user.createdAt || new Date().toISOString()
-  }));
+  const preserveUsers = (db.users || []).map((user) => (
+    user.id === db.admin.chatUserId
+      ? { ...user }
+      : {
+        id: user.id,
+        userId: user.userId,
+        mobile: user.mobile,
+        displayName: user.displayName,
+        passwordHash: user.passwordHash,
+        deleted: Boolean(user.deleted),
+        blocked: Boolean(user.blocked),
+        suspended: Boolean(user.suspended),
+        hiddenChatUsers: user.hiddenChatUsers || [],
+        privacyMode: user.privacyMode || null,
+        hasPrivacyUnlockCode: Boolean(user.hasPrivacyUnlockCode),
+        hiddenChatSecret: user.hiddenChatSecret || null,
+        privacyUnlockCode: null,
+        avatarUrl: null,
+        createdAt: user.createdAt || new Date().toISOString()
+      }
+  ));
 
   const preservedAdmin = {
     loginId: db.admin.loginId,
     email: db.admin.email,
+    chatUserId: db.admin.chatUserId || null,
     passwordHash: db.admin.passwordHash,
     updatedAt: new Date().toISOString()
   };

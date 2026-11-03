@@ -17,10 +17,10 @@
     </script>
     <link rel="preload" href="/styles.css?v=admin-login-on-main-form-56" as="style">
     <link rel="stylesheet" href="/styles.css?v=admin-login-on-main-form-56">
-    <link rel="stylesheet" href="/admin.css?v=admin-console-redesign-3">
+    <link rel="stylesheet" href="/admin.css?v=admin-console-redesign-4">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/admin.js?v=admin-console-redesign-3" defer></script>
+    <script src="/admin.js?v=admin-console-redesign-4" defer></script>
   </head>
   <body class="admin-page">
     <main class="admin-shell">
@@ -104,6 +104,7 @@
             </div>
             <div class="admin-header-actions">
               <button class="header-action install-control" type="button">Install app</button>
+              <button id="adminUserModeBtn" class="header-action" type="button">Use as user</button>
               <a class="header-action" href="/api/admin/export" id="exportLink">Export data</a>
               <a class="header-action" href="/api/admin/backup" id="backupLink">JSON backup</a>
               <button id="adminThemeToggle" class="theme-toggle" type="button" aria-label="Switch to light theme">

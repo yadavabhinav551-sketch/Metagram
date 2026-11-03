@@ -1136,7 +1136,11 @@ function showChat() {
   $("chatView").classList.remove("hidden");
   setAppReady();
   $("meName").textContent = state.user.displayName;
-  $("meHandle").textContent = `${state.user.userId} · ${state.user.mobile}`;
+  $("meHandle").textContent = [state.user.userId, state.user.mobile].filter(Boolean).join(" · ");
+  $("adminModeBtn").classList.toggle(
+    "hidden",
+    sessionStorage.getItem("adminUserMode") !== "true" || !localStorage.getItem("adminToken")
+  );
   ensureTopbarControlsVisible();
   syncProfileIdentity();
   syncPrivacySettings();
@@ -1165,6 +1169,8 @@ async function showAuth() {
 async function logout() {
   localStorage.removeItem("chatToken");
   sessionStorage.removeItem("privacyToken");
+  sessionStorage.removeItem("adminUserMode");
+  sessionStorage.removeItem("adminReturnUrl");
   localStorage.removeItem("offlineOutbox");
   state.token = null;
   state.privacyToken = null;
@@ -5063,7 +5069,14 @@ $("loginOtpResend").addEventListener("click", async () => {
 });
 $("logoutBtn").addEventListener("click", () => {
   closeTopbarMenu();
-  showAuth();
+  logout();
+});
+$("adminModeBtn").addEventListener("click", () => {
+  const adminUrl = sessionStorage.getItem("adminReturnUrl");
+  if (!adminUrl) return;
+  const target = new URL(adminUrl, window.location.origin);
+  if (target.origin !== window.location.origin) return;
+  window.location.assign(target.href);
 });
 async function handleCalculatorButtonInput(button) {
   if (!button) return;

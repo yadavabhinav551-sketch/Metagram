@@ -963,10 +963,30 @@ $("adminLogoutBtn").addEventListener("click", () => {
   adminState.socket?.disconnect();
   adminState.token = null;
   localStorage.removeItem("adminToken");
+  sessionStorage.removeItem("adminUserMode");
+  sessionStorage.removeItem("adminReturnUrl");
   $("adminApp").classList.add("hidden");
   $("adminLogin").classList.remove("hidden");
   $("adminLoginForm").reset();
   $("adminError").textContent = "";
+});
+
+$("adminUserModeBtn").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await adminApi("/api/admin/user-mode", { method: "POST", body: "{}" });
+    localStorage.setItem("chatToken", result.token);
+    if (result.privacyToken) sessionStorage.setItem("privacyToken", result.privacyToken);
+    else sessionStorage.removeItem("privacyToken");
+    sessionStorage.setItem("adminUserMode", "true");
+    sessionStorage.setItem("adminReturnUrl", result.adminUrl);
+    window.location.assign("/");
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.querySelectorAll(".signup-policy-choice").forEach((button) => {
