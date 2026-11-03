@@ -17,10 +17,10 @@
     </script>
     <link rel="preload" href="/styles.css?v=admin-login-on-main-form-56" as="style">
     <link rel="stylesheet" href="/styles.css?v=admin-login-on-main-form-56">
-    <link rel="stylesheet" href="/admin.css?v=admin-console-redesign-5">
+    <link rel="stylesheet" href="/admin.css?v=admin-console-redesign-6">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/admin.js?v=admin-console-redesign-5" defer></script>
+    <script src="/admin.js?v=admin-console-redesign-6" defer></script>
   </head>
   <body class="admin-page">
     <main class="admin-shell">
@@ -133,6 +133,7 @@
                 <div><span class="eyebrow">ACCOUNT DIRECTORY</span><h2>Users</h2><p>Review account status, sign-in activity and privacy controls.</p></div>
                 <span id="usersViewCount" class="view-count">0 accounts</span>
               </div>
+              <p id="adminUserEditStatus" class="settings-message" role="status" aria-live="polite"></p>
               <div id="adminUsers" class="admin-list user-list"></div>
             </section>
 
@@ -345,6 +346,30 @@
           <video id="adminMediaFullscreenVideo" controls playsinline class="media-fullscreen-video"></video>
           <div class="media-modal-actions"><a id="adminMediaDownloadLink" class="admin-media-link" href="#" download>Download</a></div>
         </div>
+      </section>
+      <section id="adminUserAccountModal" class="modal-layer admin-user-account-modal hidden" role="dialog" aria-modal="true" aria-labelledby="adminUserAccountTitle">
+        <form id="adminUserAccountForm" class="modal-card admin-user-account-card">
+          <header>
+            <div>
+              <strong id="adminUserAccountTitle">Update user details</strong>
+              <small id="adminUserAccountDescription"></small>
+            </div>
+            <button id="adminUserAccountCloseBtn" class="icon-button" type="button" aria-label="Close">×</button>
+          </header>
+          <label>
+            <span id="adminUserAccountValueLabel">New value</span>
+            <input id="adminUserAccountValue" required>
+          </label>
+          <label>
+            <span>Current admin password</span>
+            <input id="adminUserAccountPassword" type="password" autocomplete="current-password" required>
+          </label>
+          <p id="adminUserAccountMessage" class="settings-message" role="status" aria-live="polite"></p>
+          <footer class="admin-user-account-actions">
+            <button id="adminUserAccountCancelBtn" type="button">Cancel</button>
+            <button id="adminUserAccountSaveBtn" class="primary" type="submit">Save user change</button>
+          </footer>
+        </form>
       </section>
     </main>
   </body>

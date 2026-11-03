@@ -49,6 +49,56 @@
   font-family: var(--font-main);
 }
 
+.admin-user-account-modal {
+  z-index: 240;
+}
+
+.admin-user-account-card {
+  width: min(100%, 520px);
+  border-color: var(--admin-line);
+  background: var(--admin-surface);
+  color: var(--admin-text);
+}
+
+.admin-user-account-card > header {
+  background: var(--admin-surface);
+}
+
+.admin-user-account-card > header small,
+.admin-user-account-card label > span {
+  color: var(--admin-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-user-account-card .error-text {
+  color: var(--admin-danger);
+}
+
+.admin-user-account-card label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.admin-user-account-card input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--admin-line);
+  border-radius: 11px;
+  background: var(--admin-input);
+  color: var(--admin-text);
+  font: inherit;
+}
+
+.admin-user-account-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .admin-shell {
   min-height: 100dvh;
 }

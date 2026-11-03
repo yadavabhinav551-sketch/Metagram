@@ -549,8 +549,16 @@ function saveDb() {
   }
 }
 
-async function saveDbAndWait() {
+async function saveAppDbAndWait() {
   const appState = { key: "main", ...db };
+  if (stateCollection) {
+    await stateCollection.replaceOne({ key: "main" }, appState, { upsert: true });
+  } else {
+    fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
+  }
+}
+
+async function saveDbAndWait() {
   if (adminStateCollection) {
     await adminStateCollection.replaceOne(
       { key: "main" },
@@ -558,11 +566,7 @@ async function saveDbAndWait() {
       { upsert: true }
     );
   }
-  if (stateCollection) {
-    await stateCollection.replaceOne({ key: "main" }, appState, { upsert: true });
-  } else {
-    fs.writeFileSync(dbFile, JSON.stringify(db, null, 2));
-  }
+  await saveAppDbAndWait();
 }
 
 function getPushSubscription(userId) {
@@ -4585,6 +4589,15 @@ app.patch("/api/admin/users/:id/account-details", authAdmin, async (req, res) =>
 
   const rawValue = String(submittedValue || "");
   const value = field === "password" ? rawValue : rawValue.trim();
+  const previousValues = {
+    userId: user.userId,
+    email: user.email,
+    emailVerifiedAt: user.emailVerifiedAt,
+    emailVerificationRequired: user.emailVerificationRequired,
+    googleSubject: user.googleSubject,
+    mobile: user.mobile,
+    passwordHash: user.passwordHash
+  };
   if (field === "userId") {
     const result = validateUserId(value);
     if (result.error) return res.status(400).json({ error: result.error });
@@ -4621,7 +4634,18 @@ app.patch("/api/admin/users/:id/account-details", authAdmin, async (req, res) =>
     user.passwordHash = await bcrypt.hash(value, 10);
   }
 
-  saveDb();
+  try {
+    await saveAppDbAndWait();
+  } catch (error) {
+    Object.assign(user, previousValues);
+    try {
+      await saveAppDbAndWait();
+    } catch (rollbackError) {
+      console.error("Admin user account edit rollback failed:", rollbackError.message || rollbackError);
+    }
+    console.error("Admin user account edit persistence failed:", error.message || error);
+    return res.status(503).json({ error: "The user change could not be saved. No change was applied." });
+  }
   io.emit("presence", presencePayload());
   res.json({ user: adminUser(user) });
 });

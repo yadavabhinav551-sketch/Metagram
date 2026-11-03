@@ -19,7 +19,8 @@ const adminState = {
   revealedPrivacyCodes: new Set(),
   showHiddenConversations: false,
   conversationSearch: "",
-  recordingFilterUserId: ""
+  recordingFilterUserId: "",
+  accountEdit: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -314,6 +315,43 @@ function renderUsers() {
       </div>
     </div>
   `).join("");
+}
+
+function resetAdminUserAccountEditor() {
+  $("adminUserAccountModal").classList.add("hidden");
+  $("adminUserAccountForm").reset();
+  $("adminUserAccountMessage").textContent = "";
+  $("adminUserAccountMessage").classList.remove("error-text");
+  $("adminUserAccountValue").disabled = false;
+  $("adminUserAccountPassword").disabled = false;
+  $("adminUserAccountSaveBtn").disabled = false;
+  adminState.accountEdit = null;
+}
+
+function openAdminUserAccountEditor(user, field) {
+  const fields = {
+    userId: { label: "New user ID", type: "text", value: user.userId || "", autocomplete: "username" },
+    email: { label: "New user email", type: "email", value: user.email || "", autocomplete: "email" },
+    mobile: { label: "New mobile number", type: "tel", value: user.mobile || "", autocomplete: "tel" },
+    password: { label: "New user password (8-128 characters)", type: "password", value: "", autocomplete: "new-password" }
+  };
+  const detail = fields[field];
+  if (!detail) return;
+  const fieldLabels = { userId: "user ID", email: "email address", mobile: "mobile number", password: "password" };
+  adminState.accountEdit = { userId: user.id, field, label: fieldLabels[field] };
+  $("adminUserAccountTitle").textContent = `Change user ${fieldLabels[field]}`;
+  $("adminUserAccountDescription").textContent = `Updating ${user.displayName || user.userId}. This changes only the selected chat account, not admin login credentials.`;
+  $("adminUserAccountValueLabel").textContent = detail.label;
+  $("adminUserAccountValue").type = detail.type;
+  $("adminUserAccountValue").value = detail.value;
+  $("adminUserAccountValue").autocomplete = detail.autocomplete;
+  $("adminUserAccountValue").minLength = field === "password" ? 8 : 0;
+  $("adminUserAccountValue").maxLength = field === "password" ? 128 : field === "userId" ? 30 : 254;
+  $("adminUserAccountMessage").textContent = "";
+  $("adminUserAccountMessage").classList.remove("error-text");
+  $("adminUserEditStatus").textContent = "";
+  $("adminUserAccountModal").classList.remove("hidden");
+  $("adminUserAccountValue").focus();
 }
 
 function renderHiddenChatAudit(user) {
@@ -854,29 +892,8 @@ $("adminUsers").addEventListener("click", async (event) => {
   const action = button.dataset.userAction;
   if (action === "account-field") {
     const field = button.dataset.field;
-    const fieldLabels = { userId: "user ID", email: "email address", mobile: "mobile number", password: "password" };
-    if (!fieldLabels[field]) return;
-    const initialValues = { userId: user.userId, email: user.email || "", mobile: user.mobile || "" };
-    const value = prompt(
-      field === "password" ? "New user password (8-128 characters)" : `New user ${fieldLabels[field]}`,
-      initialValues[field] || ""
-    );
-    if (value === null || (field === "password" ? value.length === 0 : !value.trim())) return;
-    const adminPassword = prompt(`Enter your current admin password to change this user's ${fieldLabels[field]}.`);
-    if (!adminPassword) return;
-    button.disabled = true;
-    try {
-      await adminApi(`/api/admin/users/${user.id}/account-details`, {
-        method: "PATCH",
-        body: JSON.stringify({ field, value, adminPassword })
-      });
-      await loadOverview();
-      alert(`This user's ${fieldLabels[field]} was updated. Admin login details were not changed.`);
-    } catch (error) {
-      alert(error.message);
-    } finally {
-      button.disabled = false;
-    }
+    openAdminUserAccountEditor(user, field);
+    return;
   }
   if (action === "privacy-code") {
     const privacyCode = prompt("New 6-digit calculator lock code", user.privacyUnlockCode || "");
@@ -928,6 +945,41 @@ $("adminUsers").addEventListener("click", async (event) => {
     await adminApi(`/api/admin/users/${user.id}/permanent`, { method: "DELETE" });
     await loadOverview();
   }
+});
+
+$("adminUserAccountForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!adminState.accountEdit) return;
+  const { userId, field, label } = adminState.accountEdit;
+  const saveButton = $("adminUserAccountSaveBtn");
+  saveButton.disabled = true;
+  $("adminUserAccountMessage").textContent = "Verifying admin password and saving this user profile…";
+  $("adminUserAccountMessage").classList.remove("error-text");
+  try {
+    const result = await adminApi(`/api/admin/users/${userId}/account-details`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        field,
+        value: $("adminUserAccountValue").value,
+        adminPassword: $("adminUserAccountPassword").value
+      })
+    });
+    adminState.users = adminState.users.map((user) => user.id === userId ? result.user : user);
+    renderUsers();
+    $("adminUserEditStatus").textContent = `Saved: ${result.user.displayName || result.user.userId} — ${label} updated successfully. Admin login credentials were not changed.`;
+    resetAdminUserAccountEditor();
+  } catch (error) {
+    $("adminUserAccountMessage").textContent = error.message || "The user change could not be saved.";
+    $("adminUserAccountMessage").classList.add("error-text");
+  } finally {
+    saveButton.disabled = false;
+  }
+});
+
+$("adminUserAccountCancelBtn").addEventListener("click", resetAdminUserAccountEditor);
+$("adminUserAccountCloseBtn").addEventListener("click", resetAdminUserAccountEditor);
+$("adminUserAccountModal").addEventListener("click", (event) => {
+  if (event.target === $("adminUserAccountModal")) resetAdminUserAccountEditor();
 });
 
 $("adminConversations").addEventListener("click", async (event) => {
