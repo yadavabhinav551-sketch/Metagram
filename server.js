@@ -569,6 +569,17 @@ async function saveDbAndWait() {
   await saveAppDbAndWait();
 }
 
+async function refreshPersistedAdminState() {
+  const collection = adminStateCollection || stateCollection;
+  if (!collection) return db.admin;
+  const persistedState = await collection.findOne({ key: "main" });
+  if (!persistedState?.admin || typeof persistedState.admin !== "object") {
+    throw new Error("Persisted admin credentials are missing.");
+  }
+  db.admin = { ...db.admin, ...persistedState.admin };
+  return db.admin;
+}
+
 function getPushSubscription(userId) {
   return db.pushSubscriptions.find((item) => item.userId === userId) || null;
 }
@@ -855,6 +866,7 @@ function signAdmin() {
 }
 
 async function verifyAdminCredentials(loginValue, password) {
+  await refreshPersistedAdminState();
   const normalizedLogin = String(loginValue || "").trim().toLowerCase();
   const admin = db.admin || {};
   const loginCandidates = [admin.loginId, admin.email]
@@ -863,6 +875,15 @@ async function verifyAdminCredentials(loginValue, password) {
   const loginMatches = loginCandidates.includes(normalizedLogin);
   if (!loginMatches) return { ok: false, reason: "login-mismatch" };
 
+  return compareAdminPassword(password, admin);
+}
+
+async function verifyCurrentAdminPassword(password) {
+  await refreshPersistedAdminState();
+  return compareAdminPassword(password, db.admin);
+}
+
+async function compareAdminPassword(password, admin) {
   if (!admin.passwordHash || !password) return { ok: false, reason: "password-mismatch" };
   try {
     return await bcrypt.compare(password, admin.passwordHash)
@@ -2132,7 +2153,13 @@ app.post("/api/auth/google/complete-profile", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   const { login, password = "" } = req.body;
-  const adminResult = await verifyAdminCredentials(login, password);
+  let adminResult;
+  try {
+    adminResult = await verifyAdminCredentials(login, password);
+  } catch (error) {
+    console.error("Could not verify admin login against persisted credentials:", error.message || error);
+    return res.status(503).json({ error: "Admin credentials could not be checked. Please try again." });
+  }
   if (adminResult.ok) {
     return res.json({
       token: signAdmin(),
@@ -3843,7 +3870,13 @@ app.delete("/api/shared/:id", authUser, requirePrivacyUnlocked, (req, res) => {
 
 app.post("/api/admin/login", async (req, res) => {
   const { loginId, password } = req.body;
-  const result = await verifyAdminCredentials(loginId, password);
+  let result;
+  try {
+    result = await verifyAdminCredentials(loginId, password);
+  } catch (error) {
+    console.error("Could not verify admin login against persisted credentials:", error.message || error);
+    return res.status(503).json({ error: "Admin credentials could not be checked. Please try again." });
+  }
   if (!result.ok) {
     return res.status(401).json({ error: "Invalid admin credentials." });
   }
@@ -4310,6 +4343,12 @@ app.post("/api/admin/email/test", authAdmin, async (_req, res) => {
 });
 
 app.post("/api/admin/credentials", authAdmin, async (req, res) => {
+  try {
+    await refreshPersistedAdminState();
+  } catch (error) {
+    console.error("Could not refresh persisted admin credentials:", error.message || error);
+    return res.status(503).json({ error: "Could not verify the current admin credentials. Please try again." });
+  }
   const currentLoginId = String(db.admin.loginId || "");
   const currentEmail = String(db.admin.email || "").trim().toLowerCase();
   const loginIdInput = String(req.body.loginId || "").trim();
@@ -4393,6 +4432,10 @@ app.post("/api/admin/credentials", authAdmin, async (req, res) => {
   db.admin.updatedAt = new Date().toISOString();
   try {
     await saveDbAndWait();
+    await refreshPersistedAdminState();
+    if (passwordChanged && !(await bcrypt.compare(newPassword, db.admin.passwordHash || ""))) {
+      throw new Error("Saved admin password did not match the requested password.");
+    }
   } catch (error) {
     db.admin = previousAdmin;
     try {
@@ -4405,6 +4448,7 @@ app.post("/api/admin/credentials", authAdmin, async (req, res) => {
   }
   res.json({
     ok: true,
+    passwordUpdated: passwordChanged,
     credentials: {
       loginId: db.admin.loginId,
       email: db.admin.email
@@ -4598,7 +4642,13 @@ app.patch("/api/admin/users/:id/account-details", authAdmin, async (req, res) =>
   if (!["userId", "email", "mobile", "password"].includes(field)) {
     return res.status(400).json({ error: "Choose a user ID, email, mobile number, or password to change." });
   }
-  const adminPasswordResult = await verifyAdminCredentials(db.admin.loginId, adminPassword);
+  let adminPasswordResult;
+  try {
+    adminPasswordResult = await verifyCurrentAdminPassword(adminPassword);
+  } catch (error) {
+    console.error("Could not verify admin password for user account edit:", error.message || error);
+    return res.status(503).json({ error: "Admin password could not be checked. Please try again." });
+  }
   if (!adminPasswordResult.ok) {
     return res.status(403).json({ error: "Admin password is incorrect." });
   }

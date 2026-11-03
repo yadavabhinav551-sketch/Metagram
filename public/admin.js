@@ -1228,7 +1228,9 @@ $("credentialsForm").addEventListener("submit", async (event) => {
     $("adminCredentialOtpStatus").textContent = "";
     $("adminGoogleCredentialStatus").textContent = "Verify the Google account matching the admin email you want to use.";
     renderAdminCredentials();
-    $("settingsMessage").textContent = "Admin credentials updated.";
+    $("settingsMessage").textContent = result.passwordUpdated
+      ? "Admin password updated and verified. Use the new password for Admin → Users; this admin session remains active."
+      : "Admin credentials updated.";
   } catch (error) {
     $("settingsMessage").textContent = error.message;
   }
