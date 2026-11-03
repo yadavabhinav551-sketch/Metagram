@@ -297,13 +297,16 @@ function renderUsers() {
       <strong>${escapeHtml(user.displayName)}</strong>
       ${user.statusText ? `<small class="admin-status-line">Status: ${escapeHtml(user.statusText)}</small>` : ""}
       <small>${escapeHtml(user.userId)} · ${escapeHtml(user.mobile)}</small>
+      <small>${escapeHtml(user.email || "No email address")}</small>
       <small>${user.deleted ? "Deleted" : user.blocked ? "Blocked" : user.suspended ? "Suspended" : "Active"}</small>
       <small class="presence-line ${user.online ? "online" : ""}">${escapeHtml(userPresenceLabel(user))}</small>
       ${renderHiddenChatAudit(user)}
       ${renderPrivacyCodeAudit(user)}
       <div class="admin-actions">
-        <button data-user-action="id" data-id="${user.id}" type="button">Change ID</button>
-        <button data-user-action="password" data-id="${user.id}" type="button">Password</button>
+        <button data-user-action="account-field" data-field="userId" data-id="${user.id}" type="button">Change ID</button>
+        <button data-user-action="account-field" data-field="email" data-id="${user.id}" type="button">Change email</button>
+        <button data-user-action="account-field" data-field="mobile" data-id="${user.id}" type="button">Change mobile</button>
+        <button data-user-action="account-field" data-field="password" data-id="${user.id}" type="button">Change password</button>
         <button data-user-action="privacy-code" data-id="${user.id}" type="button">Calculator Code</button>
         <button data-user-action="blocked" data-id="${user.id}" type="button">${user.blocked ? "Unblock" : "Block"}</button>
         <button class="danger" data-user-action="deleted" data-id="${user.id}" type="button">${user.deleted ? "Restore" : "Delete"}</button>
@@ -849,13 +852,31 @@ $("adminUsers").addEventListener("click", async (event) => {
   const user = adminState.users.find((item) => item.id === button.dataset.id);
   if (!user) return;
   const action = button.dataset.userAction;
-  if (action === "id") {
-    const userId = prompt("New User ID", user.userId);
-    if (userId) await updateUser(user.id, { userId });
-  }
-  if (action === "password") {
-    const password = prompt("New password");
-    if (password) await updateUser(user.id, { password });
+  if (action === "account-field") {
+    const field = button.dataset.field;
+    const fieldLabels = { userId: "user ID", email: "email address", mobile: "mobile number", password: "password" };
+    if (!fieldLabels[field]) return;
+    const initialValues = { userId: user.userId, email: user.email || "", mobile: user.mobile || "" };
+    const value = prompt(
+      field === "password" ? "New user password (8-128 characters)" : `New user ${fieldLabels[field]}`,
+      initialValues[field] || ""
+    );
+    if (value === null || (field === "password" ? value.length === 0 : !value.trim())) return;
+    const adminPassword = prompt(`Enter your current admin password to change this user's ${fieldLabels[field]}.`);
+    if (!adminPassword) return;
+    button.disabled = true;
+    try {
+      await adminApi(`/api/admin/users/${user.id}/account-details`, {
+        method: "PATCH",
+        body: JSON.stringify({ field, value, adminPassword })
+      });
+      await loadOverview();
+      alert(`This user's ${fieldLabels[field]} was updated. Admin login details were not changed.`);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
+    }
   }
   if (action === "privacy-code") {
     const privacyCode = prompt("New 6-digit calculator lock code", user.privacyUnlockCode || "");

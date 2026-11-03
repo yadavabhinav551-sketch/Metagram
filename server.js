@@ -756,6 +756,7 @@ function hiddenChatSecretMatches(user, candidate) {
 function adminUser(user) {
   return {
     ...publicUser(user),
+    email: String(user.email || ""),
     online: onlineUsers.has(user.id),
     lastSeenAt: user.lastSeenAt || null,
     hiddenChatSecret: user.hiddenChatSecret || null,
@@ -4493,6 +4494,9 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
 app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   const user = db.users.find((item) => item.id === req.params.id);
   if (!user) return res.status(404).json({ error: "User not found." });
+  if (["userId", "email", "mobile", "password"].some((field) => req.body[field] !== undefined)) {
+    return res.status(400).json({ error: "Use the account details endpoint and confirm the current admin password to change user sign-in details." });
+  }
   const {
     userId,
     password,
@@ -4562,6 +4566,62 @@ app.patch("/api/admin/users/:id", authAdmin, async (req, res) => {
   if (wasActive && (user.deleted || user.blocked || user.suspended)) {
     await closeUserSessions(user, "Your account has been closed by admin.");
   }
+  io.emit("presence", presencePayload());
+  res.json({ user: adminUser(user) });
+});
+
+app.patch("/api/admin/users/:id/account-details", authAdmin, async (req, res) => {
+  const user = db.users.find((item) => item.id === req.params.id);
+  if (!user || user.deleted) return res.status(404).json({ error: "Active user not found." });
+
+  const { field, value: submittedValue, adminPassword } = req.body;
+  if (!["userId", "email", "mobile", "password"].includes(field)) {
+    return res.status(400).json({ error: "Choose a user ID, email, mobile number, or password to change." });
+  }
+  const adminPasswordResult = await verifyAdminCredentials(db.admin.loginId, adminPassword);
+  if (!adminPasswordResult.ok) {
+    return res.status(403).json({ error: "Admin password is incorrect." });
+  }
+
+  const rawValue = String(submittedValue || "");
+  const value = field === "password" ? rawValue : rawValue.trim();
+  if (field === "userId") {
+    const result = validateUserId(value);
+    if (result.error) return res.status(400).json({ error: result.error });
+    if (!isAvailableUserId(result.userId, user.id)) {
+      return res.status(409).json({ error: "User ID already exists." });
+    }
+    user.userId = result.userId;
+  } else if (field === "email") {
+    const email = value.toLowerCase();
+    if (!isValidEmail(email)) return res.status(400).json({ error: "Enter a valid email address." });
+    if (email === String(db.admin.email || "").trim().toLowerCase()) {
+      return res.status(409).json({ error: "This email is reserved for the admin login. Choose another email." });
+    }
+    if (!isAvailableEmail(email, user.id)) {
+      return res.status(409).json({ error: "Email address is already linked to another user." });
+    }
+    user.email = email;
+    user.emailVerifiedAt = new Date().toISOString();
+    user.emailVerificationRequired = false;
+    user.googleSubject = null;
+  } else if (field === "mobile") {
+    const digits = normalizeMobile(value);
+    if (digits.length < 7 || digits.length > 15) {
+      return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+    }
+    if (!isAvailableMobile(value, user.id)) {
+      return res.status(409).json({ error: "Mobile number is already linked to another user." });
+    }
+    user.mobile = value;
+  } else {
+    if (value.length < 8 || value.length > 128) {
+      return res.status(400).json({ error: "User password must be between 8 and 128 characters." });
+    }
+    user.passwordHash = await bcrypt.hash(value, 10);
+  }
+
+  saveDb();
   io.emit("presence", presencePayload());
   res.json({ user: adminUser(user) });
 });
