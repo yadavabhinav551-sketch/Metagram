@@ -166,6 +166,10 @@
                 <span>Calculator lock password <small>(optional, 6 digits)</small></span>
                 <input name="calculatorLockPassword" type="password" autocomplete="new-password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
               </label>
+              <label id="manualSignupPasswordGroup" class="hidden">
+                <span>Login password</span>
+                <input id="manualSignupPassword" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" placeholder="At least 8 characters">
+              </label>
             </fieldset>
             <div id="signupOtpCodeGroup" class="stack hidden">
               <label>
@@ -180,6 +184,7 @@
             <p id="signupMessage" class="auth-flow-message" role="status" aria-live="polite"></p>
             <button id="signupSubmit" class="primary" type="submit">Send email code</button>
           </form>
+          <p id="authSuccess" class="auth-flow-message auth-success-message hidden" role="status" aria-live="polite"></p>
           <div id="authGoogleSection" class="auth-google-section">
             <div class="auth-google-divider"><span>or continue with</span></div>
             <div id="googleSignInButton" class="google-signin-button"></div>
@@ -225,6 +230,18 @@
               <p id="googleOnboardingError" class="error-text" aria-live="polite"></p>
               <button id="googleOnboardingSubmit" class="primary" type="submit">Save details and open account</button>
             </form>
+          </section>
+        </div>
+        <div id="firstLoginEmailVerificationOverlay" class="google-onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="firstLoginEmailVerificationTitle">
+          <section class="google-onboarding-card">
+            <div class="google-onboarding-heading">
+              <span class="google-onboarding-step">EMAIL VERIFICATION REQUIRED</span>
+              <h2 id="firstLoginEmailVerificationTitle">Verify your email to continue</h2>
+              <p>This account cannot be used until you verify an email address with Google. This prompt will stay open until verification succeeds.</p>
+            </div>
+            <p id="firstLoginEmailVerificationAddress" class="google-onboarding-email"></p>
+            <div id="firstLoginGoogleVerifyButton" class="google-signin-button"></div>
+            <p id="firstLoginEmailVerificationStatus" class="auth-flow-message" role="status" aria-live="polite">Choose a Google account to verify your email.</p>
           </section>
         </div>
       </section>
@@ -643,6 +660,16 @@
                 <small id="profileEmailVerificationStatus" role="status" aria-live="polite">Google verification is required before changing your profile, password, photo, or calculator lock password.</small>
               </div>
               <div id="profileGoogleVerifyButton" class="google-signin-button"></div>
+              <div id="profileEmailOtpVerification" class="profile-otp-verification hidden">
+                <button id="sendProfileEmailOtpBtn" class="text-button" type="button">Send code to verified email</button>
+                <div id="profileEmailOtpCodeGroup" class="profile-otp-code-group hidden">
+                  <label>
+                    <span>Email verification code</span>
+                    <input id="profileEmailOtpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6-digit code">
+                  </label>
+                  <button id="verifyProfileEmailOtpBtn" class="text-button" type="button">Verify code</button>
+                </div>
+              </div>
             </div>
             <div class="profile-password-grid">
             <label>

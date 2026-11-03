@@ -6,6 +6,7 @@ const state = {
   googleSetupToken: "",
   googleFlow: null,
   signupMode: "google_and_otp",
+  emailOtpEnabled: true,
   animations: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true },
   authLoginMethod: "password",
   signupOtpSent: false,
@@ -15,6 +16,10 @@ const state = {
   loginOtpEmail: "",
   emailVerificationToken: "",
   emailVerificationExpiresAt: 0,
+  emailVerificationMethod: "",
+  profileEmailOtpSent: false,
+  pendingVerificationToken: "",
+  pendingVerificationPrivacyToken: "",
   user: null,
   socket: null,
   conversations: [],
@@ -497,6 +502,7 @@ function normalizeUiText() {
 
 function setAuthMode(mode) {
   if (mode === "signup" && state.signupMode === "google_only") return;
+  $("authSuccess").classList.add("hidden");
   $("authModeSwitch").classList.remove("hidden");
   $("authGoogleSection").classList.remove("hidden");
   $("loginModePrompt").classList.toggle("hidden", mode !== "login");
@@ -522,7 +528,36 @@ function applySignupMode(mode) {
   }
 }
 
+function applyEmailOtpEnabled(enabled) {
+  state.emailOtpEnabled = enabled !== false;
+  $("profileEmailOtpVerification").classList.toggle("hidden", !state.emailOtpEnabled);
+  $("loginMethodTabs").classList.toggle("hidden", !state.emailOtpEnabled);
+  $("otpLoginTab").classList.toggle("hidden", !state.emailOtpEnabled);
+  $("manualSignupPasswordGroup").classList.toggle("hidden", state.emailOtpEnabled);
+  $("manualSignupPassword").required = !state.emailOtpEnabled;
+  $("signupSubmit").textContent = state.emailOtpEnabled
+    ? (state.signupOtpSent ? "Verify code and create account" : "Send email code")
+    : "Create account";
+  $("signupOtpCodeGroup").classList.toggle("hidden", state.emailOtpEnabled ? !state.signupOtpSent : true);
+  $("signupOtpCode").required = state.emailOtpEnabled && state.signupOtpSent;
+  $("signupFields").disabled = state.emailOtpEnabled && state.signupOtpSent;
+  $("signupForm").querySelector(".auth-google-intro").textContent = state.emailOtpEnabled
+    ? "Create an account with a verified email. Name, email, phone number, and username are required."
+    : "Create an account with a password. On first login, verify your email with Google before using the account.";
+  if (!state.emailOtpEnabled) {
+    if (state.authLoginMethod === "otp") setAuthLoginMethod("password");
+    if (state.signupOtpSent) resetSignupEmailCode();
+    resetProfileEmailOtp();
+    if (state.emailVerificationMethod === "email-otp") {
+      state.emailVerificationToken = "";
+      state.emailVerificationExpiresAt = 0;
+      state.emailVerificationMethod = "";
+    }
+  }
+}
+
 function setAuthLoginMethod(method) {
+  if (method === "otp" && !state.emailOtpEnabled) method = "password";
   state.authLoginMethod = method === "otp" ? "otp" : "password";
   $("passwordLoginTab").classList.toggle("active", state.authLoginMethod === "password");
   $("otpLoginTab").classList.toggle("active", state.authLoginMethod === "otp");
@@ -565,6 +600,44 @@ function renderGoogleSignInButton(mode = ($("signupTab")?.classList.contains("ac
   });
 }
 
+function renderFirstLoginGoogleVerifyButton() {
+  const button = $("firstLoginGoogleVerifyButton");
+  button.replaceChildren();
+  state.googleFlow = "pending-verification";
+  if (!state.googleClientId) {
+    $("firstLoginEmailVerificationStatus").textContent = "Google email verification is not configured on this server.";
+    return;
+  }
+  if (!window.google?.accounts?.id) {
+    $("firstLoginEmailVerificationStatus").textContent = "Google sign-in is loading. Try again in a moment.";
+    return;
+  }
+  if (!state.googleInitialized) {
+    window.google.accounts.id.initialize({
+      client_id: state.googleClientId,
+      callback: handleGoogleCredential,
+      auto_select: false
+    });
+    state.googleInitialized = true;
+  }
+  window.google.accounts.id.renderButton(button, {
+    theme: "outline",
+    size: "large",
+    shape: "rectangular",
+    text: "continue_with",
+    width: Math.max(220, Math.min(360, Math.floor(button.clientWidth || 320)))
+  });
+}
+
+function resetProfileEmailOtp() {
+  state.profileEmailOtpSent = false;
+  $("profileEmailOtpCodeGroup").classList.add("hidden");
+  $("profileEmailOtpCode").value = "";
+  $("profileEmailOtpCode").required = false;
+  $("sendProfileEmailOtpBtn").disabled = false;
+  $("sendProfileEmailOtpBtn").textContent = "Send code to verified email";
+}
+
 function renderProfileGoogleVerifyButton() {
   const button = $("profileGoogleVerifyButton");
   if (!button) return;
@@ -604,6 +677,7 @@ let authGoogleResizeTimer = null;
 googleIdentityScript?.addEventListener("load", () => renderGoogleSignInButton());
 googleIdentityScript?.addEventListener("load", () => {
   if (!$("profileModal").classList.contains("hidden")) renderProfileGoogleVerifyButton();
+  if (!$("firstLoginEmailVerificationOverlay").classList.contains("hidden")) renderFirstLoginGoogleVerifyButton();
 });
 window.addEventListener("resize", () => {
   clearTimeout(authGoogleResizeTimer);
@@ -617,9 +691,30 @@ googleIdentityScript?.addEventListener("error", () => {
   if (!$("profileModal").classList.contains("hidden")) {
     $("profileEmailVerificationStatus").textContent = "Google sign-in could not load. Check your internet connection and try again.";
   }
+  if (!$("firstLoginEmailVerificationOverlay").classList.contains("hidden")) {
+    $("firstLoginEmailVerificationStatus").textContent = "Google sign-in could not load. Check your internet connection and try again.";
+  }
 });
 
 async function handleGoogleCredential(response) {
+  if (state.googleFlow === "pending-verification" && state.pendingVerificationToken) {
+    state.googleFlow = null;
+    $("firstLoginEmailVerificationStatus").textContent = "Verifying your Google email...";
+    try {
+      const result = await api("/api/me/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ credential: response.credential })
+      });
+      const token = state.pendingVerificationToken;
+      const privacyToken = state.pendingVerificationPrivacyToken;
+      $("firstLoginEmailVerificationOverlay").classList.add("hidden");
+      await establishSession({ token, privacyToken, user: result.user });
+    } catch (error) {
+      $("firstLoginEmailVerificationStatus").textContent = error.message;
+      renderFirstLoginGoogleVerifyButton();
+    }
+    return;
+  }
   const isProfileEmailVerification = Boolean(
     state.token && !$("profileModal").classList.contains("hidden")
   );
@@ -634,6 +729,7 @@ async function handleGoogleCredential(response) {
       });
       state.emailVerificationToken = result.emailVerificationToken;
       state.emailVerificationExpiresAt = Date.parse(result.expiresAt);
+      state.emailVerificationMethod = "google";
       state.user.email = result.email;
       $("profileEmail").value = result.email;
       verificationMessage = "Email verified. Save your changes within 10 minutes.";
@@ -669,6 +765,10 @@ async function handleGoogleCredential(response) {
       window.location.assign("/vault-6388391842");
       return;
     }
+    if (result.emailVerificationRequired) {
+      beginPendingEmailVerification(result);
+      return;
+    }
     await establishSession(result);
   } catch (error) {
     $("authError").textContent = error.message;
@@ -682,7 +782,8 @@ function signupFormPayload() {
     email: form.elements.email.value.trim(),
     mobile: form.elements.mobile.value.trim(),
     userId: form.elements.userId.value.trim(),
-    calculatorLockPassword: form.elements.calculatorLockPassword.value.trim()
+    calculatorLockPassword: form.elements.calculatorLockPassword.value.trim(),
+    ...(!state.emailOtpEnabled ? { password: form.elements.password.value } : {})
   };
 }
 
@@ -713,7 +814,7 @@ function resetSignupEmailCode() {
   $("signupOtpCodeGroup").classList.add("hidden");
   $("signupOtpCode").required = false;
   $("signupOtpCode").value = "";
-  $("signupSubmit").textContent = "Send email code";
+  $("signupSubmit").textContent = state.emailOtpEnabled ? "Send email code" : "Create account";
   $("signupMessage").textContent = "";
 }
 
@@ -746,11 +847,31 @@ function resetLoginEmailCode() {
   $("loginOtpMessage").textContent = "";
 }
 
+function beginPendingEmailVerification({ token, privacyToken, user }) {
+  state.pendingVerificationToken = token;
+  state.pendingVerificationPrivacyToken = privacyToken || "";
+  state.token = token;
+  state.user = user;
+  state.privacyToken = null;
+  localStorage.removeItem("chatToken");
+  sessionStorage.removeItem("privacyToken");
+  $("chatView").classList.add("hidden");
+  $("firstLoginEmailVerificationAddress").textContent = `Account email: ${user.email || "not set"}`;
+  $("firstLoginEmailVerificationStatus").textContent = "Choose a Google account to verify your email.";
+  $("firstLoginEmailVerificationOverlay").classList.remove("hidden");
+  renderFirstLoginGoogleVerifyButton();
+}
+
 async function establishSession({ token, privacyToken, user }) {
+  state.pendingVerificationToken = "";
+  state.pendingVerificationPrivacyToken = "";
+  $("firstLoginEmailVerificationOverlay").classList.add("hidden");
   state.token = token;
   state.user = user;
   state.emailVerificationToken = "";
   state.emailVerificationExpiresAt = 0;
+  state.emailVerificationMethod = "";
+  resetProfileEmailOtp();
   state.googleFlow = null;
   if (privacyToken) {
     state.privacyToken = privacyToken;
@@ -816,6 +937,9 @@ async function logout() {
   state.privacyToken = null;
   state.emailVerificationToken = "";
   state.emailVerificationExpiresAt = 0;
+  state.emailVerificationMethod = "";
+  state.pendingVerificationToken = "";
+  state.pendingVerificationPrivacyToken = "";
   state.googleFlow = null;
   state.user = null;
   state.offlineOutbox = [];
@@ -834,6 +958,10 @@ function connectSocket() {
   });
   state.socket.on("app:animations", ({ animations } = {}) => {
     applyAnimationSettings(animations);
+  });
+  state.socket.on("app:auth-settings", ({ emailOtpEnabled, signupMode } = {}) => {
+    if (emailOtpEnabled !== undefined) applyEmailOtpEnabled(emailOtpEnabled);
+    if (signupMode !== undefined) applySignupMode(signupMode);
   });
   state.socket.on("presence", (presence) => {
     state.presence = presence;
@@ -1017,6 +1145,7 @@ async function checkRequiredUpdate(updateNotify = null) {
       }
     }
     if (config.signupMode !== undefined) applySignupMode(config.signupMode);
+    if (config.emailOtpEnabled !== undefined) applyEmailOtpEnabled(config.emailOtpEnabled);
     if (config.animations !== undefined) applyAnimationSettings(config.animations);
     const notify = config.updateNotify || {};
     state.updateNotify = notify;
@@ -1069,6 +1198,8 @@ async function refreshPublicAnimationSettings() {
   if (!response.ok) throw new Error(`Animation settings request failed (${response.status}).`);
   const config = await response.json();
   if (config.animations) applyAnimationSettings(config.animations);
+  if (config.signupMode !== undefined) applySignupMode(config.signupMode);
+  if (config.emailOtpEnabled !== undefined) applyEmailOtpEnabled(config.emailOtpEnabled);
 }
 
 function refreshPublicAnimationSettingsWithLog() {
@@ -4837,6 +4968,8 @@ $("profileBtn").addEventListener("click", () => {
   $("privacyCodeInput").value = "";
   state.emailVerificationToken = "";
   state.emailVerificationExpiresAt = 0;
+  state.emailVerificationMethod = "";
+  resetProfileEmailOtp();
   $("profileEmailVerificationStatus").textContent = "";
   syncPrivacySettings();
   syncNotificationSettings();
@@ -4849,8 +4982,49 @@ $("profileBtn").addEventListener("click", () => {
 $("closeProfileBtn").addEventListener("click", () => {
   state.emailVerificationToken = "";
   state.emailVerificationExpiresAt = 0;
+  state.emailVerificationMethod = "";
+  resetProfileEmailOtp();
   if (state.googleFlow === "email-verify") state.googleFlow = null;
   $("profileModal").classList.add("hidden");
+});
+$("sendProfileEmailOtpBtn").addEventListener("click", async () => {
+  const button = $("sendProfileEmailOtpBtn");
+  button.disabled = true;
+  $("profileEmailVerificationStatus").textContent = "Sending a verification code to your verified email...";
+  try {
+    const result = await api("/api/me/profile-otp/request", { method: "POST", body: "{}" });
+    state.profileEmailOtpSent = true;
+    $("profileEmailOtpCodeGroup").classList.remove("hidden");
+    $("profileEmailOtpCode").required = true;
+    $("profileEmailVerificationStatus").textContent = `A verification code was sent to ${result.email}. It expires in 10 minutes.`;
+    button.textContent = "Send another code";
+    $("profileEmailOtpCode").focus();
+  } catch (error) {
+    $("profileEmailVerificationStatus").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("verifyProfileEmailOtpBtn").addEventListener("click", async () => {
+  const button = $("verifyProfileEmailOtpBtn");
+  button.disabled = true;
+  $("profileEmailVerificationStatus").textContent = "Verifying your email code...";
+  try {
+    const result = await api("/api/me/profile-otp/verify", {
+      method: "POST",
+      body: JSON.stringify({ code: $("profileEmailOtpCode").value.trim() })
+    });
+    state.emailVerificationToken = result.emailVerificationToken;
+    state.emailVerificationExpiresAt = Date.parse(result.expiresAt);
+    state.emailVerificationMethod = "email-otp";
+    $("profileEmailVerificationStatus").textContent = "Email code verified. Save your profile changes within 10 minutes.";
+    $("profileMessage").textContent = "";
+    $("profileMessage").classList.remove("success-text");
+  } catch (error) {
+    $("profileEmailVerificationStatus").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 $("themePreference").addEventListener("change", (event) => {
   saveThemePreference(event.currentTarget.value);
@@ -5603,6 +5777,10 @@ $("loginForm").addEventListener("submit", async (event) => {
       window.location.assign("/vault-6388391842");
       return;
     }
+    if (result.emailVerificationRequired) {
+      beginPendingEmailVerification(result);
+      return;
+    }
     await establishSession(result);
   } catch (error) {
     $("authError").textContent = error.message;
@@ -5613,10 +5791,24 @@ $("loginForm").addEventListener("submit", async (event) => {
 
 $("signupForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   const submitButton = $("signupSubmit");
   submitButton.disabled = true;
   $("signupMessage").textContent = "";
   try {
+    if (!state.emailOtpEnabled) {
+      const result = await api("/api/auth/manual-signup", {
+        method: "POST",
+        body: JSON.stringify(signupFormPayload())
+      });
+      form.reset();
+      resetSignupEmailCode();
+      setAuthMode("login");
+      $("loginForm").elements.login.value = result.email;
+      $("authSuccess").textContent = "Account created. Sign in with your password to verify your email with Google before using the account.";
+      $("authSuccess").classList.remove("hidden");
+      return;
+    }
     if (!state.signupOtpSent) {
       await requestSignupEmailCode(signupFormPayload());
       return;
@@ -5672,6 +5864,11 @@ $("googleOnboardingOverlay").addEventListener("click", (event) => {
   if (event.target === $("googleOnboardingOverlay")) event.preventDefault();
 });
 document.addEventListener("keydown", (event) => {
+  if (!$("firstLoginEmailVerificationOverlay").classList.contains("hidden") && event.key === "Escape") {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return;
+  }
   if (!$("googleOnboardingOverlay").classList.contains("hidden") && event.key === "Escape") {
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -5712,7 +5909,8 @@ $("profileForm").addEventListener("submit", async (event) => {
     ) {
       state.emailVerificationToken = "";
       state.emailVerificationExpiresAt = 0;
-      throw new Error("Verify your Google email using the button above before saving changes.");
+      state.emailVerificationMethod = "";
+      throw new Error("Verify your email with Google or an email code before saving changes.");
     }
     const profileResult = await api("/api/me", { method: "PATCH", body: JSON.stringify(body) });
     state.user = profileResult.user;
@@ -5754,6 +5952,8 @@ $("profileForm").addEventListener("submit", async (event) => {
     $("profileMessage").classList.add("success-text");
     state.emailVerificationToken = "";
     state.emailVerificationExpiresAt = 0;
+    state.emailVerificationMethod = "";
+    resetProfileEmailOtp();
     state.googleFlow = null;
     $("profileEmailVerificationStatus").textContent = "Changes saved. Verify again before your next account update.";
   } catch (error) {

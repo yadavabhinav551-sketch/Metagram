@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v140-dual-perspective-call-recording";
+const CACHE_VERSION = "calculator-pwa-v142-profile-admin-otp-verification";
 const APP_SHELL = [
   "/",
   "/offline.html",

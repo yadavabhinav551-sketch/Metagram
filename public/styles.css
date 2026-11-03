@@ -619,6 +619,17 @@ body.app-booting #updateRequiredView {
   min-width: 220px;
 }
 
+.profile-otp-verification,
+.profile-otp-code-group {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.profile-otp-code-group {
+  width: 100%;
+}
+
 .theme-preference-hint {
   display: block;
   margin-top: 8px;
@@ -1138,6 +1149,10 @@ body.app-booting #updateRequiredView {
   font-size: 12px;
   line-height: 1.45;
   text-align: center;
+}
+
+.auth-success-message {
+  color: var(--wa-emerald);
 }
 
 .segmented {

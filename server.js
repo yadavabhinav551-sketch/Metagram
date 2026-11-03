@@ -361,6 +361,7 @@ const defaultDb = {
     passwordHash: bcrypt.hashSync("1234546", 10),
     updatedAt: new Date().toISOString(),
     secretCodeLoginEnabled: false,
+    emailOtpEnabled: true,
     signupMode: SIGNUP_MODE_GOOGLE_AND_OTP,
     animations: { ...DEFAULT_ANIMATIONS },
     hiddenAdminConversationIds: [],
@@ -378,6 +379,7 @@ function normalizeDb(raw = {}) {
     ...defaultDb.admin,
     ...(raw.admin || {}),
     email: raw.admin?.email || defaultDb.admin.email,
+    emailOtpEnabled: raw.admin?.emailOtpEnabled !== false,
     signupMode: [SIGNUP_MODE_GOOGLE_ONLY, SIGNUP_MODE_GOOGLE_AND_OTP].includes(raw.admin?.signupMode)
       ? raw.admin.signupMode
       : defaultDb.admin.signupMode,
@@ -637,6 +639,7 @@ function publicUser(user) {
     privacyCodeHash,
     privacyCodeAdminValue,
     lockedChatPin,
+    emailVerificationRequired,
     email,
     conversationPreferences,
     contactAliases,
@@ -702,6 +705,7 @@ function ownUser(user) {
   return {
     ...publicUser(user),
     email: String(user.email || ""),
+    emailVerificationRequired: Boolean(user.emailVerificationRequired),
     hasHiddenChatSecret: Boolean(user.hiddenChatSecret)
   };
 }
@@ -900,7 +904,9 @@ function emailVerificationTokenIsValid(user, token) {
   if (!user?.email || !token) return false;
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    return payload.role === "email-verification"
+    const allowedRole = payload.role === "email-verification"
+      || (payload.role === "profile-update" && db.admin.emailOtpEnabled !== false);
+    return allowedRole
       && payload.id === user.id
       && payload.email === String(user.email).trim().toLowerCase();
   } catch {
@@ -919,6 +925,12 @@ function authUser(req, res, next) {
     const payload = jwt.verify(token, JWT_SECRET);
     const user = db.users.find((item) => item.id === payload.id && !item.deleted);
     if (!user || user.blocked || user.suspended) return res.status(403).json({ error: "Account is not active." });
+    if (user.emailVerificationRequired && req.path !== "/api/me/verify-email") {
+      return res.status(403).json({
+        error: "Verify your email with Google before using your account.",
+        code: "EMAIL_VERIFICATION_REQUIRED"
+      });
+    }
     req.user = user;
     next();
   } catch {
@@ -1512,6 +1524,7 @@ app.get("/api/app-config", (_req, res) => {
   const updateNotify = db.admin.updateNotify || defaultDb.admin.updateNotify;
   res.json({
     googleClientId: GOOGLE_CLIENT_ID,
+    emailOtpEnabled: db.admin.emailOtpEnabled !== false,
     signupMode: db.admin.signupMode || defaultDb.admin.signupMode,
     animations: normalizeAnimationSettings(db.admin.animations),
     updateNotify: {
@@ -1543,7 +1556,12 @@ async function issueEmailAuthOtp(req, res, email, purpose, payload = null) {
   emailAuthOtpRequests.set(rateLimitKey, Date.now());
   const code = String(crypto.randomInt(100000, 1000000));
   try {
-    await sendEmailOtp(email, code, purpose === "signup" ? "sign-up verification" : "sign-in");
+    const emailPurpose = purpose === "signup"
+      ? "sign-up verification"
+      : purpose === "profile-update"
+        ? "profile change verification"
+        : "sign-in";
+    await sendEmailOtp(email, code, emailPurpose);
   } catch (error) {
     emailAuthOtpRequests.delete(rateLimitKey);
     if (error.code !== "SMTP_NOT_CONFIGURED") {
@@ -1595,6 +1613,9 @@ function emailOtpMatches(code, codeHash) {
 }
 
 app.post("/api/auth/email/signup/request", async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email OTP sign-up is disabled. Create an account with a password instead." });
+  }
   if ((db.admin.signupMode || defaultDb.admin.signupMode) !== SIGNUP_MODE_GOOGLE_AND_OTP) {
     return res.status(403).json({ error: "Account creation is currently available only through Google sign-up." });
   }
@@ -1625,6 +1646,9 @@ app.post("/api/auth/email/signup/request", async (req, res) => {
 });
 
 app.post("/api/auth/email/signup/complete", async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email OTP sign-up is disabled. Create an account with a password instead." });
+  }
   if ((db.admin.signupMode || defaultDb.admin.signupMode) !== SIGNUP_MODE_GOOGLE_AND_OTP) {
     return res.status(403).json({ error: "Account creation is currently available only through Google sign-up." });
   }
@@ -1679,17 +1703,101 @@ app.post("/api/auth/email/signup/complete", async (req, res) => {
   res.json({ token: signUser(user), privacyToken: signPrivacy(user), user: ownUser(user) });
 });
 
+app.post("/api/auth/manual-signup", async (req, res) => {
+  if (db.admin.emailOtpEnabled !== false) {
+    return res.status(403).json({ error: "Manual sign-up without email OTP is available only when email OTP is disabled." });
+  }
+  if ((db.admin.signupMode || defaultDb.admin.signupMode) === SIGNUP_MODE_GOOGLE_ONLY) {
+    return res.status(403).json({ error: "Account creation is currently available only through Google sign-up." });
+  }
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const displayName = String(req.body.displayName || "").trim();
+  const mobile = String(req.body.mobile || "").trim();
+  const password = String(req.body.password || "");
+  const calculatorLockPassword = String(req.body.calculatorLockPassword || "").trim();
+  const userIdResult = validateUserId(req.body.userId);
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Enter a valid email address." });
+  if (!displayName || displayName.length > 80) return res.status(400).json({ error: "Name is required and must be 80 characters or fewer." });
+  if (normalizeMobile(mobile).length < 7 || normalizeMobile(mobile).length > 15) {
+    return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+  }
+  if (password.length < 8 || password.length > 128) {
+    return res.status(400).json({ error: "Login password must be between 8 and 128 characters." });
+  }
+  if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
+  if (calculatorLockPassword && !validPrivacyCode(calculatorLockPassword)) {
+    return res.status(400).json({ error: "Optional calculator lock password must be exactly 6 digits." });
+  }
+  if (!isAvailableEmail(email) || !isAvailableMobile(mobile) || !isAvailableUserId(userIdResult.userId)) {
+    return res.status(409).json({ error: "Email, phone number, or user ID already exists. Sign in or choose different details." });
+  }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  const privacyCodeHash = calculatorLockPassword
+    ? await bcrypt.hash(calculatorLockPassword, 10)
+    : null;
+  if (!isAvailableEmail(email) || !isAvailableMobile(mobile) || !isAvailableUserId(userIdResult.userId)) {
+    return res.status(409).json({ error: "Email, phone number, or user ID was registered while you were creating the account." });
+  }
+  const now = new Date().toISOString();
+  const user = {
+    id: crypto.randomUUID(),
+    displayName,
+    mobile,
+    userId: userIdResult.userId,
+    email,
+    emailVerifiedAt: null,
+    emailVerificationRequired: true,
+    passwordHash,
+    googleSubject: null,
+    blocked: false,
+    suspended: false,
+    deleted: false,
+    hiddenUserIds: [],
+    blockedUserIds: [],
+    deletedUserIds: [],
+    pinnedConversationIds: [],
+    archivedConversationIds: [],
+    starredMessageIds: [],
+    reactionEmojis: [],
+    messageAutoDelete: { enabled: false, ttlHours: 0 },
+    statusText: "",
+    statusUpdatedAt: null,
+    avatarUrl: null,
+    hiddenChatSecret: null,
+    notificationEnabled: true,
+    lockedChatPin: null,
+    privacyMode: { enabled: Boolean(privacyCodeHash), autoLockMinutes: 0, panicShortcut: "button" },
+    privacyCodeHash,
+    privacyCodeAdminValue: null,
+    createdAt: now,
+    lastSeenAt: null
+  };
+  db.users.push(user);
+  saveDb();
+  res.status(201).json({ ok: true, email, userId: user.userId });
+});
+
 app.post("/api/auth/email/login/request", async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email OTP login is disabled. Sign in with your password." });
+  }
   const email = String(req.body.email || "").trim().toLowerCase();
   if (!isValidEmail(email)) return res.status(400).json({ error: "Enter the email address linked to your account." });
   const user = db.users.find((item) => String(item.email || "").trim().toLowerCase() === email);
   if (!user || user.deleted || user.blocked || user.suspended) {
     return res.status(404).json({ error: "No active account is linked to this email address." });
   }
+  if (user.emailVerificationRequired) {
+    return res.status(403).json({ error: "Sign in with your password and verify your email with Google first." });
+  }
   return issueEmailAuthOtp(req, res, email, "login");
 });
 
 app.post("/api/auth/email/login/verify", (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Email OTP login is disabled. Sign in with your password." });
+  }
   const email = String(req.body.email || "").trim().toLowerCase();
   if (!isValidEmail(email)) return res.status(400).json({ error: "Enter a valid email address." });
   const result = verifyEmailAuthOtp(email, "login", req.body.code);
@@ -1697,6 +1805,9 @@ app.post("/api/auth/email/login/verify", (req, res) => {
   const user = db.users.find((item) => String(item.email || "").trim().toLowerCase() === email);
   if (!user || user.deleted || user.blocked || user.suspended) {
     return res.status(403).json({ error: "Account is blocked, suspended, or no longer active." });
+  }
+  if (user.emailVerificationRequired) {
+    return res.status(403).json({ error: "Sign in with your password and verify your email with Google first." });
   }
   res.json({ token: signUser(user), privacyToken: signPrivacy(user), user: ownUser(user) });
 });
@@ -1737,8 +1848,12 @@ app.post("/api/auth/google", async (req, res) => {
     if (!user.googleSubject || user.email !== identity.email) {
       user.googleSubject = identity.googleSubject;
       user.email = identity.email;
-      saveDb();
     }
+    if (user.emailVerificationRequired) {
+      user.emailVerificationRequired = false;
+      user.emailVerifiedAt = new Date().toISOString();
+    }
+    saveDb();
     return res.json({
       token: signUser(user),
       privacyToken: signPrivacy(user),
@@ -1896,6 +2011,14 @@ app.post("/api/login", async (req, res) => {
   );
   if (!user || (!passwordMatches && !secretCodeMatches)) return res.status(401).json({ error: "Invalid credentials." });
   if (user.blocked || user.suspended) return res.status(403).json({ error: "Account is blocked or suspended." });
+  if (user.emailVerificationRequired) {
+    return res.json({
+      token: signUser(user),
+      privacyToken: signPrivacy(user),
+      user: ownUser(user),
+      emailVerificationRequired: true
+    });
+  }
   res.json({
     token: signUser(user),
     privacyToken: signPrivacy(user),
@@ -1943,10 +2066,11 @@ app.post("/api/me/verify-email", authUser, async (req, res) => {
   }
 
   const currentEmail = String(req.user.email || "").trim().toLowerCase();
-  if (currentEmail && currentEmail !== identity.email) {
+  const pendingVerification = Boolean(req.user.emailVerificationRequired);
+  if (!pendingVerification && currentEmail && currentEmail !== identity.email) {
     return res.status(403).json({ error: "Sign in with the Google account linked to this profile's email address." });
   }
-  if (req.user.googleSubject && req.user.googleSubject !== identity.googleSubject) {
+  if (!pendingVerification && req.user.googleSubject && req.user.googleSubject !== identity.googleSubject) {
     return res.status(403).json({ error: "This profile is linked to a different Google account." });
   }
   if (db.users.some((user) => (
@@ -1958,6 +2082,8 @@ app.post("/api/me/verify-email", authUser, async (req, res) => {
 
   req.user.email = identity.email;
   req.user.googleSubject = identity.googleSubject;
+  req.user.emailVerifiedAt = new Date().toISOString();
+  req.user.emailVerificationRequired = false;
   saveDb();
   const issuedAt = Math.floor(Date.now() / 1000);
   const emailVerificationToken = jwt.sign({
@@ -1968,6 +2094,41 @@ app.post("/api/me/verify-email", authUser, async (req, res) => {
   }, JWT_SECRET, { expiresIn: "10m" });
   res.json({
     email: identity.email,
+    user: ownUser(req.user),
+    emailVerificationToken,
+    expiresAt: new Date((issuedAt + 10 * 60) * 1000).toISOString()
+  });
+});
+
+app.post("/api/me/profile-otp/request", authUser, requirePrivacyUnlocked, async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Profile email-code verification is disabled by the administrator." });
+  }
+  const email = String(req.user.email || "").trim().toLowerCase();
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: "Add and verify an email address before requesting a profile verification code." });
+  }
+  return issueEmailAuthOtp(req, res, email, "profile-update", { userId: req.user.id });
+});
+
+app.post("/api/me/profile-otp/verify", authUser, requirePrivacyUnlocked, (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Profile email-code verification is disabled by the administrator." });
+  }
+  const email = String(req.user.email || "").trim().toLowerCase();
+  const result = verifyEmailAuthOtp(email, "profile-update", req.body.code);
+  if (result.error) return res.status(401).json({ error: result.error });
+  if (result.entry.payload?.userId !== req.user.id) {
+    return res.status(401).json({ error: "This verification code does not match your account. Request a new code." });
+  }
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const emailVerificationToken = jwt.sign({
+    role: "profile-update",
+    id: req.user.id,
+    email,
+    iat: issuedAt
+  }, JWT_SECRET, { expiresIn: "10m" });
+  res.json({
     emailVerificationToken,
     expiresAt: new Date((issuedAt + 10 * 60) * 1000).toISOString()
   });
@@ -1986,7 +2147,7 @@ app.patch("/api/me", authUser, requirePrivacyUnlocked, async (req, res) => {
   ]
     .some((key) => req.body[key] !== undefined);
   if (requiresEmailVerification && !emailVerificationTokenIsValid(req.user, req.headers["x-email-verification"])) {
-    return res.status(403).json({ error: "Verify your account email with Google before saving profile or password changes." });
+    return res.status(403).json({ error: "Verify your account email with Google or an email code before saving profile or password changes." });
   }
   let nextUserId = null;
   if (req.body.userId !== undefined) {
@@ -3197,6 +3358,7 @@ app.get("/api/admin/overview", authAdmin, (_req, res) => {
     },
     settings: {
       secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled),
+      emailOtpEnabled: db.admin.emailOtpEnabled !== false,
       signupMode: db.admin.signupMode || defaultDb.admin.signupMode,
       animations: normalizeAnimationSettings(db.admin.animations),
       updateNotify: {
@@ -3330,6 +3492,7 @@ app.post("/api/admin/cleanup", authAdmin, (req, res) => {
       email: preservedAdmin.email,
       passwordHash: preservedAdmin.passwordHash,
       secretCodeLoginEnabled: false,
+      emailOtpEnabled: defaultDb.admin.emailOtpEnabled,
       signupMode: defaultDb.admin.signupMode,
       updateNotify: defaultDb.admin.updateNotify,
       hiddenAdminConversationIds: [] ,
@@ -3392,6 +3555,9 @@ app.patch("/api/admin/conversations/:id/hidden", authAdmin, (req, res) => {
 });
 
 app.post("/api/admin/credentials/email-otp", authAdmin, async (req, res) => {
+  if (db.admin.emailOtpEnabled === false) {
+    return res.status(403).json({ error: "Admin email-code verification is disabled by the administrator." });
+  }
   const currentEmail = String(db.admin.email || "").trim().toLowerCase();
   const requestedEmail = String(req.body.email || currentEmail).trim().toLowerCase();
   if (!isValidEmail(currentEmail)) {
@@ -3510,6 +3676,9 @@ app.post("/api/admin/credentials", authAdmin, async (req, res) => {
       return res.status(401).json({ error: "Current admin password is incorrect." });
     }
   } else if (verificationMethod === "email_otp") {
+    if (db.admin.emailOtpEnabled === false) {
+      return res.status(403).json({ error: "Admin email-code verification is disabled by the administrator." });
+    }
     const challenge = adminCredentialOtps.get("admin");
     const submittedEmail = String(req.body.email || currentEmail).trim().toLowerCase();
     const validChallenge = Boolean(
@@ -3597,6 +3766,9 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
   if (typeof req.body.secretCodeLoginEnabled === "boolean") {
     db.admin.secretCodeLoginEnabled = req.body.secretCodeLoginEnabled;
   }
+  if (typeof req.body.emailOtpEnabled === "boolean") {
+    db.admin.emailOtpEnabled = req.body.emailOtpEnabled;
+  }
   if (req.body.animations !== undefined) {
     db.admin.animations = {
       ...normalizeAnimationSettings(db.admin.animations),
@@ -3634,10 +3806,17 @@ app.patch("/api/admin/settings", authAdmin, (req, res) => {
   if (req.body.animations !== undefined) {
     io.emit("app:animations", { animations });
   }
+  if (typeof req.body.emailOtpEnabled === "boolean" || req.body.signupMode !== undefined) {
+    io.emit("app:auth-settings", {
+      emailOtpEnabled: db.admin.emailOtpEnabled !== false,
+      signupMode: db.admin.signupMode || defaultDb.admin.signupMode
+    });
+  }
   res.json({
     ok: true,
     settings: {
       secretCodeLoginEnabled: Boolean(db.admin.secretCodeLoginEnabled),
+      emailOtpEnabled: db.admin.emailOtpEnabled !== false,
       signupMode: db.admin.signupMode || defaultDb.admin.signupMode,
       animations,
       updateNotify: {
@@ -3978,6 +4157,7 @@ io.use((socket, next) => {
     }
     const user = db.users.find((item) => item.id === payload.id && !item.deleted && !item.blocked && !item.suspended);
     if (!user) throw new Error("inactive");
+    if (user.emailVerificationRequired) throw new Error("email verification required");
     if (!verifyPrivacyToken(user, socket.handshake.auth?.privacyToken)) throw new Error("privacy locked");
     socket.user = user;
     next();

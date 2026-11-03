@@ -11,7 +11,7 @@ const adminState = {
   statuses: [],
   groups: [],
   stats: null,
-  settings: { secretCodeLoginEnabled: false, signupMode: "google_and_otp", animations: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true }, updateNotify: { enabled: false, version: 1, message: "" } },
+  settings: { secretCodeLoginEnabled: false, emailOtpEnabled: true, signupMode: "google_and_otp", animations: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true }, updateNotify: { enabled: false, version: 1, message: "" } },
   activeConversationId: null,
   socket: null,
   installPrompt: null,
@@ -136,7 +136,7 @@ async function loadOverview() {
   adminState.statuses = data.statuses || [];
   adminState.groups = data.groups;
   adminState.stats = data.stats;
-  adminState.settings = data.settings || { secretCodeLoginEnabled: false, signupMode: "google_and_otp", updateNotify: { enabled: false, version: 1, message: "" } };
+  adminState.settings = data.settings || { secretCodeLoginEnabled: false, emailOtpEnabled: true, signupMode: "google_and_otp", updateNotify: { enabled: false, version: 1, message: "" } };
   $("usersNavCount").textContent = String(adminState.stats.totalUsers || 0);
   $("chatsNavCount").textContent = String(adminState.stats.totalConversations || 0);
   $("usersViewCount").textContent = `${adminState.stats.totalUsers || 0} accounts`;
@@ -175,11 +175,24 @@ function renderStats() {
 
 function renderSettings() {
   const signupMode = adminState.settings.signupMode || "google_and_otp";
+  const emailOtpEnabled = adminState.settings.emailOtpEnabled !== false;
+  document.querySelector('[data-credential-method="email_otp"]').classList.toggle("hidden", !emailOtpEnabled);
+  if (!emailOtpEnabled && adminState.credentialMethod === "email_otp") {
+    setCredentialMethod("current_password");
+  }
   document.querySelectorAll(".signup-policy-choice").forEach((button) => {
     const selected = button.dataset.signupMode === signupMode;
     button.classList.toggle("selected", selected);
     button.setAttribute("aria-pressed", String(selected));
   });
+  $("emailOtpToggle").checked = emailOtpEnabled;
+  const signupChoice = document.querySelector('[data-signup-mode="google_and_otp"]');
+  signupChoice.querySelector("strong").textContent = emailOtpEnabled
+    ? "Google + Email OTP"
+    : "Google + Manual sign-up (verify email on first login)";
+  signupChoice.querySelector("small").textContent = emailOtpEnabled
+    ? "Allow Google sign-up or manual email verification."
+    : "Create with a password; users must verify their email with Google before using the account.";
   $("secretCodeLoginToggle").checked = Boolean(adminState.settings.secretCodeLoginEnabled);
   const animations = { ...adminState.animationDefaults, ...(adminState.settings.animations || {}) };
   document.querySelectorAll("[data-animation-setting]").forEach((input) => {
@@ -204,6 +217,9 @@ function renderAdminCredentials() {
 }
 
 function setCredentialMethod(method) {
+  if (method === "email_otp" && adminState.settings.emailOtpEnabled === false) {
+    method = "current_password";
+  }
   adminState.credentialMethod = method;
   document.querySelectorAll(".admin-credential-method").forEach((button) => {
     const selected = button.dataset.credentialMethod === method;
@@ -972,7 +988,9 @@ document.querySelectorAll(".signup-policy-choice").forEach((button) => {
       renderSettings();
       $("settingsMessage").textContent = signupMode === "google_only"
         ? "New accounts can now be created only with Google."
-        : "Google and email OTP sign-up are now enabled.";
+        : adminState.settings.emailOtpEnabled === false
+          ? "Google and password-based manual sign-up are now enabled."
+          : "Google and email OTP sign-up are now enabled.";
     } catch (error) {
       $("settingsMessage").textContent = error.message;
     } finally {
@@ -982,6 +1000,25 @@ document.querySelectorAll(".signup-policy-choice").forEach((button) => {
       renderSettings();
     }
   });
+});
+
+$("emailOtpToggle").addEventListener("change", async (event) => {
+  const enabled = event.target.checked;
+  $("settingsMessage").textContent = "Saving email OTP access...";
+  try {
+    const { settings } = await adminApi("/api/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ emailOtpEnabled: enabled })
+    });
+    adminState.settings = settings;
+    renderSettings();
+    $("settingsMessage").textContent = enabled
+      ? "Email OTP login and sign-up are enabled."
+      : "Email OTP login and sign-up are disabled; manual accounts require Google email verification on first login.";
+  } catch (error) {
+    event.target.checked = !enabled;
+    $("settingsMessage").textContent = error.message;
+  }
 });
 
 $("credentialsForm").addEventListener("submit", async (event) => {
