@@ -12,6 +12,8 @@ const state = {
   animations: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true },
   authLoginMethod: "password",
   authMode: "login",
+  manualSignupAvailabilityChecked: "",
+  manualSignupAvailabilityRequest: 0,
   signupOtpSent: false,
   signupOtpEmail: "",
   signupOtpPayload: null,
@@ -546,6 +548,8 @@ function applyEmailOtpEnabled(enabled) {
   $("loginMethodTabs").classList.toggle("hidden", !state.emailOtpEnabled);
   $("otpLoginTab").classList.toggle("hidden", !state.emailOtpEnabled);
   $("manualSignupPasswordGroup").classList.toggle("hidden", state.emailOtpEnabled);
+  $("manualSignupCheckUserId").classList.toggle("hidden", state.emailOtpEnabled);
+  $("manualSignupUserIdStatus").classList.toggle("hidden", state.emailOtpEnabled);
   $("manualSignupPassword").required = !state.emailOtpEnabled;
   $("signupSubmit").textContent = state.emailOtpEnabled
     ? (state.signupOtpSent ? "Verify code and create account" : "Send email code")
@@ -930,6 +934,86 @@ function signupFormPayload() {
     calculatorLockPassword: form.elements.calculatorLockPassword.value.trim(),
     ...(!state.emailOtpEnabled ? { password: form.elements.password.value } : {})
   };
+}
+
+function manualSignupAvailabilityKey(payload = signupFormPayload()) {
+  return JSON.stringify({
+    email: payload.email.trim().toLowerCase(),
+    mobile: payload.mobile.replace(/\D/g, ""),
+    userId: payload.userId.trim().toLowerCase()
+  });
+}
+
+async function checkManualSignupAvailability() {
+  const userIdInput = $("manualSignupUserId");
+  const checkButton = $("manualSignupCheckUserId");
+  const status = $("manualSignupUserIdStatus");
+  const suggestions = $("manualSignupUserIdSuggestions");
+  const payload = signupFormPayload();
+  const userId = payload.userId.toLowerCase();
+  state.manualSignupAvailabilityChecked = "";
+  suggestions.replaceChildren();
+  suggestions.classList.add("hidden");
+  status.dataset.state = "";
+
+  if (!userIdInput.checkValidity()) {
+    status.textContent = "Use 3–30 letters, numbers, dots, or underscores. Start and end with a letter or number.";
+    status.dataset.state = "error";
+    userIdInput.focus();
+    return false;
+  }
+
+  const requestId = ++state.manualSignupAvailabilityRequest;
+  checkButton.disabled = true;
+  checkButton.textContent = "Checking...";
+  status.textContent = "Checking username, email, and phone availability...";
+  try {
+    const result = await api("/api/auth/manual-signup/check-availability", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    if (requestId !== state.manualSignupAvailabilityRequest
+      || manualSignupAvailabilityKey() !== manualSignupAvailabilityKey(payload)) {
+      return false;
+    }
+
+    if (!result.available) {
+      const conflicts = [];
+      if (result.emailAvailable === false) conflicts.push("Email address is already registered. Use another email.");
+      if (result.mobileAvailable === false) conflicts.push("Phone number is already registered. Use another phone number.");
+      if (!result.userIdAvailable) conflicts.push(`Username @${userId} is already taken.`);
+      status.textContent = conflicts.join(" ");
+      status.dataset.state = "unavailable";
+      for (const suggestion of result.suggestions || []) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.manualUserIdSuggestion = suggestion;
+        button.textContent = `@${suggestion}`;
+        suggestions.append(button);
+      }
+      suggestions.classList.toggle("hidden", !suggestions.childElementCount);
+      return false;
+    }
+
+    state.manualSignupAvailabilityChecked = manualSignupAvailabilityKey(payload);
+    const availableDetails = [`@${userId} is available.`];
+    if (result.emailAvailable === true) availableDetails.push("Email address is available.");
+    if (result.mobileAvailable === true) availableDetails.push("Phone number is available.");
+    status.textContent = availableDetails.join(" ");
+    status.dataset.state = "available";
+    return true;
+  } catch (error) {
+    if (requestId === state.manualSignupAvailabilityRequest) {
+      status.textContent = error.message;
+      status.dataset.state = "error";
+    }
+    return false;
+  } finally {
+    if (requestId === state.manualSignupAvailabilityRequest) {
+      checkButton.disabled = false;
+      checkButton.textContent = "Check availability";
+    }
+  }
 }
 
 async function requestSignupEmailCode(payload = state.signupOtpPayload) {
@@ -6260,11 +6344,18 @@ $("signupForm").addEventListener("submit", async (event) => {
   $("signupMessage").textContent = "";
   try {
     if (!state.emailOtpEnabled) {
+      if (state.manualSignupAvailabilityChecked !== manualSignupAvailabilityKey()
+        && !await checkManualSignupAvailability()) {
+        return;
+      }
       const result = await api("/api/auth/manual-signup", {
         method: "POST",
         body: JSON.stringify(signupFormPayload())
       });
       form.reset();
+      state.manualSignupAvailabilityChecked = "";
+      $("manualSignupUserIdStatus").textContent = "";
+      $("manualSignupUserIdStatus").dataset.state = "";
       resetSignupEmailCode();
       setAuthMode("login");
       $("loginForm").elements.login.value = result.email;
@@ -6290,6 +6381,28 @@ $("signupForm").addEventListener("submit", async (event) => {
   } finally {
     submitButton.disabled = false;
   }
+});
+$("manualSignupCheckUserId").addEventListener("click", () => {
+  checkManualSignupAvailability();
+});
+["email", "mobile", "userId"].forEach((fieldName) => {
+  $("signupForm").elements[fieldName].addEventListener("input", () => {
+    state.manualSignupAvailabilityChecked = "";
+    state.manualSignupAvailabilityRequest += 1;
+    $("manualSignupUserIdStatus").textContent = "";
+    $("manualSignupUserIdStatus").dataset.state = "";
+    $("manualSignupUserIdSuggestions").replaceChildren();
+    $("manualSignupUserIdSuggestions").classList.add("hidden");
+    $("manualSignupCheckUserId").disabled = false;
+    $("manualSignupCheckUserId").textContent = "Check availability";
+  });
+});
+$("manualSignupUserIdSuggestions").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-manual-user-id-suggestion]");
+  if (!button) return;
+  $("manualSignupUserId").value = button.dataset.manualUserIdSuggestion;
+  $("manualSignupUserId").dispatchEvent(new Event("input", { bubbles: true }));
+  checkManualSignupAvailability();
 });
 $("signupChangeDetails").addEventListener("click", resetSignupEmailCode);
 $("signupOtpResend").addEventListener("click", async () => {

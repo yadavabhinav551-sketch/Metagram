@@ -58,6 +58,7 @@ const SMTP_FROM = String(process.env.SMTP_FROM || "").trim();
 const RESEND_API_KEY = String(process.env.RESEND_API_KEY || "").trim();
 const emailAuthOtps = new Map();
 const emailAuthOtpRequests = new Map();
+const manualSignupAvailabilityRequests = new Map();
 const profileContactOtps = new Map();
 const profileContactOtpRequests = new Map();
 const profileContactPasswordFailures = new Map();
@@ -66,6 +67,8 @@ const adminCredentialOtpRequests = new Map();
 const adminEmailTestRequests = new Map();
 const EMAIL_AUTH_OTP_TTL_MS = 10 * 60 * 1000;
 const EMAIL_AUTH_OTP_REQUEST_INTERVAL_MS = 60 * 1000;
+const MANUAL_SIGNUP_AVAILABILITY_WINDOW_MS = 60 * 1000;
+const MANUAL_SIGNUP_AVAILABILITY_MAX_REQUESTS = 30;
 const SIGNUP_MODE_GOOGLE_ONLY = "google_only";
 const SIGNUP_MODE_GOOGLE_AND_OTP = "google_and_otp";
 const LEGACY_DEFAULT_ADMIN_LOGIN = "6388391842";
@@ -705,6 +708,20 @@ function signupConflictMessage({ email = "", mobile = "", userId = "" }, exclude
   }
   const lastConflict = conflicts.pop();
   return `These details are already in use: ${conflicts.join(", ")} and ${lastConflict}. Choose different details.`;
+}
+
+function suggestAvailableUserIds(userId, excludedUserId = null) {
+  const suggestions = [];
+  const base = userId.replace(/[._]+$/, "") || userId;
+  for (const suffix of ["1", "2", "3", "_1", "_2", "2026"]) {
+    const stem = base.slice(0, 30 - suffix.length).replace(/[._]+$/, "");
+    const candidate = `${stem}${suffix}`;
+    if (validUserId(candidate) && isAvailableUserId(candidate, excludedUserId) && !suggestions.includes(candidate)) {
+      suggestions.push(candidate);
+      if (suggestions.length === 4) break;
+    }
+  }
+  return suggestions;
 }
 
 function validUserId(value = "") {
@@ -1936,18 +1953,59 @@ app.post("/api/auth/google/check-user-id", (req, res) => {
   if (isAvailableUserId(userId, user?.id)) {
     return res.json({ available: true, userId, suggestions: [] });
   }
+  return res.json({
+    available: false,
+    userId,
+    suggestions: suggestAvailableUserIds(userId, user?.id)
+  });
+});
 
-  const suggestions = [];
-  const base = userId.replace(/[._]+$/, "") || userId;
-  for (const suffix of ["1", "2", "3", "_1", "_2", "2026"]) {
-    const stem = base.slice(0, 30 - suffix.length).replace(/[._]+$/, "");
-    const candidate = `${stem}${suffix}`;
-    if (validUserId(candidate) && isAvailableUserId(candidate, user?.id) && !suggestions.includes(candidate)) {
-      suggestions.push(candidate);
-      if (suggestions.length === 4) break;
+app.post("/api/auth/manual-signup/check-availability", (req, res) => {
+  if (db.admin.emailOtpEnabled !== false) {
+    return res.status(403).json({ error: "Manual sign-up availability checks are only available when email OTP is disabled." });
+  }
+  if ((db.admin.signupMode || defaultDb.admin.signupMode) === SIGNUP_MODE_GOOGLE_ONLY) {
+    return res.status(403).json({ error: "Account creation is currently available only through Google sign-up." });
+  }
+
+  const now = Date.now();
+  const rateLimitKey = req.ip || req.socket.remoteAddress || "unknown";
+  let rateLimit = manualSignupAvailabilityRequests.get(rateLimitKey);
+  if (!rateLimit || now >= rateLimit.resetAt) {
+    rateLimit = { count: 0, resetAt: now + MANUAL_SIGNUP_AVAILABILITY_WINDOW_MS };
+  }
+  rateLimit.count += 1;
+  manualSignupAvailabilityRequests.set(rateLimitKey, rateLimit);
+  if (rateLimit.count > MANUAL_SIGNUP_AVAILABILITY_MAX_REQUESTS) {
+    return res.status(429).json({ error: "Too many availability checks. Please wait a minute and try again." });
+  }
+  if (manualSignupAvailabilityRequests.size > 5000) {
+    for (const [key, entry] of manualSignupAvailabilityRequests) {
+      if (now >= entry.resetAt) manualSignupAvailabilityRequests.delete(key);
     }
   }
-  return res.json({ available: false, userId, suggestions });
+
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const mobile = String(req.body.mobile || "").trim();
+  const userIdResult = validateUserId(req.body.userId);
+  if (userIdResult.error) return res.status(400).json({ error: userIdResult.error });
+  if (email && !isValidEmail(email)) return res.status(400).json({ error: "Enter a valid email address." });
+  if (mobile && (normalizeMobile(mobile).length < 7 || normalizeMobile(mobile).length > 15)) {
+    return res.status(400).json({ error: "Enter a valid phone number with 7 to 15 digits." });
+  }
+
+  const userId = userIdResult.userId;
+  const emailAvailable = email ? isAvailableEmail(email) : null;
+  const mobileAvailable = mobile ? isAvailableMobile(mobile) : null;
+  const userIdAvailable = isAvailableUserId(userId);
+  return res.json({
+    available: emailAvailable !== false && mobileAvailable !== false && userIdAvailable,
+    emailAvailable,
+    mobileAvailable,
+    userIdAvailable,
+    userId,
+    suggestions: userIdAvailable ? [] : suggestAvailableUserIds(userId)
+  });
 });
 
 app.post("/api/auth/google/complete-profile", async (req, res) => {

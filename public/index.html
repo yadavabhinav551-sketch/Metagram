@@ -46,11 +46,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v147-signup-conflict-errors" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v147-signup-conflict-errors">
+    <link rel="preload" href="/styles.css?v=v148-manual-signup-availability" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v148-manual-signup-availability">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v147-signup-conflict-errors" defer></script>
+    <script src="/app.js?v=v148-manual-signup-availability" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -160,8 +160,11 @@
               </label>
               <label>
                 <span>User ID</span>
-                <input name="userId" autocomplete="username" autocapitalize="off" placeholder="username.like_instagram" pattern="[a-zA-Z0-9._]{3,30}" minlength="3" maxlength="30" required>
+                <input id="manualSignupUserId" name="userId" autocomplete="username" autocapitalize="off" placeholder="username.like_instagram" pattern="[a-zA-Z0-9._]{3,30}" minlength="3" maxlength="30" required>
               </label>
+              <button id="manualSignupCheckUserId" class="secondary user-id-availability-check hidden" type="button">Check availability</button>
+              <p id="manualSignupUserIdStatus" class="user-id-availability-status hidden" role="status" aria-live="polite"></p>
+              <div id="manualSignupUserIdSuggestions" class="user-id-suggestions hidden" aria-label="Suggested usernames"></div>
               <label>
                 <span>Calculator lock password <small>(optional, 6 digits)</small></span>
                 <input name="calculatorLockPassword" type="password" autocomplete="new-password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
