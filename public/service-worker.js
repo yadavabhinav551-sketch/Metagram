@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v152-admin-user-account-edits";
+const CACHE_VERSION = "calculator-pwa-v153-profile-admin-password-guidance";
 const APP_SHELL = [
   "/",
   "/offline.html",

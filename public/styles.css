@@ -732,6 +732,11 @@ body.app-booting #updateRequiredView {
   font-size: 14px;
 }
 
+.profile-action-card select option {
+  background: var(--wa-card);
+  color: var(--wa-text-primary);
+}
+
 .profile-action-card .profile-grid label,
 .profile-action-card .profile-action-section label {
   display: grid;
@@ -3820,6 +3825,12 @@ input:focus, select:focus {
 
 :root[data-theme="light"] .profile-action-card select {
   background: #ffffff;
+  color: var(--wa-text-primary);
+}
+
+:root[data-theme="light"] .profile-action-card select option {
+  background: #ffffff;
+  color: #202c33;
 }
 
 :root[data-theme="light"] .profile-email-verification,

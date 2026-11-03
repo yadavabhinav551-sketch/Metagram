@@ -1137,10 +1137,10 @@ function showChat() {
   setAppReady();
   $("meName").textContent = state.user.displayName;
   $("meHandle").textContent = [state.user.userId, state.user.mobile].filter(Boolean).join(" · ");
-  $("adminModeBtn").classList.toggle(
-    "hidden",
-    sessionStorage.getItem("adminUserMode") !== "true" || !localStorage.getItem("adminToken")
-  );
+  const isAdminUserMode = sessionStorage.getItem("adminUserMode") === "true"
+    && Boolean(localStorage.getItem("adminToken"));
+  $("adminModeBtn").classList.toggle("hidden", !isAdminUserMode);
+  $("adminAccountEditNotice").classList.toggle("hidden", !isAdminUserMode);
   ensureTopbarControlsVisible();
   syncProfileIdentity();
   syncPrivacySettings();
@@ -5305,8 +5305,8 @@ function syncAccountChangeMethodOptions() {
     ];
   if (!methods.length) methods.push({ value: "", label: "No verification method available" });
   select.replaceChildren(...methods.map(({ value, label }) => new Option(label, value)));
-  if (methods.some((method) => method.value === currentMethod)) select.value = currentMethod;
-  else if (methods.length) select.value = methods[0].value;
+  const selectedIndex = methods.findIndex((method) => method.value === currentMethod);
+  select.selectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
   $("saveAccountFieldBtn").disabled = !select.value;
 }
 
@@ -5315,6 +5315,10 @@ function syncAccountChangeMethodControls() {
   const method = $("accountChangeMethod").value;
   const requiresPassword = field === "email" || method === "password";
   $("accountChangePasswordGroup").classList.toggle("hidden", !requiresPassword);
+  $("accountChangePasswordHint").classList.toggle("hidden", !requiresPassword);
+  $("accountChangePasswordHint").textContent = sessionStorage.getItem("adminUserMode") === "true"
+    ? "This is the selected profile's password, not the administrator password. To change user sign-in details with the administrator password, use Admin → Users."
+    : "Enter the current password for this account.";
   $("accountChangePassword").required = requiresPassword;
   $("accountChangeOtpPanel").classList.toggle("hidden", method !== "otp");
   $("accountChangeOtpCodeGroup").classList.toggle("hidden", method !== "otp" || !state.accountChangeOtpSent);
@@ -5401,6 +5405,10 @@ $("profileEditModal").addEventListener("click", (event) => {
   if (event.target.closest("#editChangePasswordBtn")) {
     $("closeProfileEditBtn").click();
     $("openPasswordChangeBtn").click();
+    return;
+  }
+  if (event.target.closest("#profileAdminUsersBtn")) {
+    $("adminModeBtn").click();
   }
 });
 $("accountChangeMethod").addEventListener("change", () => {

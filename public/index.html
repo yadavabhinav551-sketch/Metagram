@@ -762,6 +762,10 @@
           <section class="profile-action-section profile-account-edit-options">
             <strong>Account details</strong>
             <small>Change each account detail separately. Sensitive changes require password, email-code, or Google verification.</small>
+            <div id="adminAccountEditNotice" class="profile-account-verification hidden" role="note">
+              <small>These are the admin chat profile details. This dialog needs that profile's password, not your admin password. To change user sign-in details with your admin password, use Admin → Users.</small>
+              <button id="profileAdminUsersBtn" class="secondary" type="button">Open Admin Users</button>
+            </div>
             <div class="profile-account-edit-row">
               <span><strong>User ID</strong><small id="editUserIdValue"></small></span>
               <button class="secondary" type="button" data-account-field="userId">Change user ID</button>
@@ -803,12 +807,13 @@
             </label>
             <label id="accountChangeMethodGroup">
               <span>Verification method</span>
-              <select id="accountChangeMethod"></select>
+              <select id="accountChangeMethod" required></select>
             </label>
             <label id="accountChangePasswordGroup" class="hidden">
-              <span>Current account password</span>
+              <span>Current profile password</span>
               <input id="accountChangePassword" type="password" maxlength="128" autocomplete="current-password">
             </label>
+            <small id="accountChangePasswordHint" class="hidden">This is the selected profile's password, not the administrator password. Admins can update user sign-in details from Admin → Users.</small>
             <div id="accountChangeOtpPanel" class="profile-account-verification hidden">
               <small id="accountChangeOtpHint">A code will be sent to your verified email.</small>
               <label id="accountChangeOtpCodeGroup" class="hidden">
