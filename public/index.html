@@ -46,11 +46,11 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="icon" href="/icons/calculator-192.png" type="image/png">
     <link rel="apple-touch-icon" href="/icons/ios-calculator-icon.png">
-    <link rel="preload" href="/styles.css?v=v144-stale-cache-fallback" as="style">
-    <link rel="stylesheet" href="/styles.css?v=v144-stale-cache-fallback">
+    <link rel="preload" href="/styles.css?v=v145-google-signup-onboarding" as="style">
+    <link rel="stylesheet" href="/styles.css?v=v145-google-signup-onboarding">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="/socket.io/socket.io.js" defer></script>
-    <script src="/app.js?v=v144-stale-cache-fallback" defer></script>
+    <script src="/app.js?v=v145-google-signup-onboarding" defer></script>
   </head>
   <body class="app-booting">
     <main class="app-shell">
@@ -195,6 +195,7 @@
           <div id="authModeSwitch" class="auth-mode-switch">
             <p id="loginModePrompt">Don't have an account? <button id="signupTab" type="button">Sign up</button></p>
             <p id="loginGoogleOnlyPrompt" class="hidden">New users can create an account with Google below.</p>
+            <p id="signupGoogleOnlyPrompt" class="hidden">Continue with Google to create your account. You'll add your profile details and set a password next.</p>
             <p id="signupModePrompt" class="hidden">Already have an account? <button id="loginTab" type="button">Login</button></p>
           </div>
         </div>
@@ -224,7 +225,7 @@
                 <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required>
               </label>
               <label>
-                <span>Calculator lock password <small>(optional, 6 digits)</small></span>
+                <span>Calculator lock code <small>(optional, 6 digits)</small></span>
                 <input name="calculatorLockPassword" type="password" autocomplete="new-password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
               </label>
               <p id="googleOnboardingError" class="error-text" aria-live="polite"></p>

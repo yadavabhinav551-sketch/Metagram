@@ -9,6 +9,7 @@ const state = {
   emailOtpEnabled: true,
   animations: { enabled: true, ambient: true, surfaces: true, accents: true, interactions: true },
   authLoginMethod: "password",
+  authMode: "login",
   signupOtpSent: false,
   signupOtpEmail: "",
   signupOtpPayload: null,
@@ -506,30 +507,28 @@ function normalizeUiText() {
 }
 
 function setAuthMode(mode) {
-  if (mode === "signup" && state.signupMode === "google_only") return;
+  state.authMode = mode === "signup" ? "signup" : "login";
   $("authSuccess").classList.add("hidden");
   $("authModeSwitch").classList.remove("hidden");
   $("authGoogleSection").classList.remove("hidden");
-  $("loginModePrompt").classList.toggle("hidden", mode !== "login");
-  $("loginGoogleOnlyPrompt").classList.toggle("hidden", mode !== "login" || state.signupMode !== "google_only");
-  $("signupModePrompt").classList.toggle("hidden", mode !== "signup");
-  $("loginMethodTabs").classList.toggle("hidden", mode !== "login");
-  $("loginForm").classList.toggle("hidden", mode !== "login");
-  $("loginOtpForm").classList.toggle("hidden", mode !== "login" || state.authLoginMethod !== "otp");
-  $("signupForm").classList.toggle("hidden", mode !== "signup");
+  $("loginModePrompt").classList.toggle("hidden", state.authMode !== "login");
+  $("loginGoogleOnlyPrompt").classList.toggle("hidden", state.authMode !== "login" || state.signupMode !== "google_only");
+  $("signupModePrompt").classList.toggle("hidden", state.authMode !== "signup");
+  $("signupGoogleOnlyPrompt").classList.toggle("hidden", state.authMode !== "signup" || state.signupMode !== "google_only");
+  $("loginMethodTabs").classList.toggle("hidden", state.authMode !== "login");
+  $("loginForm").classList.toggle("hidden", state.authMode !== "login");
+  $("loginOtpForm").classList.toggle("hidden", state.authMode !== "login" || state.authLoginMethod !== "otp");
+  $("signupForm").classList.toggle("hidden", state.authMode !== "signup" || state.signupMode === "google_only");
   $("authError").textContent = "";
-  renderGoogleSignInButton(mode);
+  renderGoogleSignInButton(state.authMode);
 }
 
 function applySignupMode(mode) {
   state.signupMode = mode === "google_only" ? "google_only" : "google_and_otp";
-  $("signupTab").classList.toggle("hidden", state.signupMode === "google_only");
-  if (state.signupMode === "google_only" && !$("signupForm").classList.contains("hidden")) {
-    setAuthMode("login");
-    resetSignupEmailCode();
-  }
+  $("signupTab").classList.remove("hidden");
+  if (state.signupMode === "google_only") resetSignupEmailCode();
   if (!$("authView").classList.contains("hidden")) {
-    setAuthMode($("signupForm").classList.contains("hidden") ? "login" : "signup");
+    setAuthMode(state.authMode);
   }
 }
 
@@ -1012,7 +1011,7 @@ async function showAuth() {
   $("calculatorPrivacyView").classList.add("hidden");
   $("authView").classList.remove("hidden");
   $("chatView").classList.add("hidden");
-  renderGoogleSignInButton();
+  setAuthMode(state.authMode);
   setAppReady();
 }
 

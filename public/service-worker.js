@@ -1,4 +1,4 @@
-const CACHE_VERSION = "calculator-pwa-v144-stale-cache-fallback";
+const CACHE_VERSION = "calculator-pwa-v145-google-signup-onboarding";
 const APP_SHELL = [
   "/",
   "/offline.html",
